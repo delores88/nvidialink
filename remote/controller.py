@@ -33,6 +33,8 @@ MAX_LOG = 256 * CHUNK
 CPUS = 4
 MEMORY_GB = 8
 HEADROOM_GB = 32
+PROXY_CPU = 0.25
+PROXY_MEMORY_GB = 0.125
 RESOURCE_FIELDS = ("cpu_per_job", "memory_gb_per_job", "cpu_total", "memory_gb_total", "client_jobs", "client_cpu", "headroom_gb")
 CLIENTS = ("claude", "codex", "human")
 ACTIVE = ("queued", "starting", "running")
@@ -164,6 +166,14 @@ def validate_resources(value, hardware):
     if value["memory_gb_per_job"] > value["memory_gb_total"] or value["memory_gb_total"] + value["headroom_gb"] > memory:
         reject("invalid_resource_policy", "Per-job memory must fit total memory; total memory plus headroom must fit detected hardware")
     return dict(value)
+
+
+def reserved_cpu(row):
+    return row["cpu"] + (PROXY_CPU if row["proxy_image"] else 0)
+
+
+def reserved_memory(row):
+    return row["memory"] + (PROXY_MEMORY_GB if row["proxy_image"] else 0)
 
 
 class Docker:
@@ -451,7 +461,9 @@ class Controller:
                 "where": "spark", "state": row["state"], "exit_code": row["exit_code"],
                 "created_at": row["created"], "started_at": row["started"], "finished_at": row["finished"],
                 "cancel_requested": bool(row["cancel"]), "cache_hit": row["cached_from"] is not None,
-                "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"], "scratch_mb": row["scratch_mb"], "headroom_gb": row["headroom_gb"]}
+                "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"],
+                "reserved_cpu": reserved_cpu(row), "reserved_memory_gb": reserved_memory(row),
+                "scratch_mb": row["scratch_mb"], "headroom_gb": row["headroom_gb"]}
 
     def claim_conflict(self, project):
         remote = self.db.execute("SELECT id FROM jobs WHERE project=? AND state IN ('queued','starting','running')", (project,)).fetchone()
@@ -494,7 +506,7 @@ class Controller:
             limits = owner_policy["limits"]
             cpu, memory, scratch_mb = limits["cpu_per_job"], limits["memory_gb_per_job"], 512
             profile = self.root.parent / "limits.json"
-            if profile.exists() and request["op"] != "prepare":
+            if profile.exists():
                 if profile.is_symlink() or (os.name == "posix" and (profile.stat().st_uid != os.getuid() or profile.stat().st_mode & 0o022)):
                     reject("unsafe_state", "Owner resource policy is not protected")
                 policy = json.loads(profile.read_text())
@@ -510,9 +522,15 @@ class Controller:
                     if owner_policy["policy_saved"]:
                         cpu, memory = min(cpu, limits["cpu_per_job"]), min(memory, limits["memory_gb_per_job"])
                         scratch_mb = min(scratch_mb, memory * 512)
-            overhead_cpu, overhead_memory = (0.25, 0.125) if request["op"] == "prepare" else (0, 0)
-            if cpu + overhead_cpu > limits["client_cpu"] or cpu + overhead_cpu > limits["cpu_total"] or memory + overhead_memory > limits["memory_gb_total"]:
+            if cpu > limits["client_cpu"] or cpu > limits["cpu_total"] or memory > limits["memory_gb_total"]:
                 reject("resource_policy_exceeded", "Job and preparation proxy must fit owner total and client caps; adjust resources before submitting")
+            if request["op"] == "prepare":
+                # The fixed proxy consumes part of the owner's job budget, not
+                # extra quota above it. Minimum accepted budgets leave a worker
+                # with 0.75 CPU and 0.875 GiB; Docker enforces both limits.
+                cpu -= PROXY_CPU
+                memory -= PROXY_MEMORY_GB
+                scratch_mb = min(scratch_mb, int(memory * 512))
             cache_key = sha(canonical({"project": project, "manifest": manifest_id, "argv": args,
                                       "runtime": runtime, "worker": sha(worker), "policy": 1,
                                       "cpu": cpu, "memory": memory, "scratch_mb": scratch_mb}))
@@ -686,7 +704,7 @@ class Controller:
         policy = self.resource_policy()
         jobs = [self.job_status(r) for r in self.db.execute("SELECT * FROM jobs ORDER BY created DESC LIMIT 200")]
         for job in jobs:
-            if job["state"] == "queued" and policy["policy_saved"] and (job["cpu"] > policy["limits"]["cpu_per_job"] or job["memory_gb"] > policy["limits"]["memory_gb_per_job"]):
+            if job["state"] == "queued" and policy["policy_saved"] and (job["reserved_cpu"] > policy["limits"]["cpu_per_job"] or job["reserved_memory_gb"] > policy["limits"]["memory_gb_per_job"]):
                 job["admission_blocked"] = "Saved per-job caps are below this existing job's immutable allocation; raise caps or cancel and resubmit"
         for row in self.db.execute("SELECT * FROM leases ORDER BY created DESC LIMIT 200"):
             jobs.append({"job": row["job"] or row["id"], "project": row["project"], "client": row["client"], "where": "laptop",
@@ -778,7 +796,7 @@ class Controller:
                       "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1", "SPARKDEV_RUNTIME_NAME=" + row["runtime"]):
             args += ["--env", value]
         for name in ("RAYON_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "CARGO_BUILD_JOBS"):
-            args += ["--env", name + "=" + str(row["cpu"])]
+            args += ["--env", name + "=" + str(max(1, int(row["cpu"])))]
         if row["runtime"] == "cuda":
             args += ["--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics"]
         if preparing:
@@ -806,8 +824,8 @@ class Controller:
             uid = os.getuid() if hasattr(os, "getuid") else 1000
             gid = os.getgid() if hasattr(os, "getgid") else 1000
             self.docker.call(["create", "--name", name, "--pull", "never", "--network", "bridge", "--read-only", "--cap-drop", "ALL",
-                              "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}", "--cpus", "0.25", "--cpu-shares", "128",
-                              "--memory", "128m", "--memory-swap", "128m", "--pids-limit", "64", "--log-driver", "none",
+                              "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}", "--cpus", str(PROXY_CPU), "--cpu-shares", "128",
+                              "--memory", f"{int(PROXY_MEMORY_GB * 1024)}m", "--memory-swap", f"{int(PROXY_MEMORY_GB * 1024)}m", "--pids-limit", "64", "--log-driver", "none",
                               "--label", "com.delores.sparkdev.job=" + row["id"], "--mount",
                               f"type=bind,src={self.root / 'jobs' / row['id'] / 'proxy.py'},dst=/sparkdev-proxy.py,readonly",
                               "--entrypoint", "/usr/bin/python3", row["proxy_image"], "/sparkdev-proxy.py"])
@@ -889,8 +907,7 @@ class Controller:
             limits = policy["limits"]
             self.db.execute("INSERT OR REPLACE INTO settings VALUES('scheduler_heartbeat',?)", (str(time.time()),))
             active = self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running')").fetchall()
-            cpu = lambda r: r["cpu"] + (0.25 if r["proxy_image"] else 0)
-            memory = lambda r: r["memory"] + (0.125 if r["proxy_image"] else 0)
+            cpu, memory = reserved_cpu, reserved_memory
             used_cpu, used_mem = sum(cpu(r) for r in active), sum(memory(r) for r in active)
             last = self.db.execute("SELECT value FROM settings WHERE key='last_client'").fetchone()
             start = (CLIENTS.index(last[0]) + 1) % len(CLIENTS) if last else 0
@@ -901,7 +918,7 @@ class Controller:
                     continue
                 if len(mine) >= limits["client_jobs"] or sum(cpu(r) for r in mine) + cpu(row) > limits["client_cpu"]:
                     continue
-                if policy["policy_saved"] and (row["cpu"] > limits["cpu_per_job"] or row["memory"] > limits["memory_gb_per_job"]):
+                if policy["policy_saved"] and (cpu(row) > limits["cpu_per_job"] or memory(row) > limits["memory_gb_per_job"]):
                     continue
                 if used_cpu + cpu(row) > limits["cpu_total"] or used_mem + memory(row) > limits["memory_gb_total"] or self.memory_probe() - used_mem - memory(row) < limits["headroom_gb"]:
                     continue

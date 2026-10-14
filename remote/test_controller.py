@@ -286,16 +286,76 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual((job["cpu"], job["memory_gb"]), (4, 8))
         self.assertEqual(self.rpc("resources")["legacy_project_overrides"], "clamped_to_per_job_caps")
 
-    def test_small_hardware_defaults_and_preparation_overhead_fail_closed(self):
+    def test_small_hardware_preparation_fits_default_budget(self):
         self.c.hardware_probe = lambda: {"cpu_count": 2, "memory_gb": 4}
         policy = self.rpc("resources")
         self.assertEqual(policy["limits"]["cpu_total"], 2)
         self.assertEqual(policy["limits"]["memory_gb_total"] + policy["limits"]["headroom_gb"], 4)
         mid = self.snapshot()
-        result = self.c.rpc({"v": 1, "op": "prepare", "project": PROJECT, "manifest_id": mid,
-                             "runtime": "python", "client": "codex", "request_id": "small-prepare"})
-        self.assertEqual(result["error"]["code"], "resource_policy_exceeded")
-        self.assertEqual(self.c.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+        result = self.rpc("prepare", project=PROJECT, manifest_id=mid,
+                          runtime="python", client="codex", request_id="small-prepare")
+        self.assertEqual((result["reserved_cpu"], result["reserved_memory_gb"]), (2, 2))
+        self.assertEqual((result["cpu"], result["memory_gb"]), (1.75, 1.875))
+        self.c.tick()
+        self.assertEqual(self.c.get_job(result["job"])["state"], "running")
+
+    def test_preparation_reserves_proxy_inside_exact_job_client_and_total_caps(self):
+        limits = {"cpu_per_job": 16, "memory_gb_per_job": 32, "cpu_total": 16,
+                  "memory_gb_total": 32, "client_jobs": 4, "client_cpu": 16, "headroom_gb": 32}
+        self.rpc("resources", limits=limits)
+        mid = self.snapshot()
+        request = dict(project=PROJECT, manifest_id=mid, runtime="python", client="codex", request_id="exact-prepare")
+        result = self.rpc("prepare", **request)
+        self.assertEqual((result["cpu"], result["memory_gb"]), (15.75, 31.875))
+        self.assertEqual((result["reserved_cpu"], result["reserved_memory_gb"]), (16, 32))
+        self.assertEqual(self.rpc("prepare", **request)["job"], result["job"])
+        self.c.tick()
+        self.assertEqual(self.c.get_job(result["job"])["state"], "running")
+        calls = [call for call in self.docker.calls if call[0] == "create"]
+        self.assertEqual([call[call.index("--cpus") + 1] for call in calls], ["0.25", "15.75"])
+        self.assertEqual([call[call.index("--memory") + 1] for call in calls], ["128m", "31.875g"])
+        self.assertIn("CARGO_BUILD_JOBS=15", calls[1])
+        # A different client still cannot consume quota reserved by the proxy.
+        second, _ = self.run_job(project=sha(b"second"), client="human", request_id="second")
+        self.c.tick()
+        self.assertEqual(self.c.get_job(second["job"])["state"], "queued")
+
+    def test_minimum_preparation_budget_and_owner_project_override(self):
+        limits = {"cpu_per_job": 1, "memory_gb_per_job": 1, "cpu_total": 1,
+                  "memory_gb_total": 1, "client_jobs": 4, "client_cpu": 1, "headroom_gb": 32}
+        self.rpc("resources", limits=limits)
+        mid = self.snapshot()
+        result = self.rpc("prepare", project=PROJECT, manifest_id=mid,
+                          runtime="python", client="codex", request_id="minimum-prepare")
+        self.assertEqual((result["cpu"], result["memory_gb"], result["scratch_mb"]), (0.75, 0.875, 448))
+        self.assertEqual((result["reserved_cpu"], result["reserved_memory_gb"]), (1, 1))
+        self.c.tick()
+        argv = next(call for call in self.docker.calls if call[0] == "create" and "CARGO_BUILD_JOBS=1" in call)
+        self.assertEqual(argv[argv.index("--memory") + 1], "0.875g")
+        self.assertIn("/tmp:rw,nosuid,nodev,size=469762048", argv)
+        # Keep the same small request budget under a larger saved owner policy.
+        limits.update(cpu_per_job=16, client_cpu=16, cpu_total=18, memory_gb_per_job=32, memory_gb_total=80)
+        self.rpc("resources", limits=limits)
+        project = sha(b"owner-override")
+        (self.root.parent / "limits.json").write_text(json.dumps({"v": 1, "projects": {project: {"cpu": 1, "memory_gb": 1}}}))
+        mid = self.snapshot(project=project)
+        small = self.rpc("prepare", project=project, manifest_id=mid,
+                         runtime="python", client="codex", request_id="override-prepare")
+        self.assertEqual((small["reserved_cpu"], small["reserved_memory_gb"]), (1, 1))
+
+    def test_old_preparation_allocation_cannot_bypass_new_per_job_caps(self):
+        mid = self.snapshot()
+        result = self.rpc("prepare", project=PROJECT, manifest_id=mid,
+                          runtime="python", client="codex", request_id="legacy-prepare")
+        # Existing pre-fix rows included a full worker allocation plus the proxy.
+        self.c.db.execute("UPDATE jobs SET cpu=4,memory=8 WHERE id=?", (result["job"],))
+        limits = self.rpc("resources")["limits"]
+        self.rpc("resources", limits=limits)
+        self.c.tick()
+        row = self.c.get_job(result["job"])
+        self.assertEqual((row["state"], row["cpu"], row["memory"]), ("queued", 4, 8))
+        self.assertIn("admission_blocked", next(j for j in self.rpc("status")["jobs"] if j["job"] == row["id"]))
+        self.assertFalse(self.docker.calls)
 
     def test_owner_project_limits_are_bounded_and_reflected_in_receipt(self):
         (self.root.parent / "limits.json").write_text(json.dumps({"v": 1, "projects": {PROJECT: {"cpu": 8, "memory_gb": 32, "scratch_mb": 4096}}}))
