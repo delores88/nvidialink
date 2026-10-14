@@ -1,2 +1,2 @@
 Copyright (c) 2026 Ben Van Dorn / DeloresAI.
-Originally authored for PhaseForge. Ben explicitly authorized reuse and MIT licensing in Spark Dev Bridge on 2026-10-13. These copies are covered by the root MIT LICENSE; the PhaseForge repository is unchanged. Third-party components keep their own notices.
+Originally authored for PhaseForge. Ben explicitly authorized reuse and MIT licensing in DGXBridge on 2026-10-13. These copies are covered by the root MIT LICENSE; the PhaseForge repository is unchanged. Third-party components keep their own notices.

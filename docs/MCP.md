@@ -11,7 +11,7 @@ Claude Code project `.mcp.json`:
   "mcpServers": {
     "sparkdev": {
       "type": "stdio",
-      "command": "C:/Users/You/AppData/Local/Spark Dev Bridge/bin/sparkdev.exe",
+      "command": "C:/Users/You/AppData/Local/DGXBridge/bin/sparkdev.exe",
       "args": ["--client", "claude", "mcp"]
     }
   }
@@ -22,7 +22,7 @@ Codex `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.sparkdev]
-command = "C:/Users/You/AppData/Local/Spark Dev Bridge/bin/sparkdev.exe"
+command = "C:/Users/You/AppData/Local/DGXBridge/bin/sparkdev.exe"
 args = ["--client", "codex", "mcp"]
 tool_timeout_sec = 90
 ```

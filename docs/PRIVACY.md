@@ -1,6 +1,6 @@
 # Privacy and local state
 
-Spark Dev Bridge uploads selected source files and exact job arguments to the owner's Spark. It stores content-addressed source snapshots, per-project dependency/build caches, request receipts, combined process output and a job audit trail. The desktop/CLI retain configuration, job receipts, log chunks and pending cancellations in the owner's application state directory. There is no telemetry or embedded model API.
+DGXBridge uploads selected source files and exact job arguments to the owner's Spark. It stores content-addressed source snapshots, per-project dependency/build caches, request receipts, combined process output and a job audit trail. The desktop/CLI retain configuration, job receipts, log chunks and pending cancellations in the owner's application state directory. There is no telemetry or embedded model API.
 
 The SSH private key remains with OpenSSH. The app stores its path, not its contents. A separately generated link device identity is encrypted for the Windows user using DPAPI; Linux state is owner-readable only. Pairing tickets, QR tokens and six-digit approval codes exist only during the approval workflow and must not appear in screenshots, release evidence or logs.
 

@@ -3,7 +3,7 @@
   "revision": "944bfcceef5f7969b384d0334b9c612e1244bf2f",
   "authorization": "Owner requested reuse of PhaseForge QR setup and explicitly required MIT licensing for this project on 2026-10-13.",
   "license": "MIT",
-  "modifications": "Only the qrcode-generator import changed to bundled local ESM. Vanilla DOM adapter is original Spark Dev Bridge code.",
+  "modifications": "Only the qrcode-generator import changed to bundled local ESM. Vanilla DOM adapter is original DGXBridge code.",
   "files": [
     {
       "source": "frontend/src/lib/sparkLinkQr.mjs",

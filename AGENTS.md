@@ -1,4 +1,4 @@
-# Spark Dev Bridge
+# DGXBridge
 
 This repository alone is writable. All PhaseForge repositories, worktrees, release directories and Spark services are read-only references. Never mutate `D:/PhaseForge-claude`, except invoking the owner's prescribed build gate as-is for local cargo work. Never alter `~/pf-builds`, `~/phaseforge-runtimes`, `~/phaseforge-test-node`, their containers, images or volumes.
 

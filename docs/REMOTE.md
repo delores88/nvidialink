@@ -40,7 +40,7 @@ status and diagnostic output. Successful provisioning probes Rust, Node, Python,
 NumPy and Pillow, then writes the immutable image ID into `~/sparkdev/runtimes.json`.
 `build_cuda:true` explicitly opts into the optional CUDA image and 16-MiB GPU probe;
 status is in `runtime-cuda-build.json`. CUDA is not admitted until that probe passes.
-Docker's official NGC image retains its own licenses; Spark Dev Bridge does not
+Docker's official NGC image retains its own licenses; DGXBridge does not
 redistribute it as MIT software.
 
 Examples on the Spark:

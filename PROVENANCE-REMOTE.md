@@ -1,7 +1,7 @@
 # Remote controller provenance
 
 The controller, scheduler, bootstrap, dependency proxy, supervisor and tests under
-`remote/` are new Spark Dev Bridge code. Their behavioral design was informed by
+`remote/` are new DGXBridge code. Their behavioral design was informed by
 PhaseForge Spark Link and the owner's read-only SSH prototype. No PhaseForge source
 file was edited and no PhaseForge service, container, volume or image was mutated.
 
@@ -23,7 +23,7 @@ honestly be attributed to that commit. The exact files inspected were:
 
 `runtimes/Dockerfile` adapts the prototype's Rust base digest, Linux development
 packages and Python virtual environment; Node and Git were added and all product paths/tags
-were changed to Spark Dev Bridge. `runtimes/requirements.txt` copies the exact two
+were moved to this product's separate `sparkdev` namespace. `runtimes/requirements.txt` copies the exact two
 version/hash pins for NumPy 2.4.6 and Pillow 12.3.0, with a new provenance comment.
 Source credential/path policy was independently implemented from the reviewed policy.
 
@@ -34,7 +34,7 @@ builds create new distinct `sparkdev/*` images and record the resulting immutabl
 image ID; they never retag PhaseForge images. The Spark cache may reuse existing
 read-only base layers through Docker's normal content-addressed storage.
 
-Spark Dev Bridge's MIT license covers its first-party code only. Rust, Debian,
+DGXBridge's MIT license covers its first-party code only. Rust, Debian,
 Python, Node.js, Git, NumPy, Pillow and NVIDIA NGC/PyTorch retain their respective
 upstream licenses and notices inside their images/packages. This repository contains
 runtime recipes and hash pins, not redistributed third-party image layers. Installing
@@ -45,5 +45,5 @@ ARM64 archive, SHA-256
 `bcb2d46002a8dd8e94d0d669cb39d38c9651db2ae5d1f3f1f1bab516ee1e212c`.
 It verifies the extracted tool digest as well. The release URL and checksum binding
 are recorded in `evidence/link/2026-10-13-arm64-auditable.json`. The tool is not
-redistributed with Spark Dev Bridge; compiled binary dependency metadata identifies
+redistributed with DGXBridge; compiled binary dependency metadata identifies
 the libraries actually linked into each release.

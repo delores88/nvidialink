@@ -4,30 +4,42 @@ import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vend
 const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__.core.invoke(name,args);
 let currentView='overview',refreshing=false,pairTimer=null,pairArt=null,pairCanvas=null,pairSim=null,pairFrame=0,lastPairState='',cliPath='sparkdev',agent='codex',savedConfig=null;
+let boardJobs=[],jobPage=0;
+const jobsPerPage=6;
 const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 function message(text){$('message').textContent=text||'';$('message').hidden=!text;}
 function requireOk(value){if(value?.ok===false)throw new Error(value.error?.message||value.message||'The operation did not complete.');return value;}
-function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav').forEach(el=>el.classList.toggle('active',el.dataset.view===name));const text={overview:['Room to build.','Keep moving while your next build runs.'],connection:['Bring your Spark closer.','A trusted connection, then a simple scan.'],agents:['Better together.','Give your agents the same view of the work.']}[name];$('page-title').textContent=text[0];$('page-subtitle').textContent=text[1];message('');}
+function view(name){currentView=name;window.scrollTo({top:0,behavior:'instant'});document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav').forEach(el=>el.classList.toggle('active',el.dataset.view===name));const text={overview:['Room to build.','Keep moving while your next build runs.'],connection:['Bring your Spark closer.','A trusted connection, then a simple scan.'],agents:['Better together.','Give your agents the same view of the work.']}[name];$('page-title').textContent=text[0];$('page-subtitle').textContent=text[1];message('');}
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>view(button.dataset.view)));
 async function command(args){return requireOk(await invoke('cli',{args}));}
 function jobsOf(value){const all=[...(Array.isArray(value.jobs)?value.jobs:[]),...(Array.isArray(value.laptop_jobs)?value.laptop_jobs:[])];return [...new Map(all.map(j=>[j.job||j.job_id,j])).values()];}
 function renderJobs(value){
-  const jobs=jobsOf(value),body=$('jobs');body.replaceChildren();$('empty-jobs').hidden=jobs.length>0;
-  for(const job of jobs.slice(0,40)){
-    const row=document.createElement('tr'),id=job.job||job.job_id||'',where=job.placement||job.runner||(id.startsWith('laptop-')?'laptop':'spark');
-    const fields=[id.slice(0,18),job.client||'—',where,job.state||'unknown',job.cache_hit?'Cached result':job.exit_code==null?'—':`Exit ${job.exit_code}`];
-    fields.forEach((text,i)=>{const cell=document.createElement('td');if(i===0){const button=document.createElement('button');button.textContent=text;button.addEventListener('click',()=>showLogs(id));cell.append(button);}else cell.textContent=text;row.append(cell);});body.append(row);
-  }
+  boardJobs=jobsOf(value).sort((a,b)=>(Number(b.created_at)||0)-(Number(a.created_at)||0)||String(b.job||b.job_id).localeCompare(String(a.job||a.job_id)));
+  renderJobPage();
   const active=j=>['queued','running','preparing','starting'].includes(j.state);
-  $('laptop-jobs').textContent=`${jobs.filter(j=>active(j)&&(j.placement==='laptop'||(j.job||'').startsWith('laptop-'))).length} active`;
-  $('spark-jobs').textContent=`${jobs.filter(j=>active(j)&&j.placement!=='laptop'&&!(j.job||'').startsWith('laptop-')).length} active`;
+  $('laptop-jobs').textContent=`${boardJobs.filter(j=>active(j)&&(j.placement==='laptop'||j.where==='laptop'||(j.job||'').startsWith('laptop-'))).length} active`;
+  $('spark-jobs').textContent=`${boardJobs.filter(j=>active(j)&&j.placement!=='laptop'&&j.where!=='laptop'&&!(j.job||'').startsWith('laptop-')).length} active`;
 }
+function renderJobPage(){
+  const total=boardJobs.length,pages=Math.max(1,Math.ceil(total/jobsPerPage));
+  jobPage=Math.max(0,Math.min(jobPage,pages-1));
+  const start=jobPage*jobsPerPage,body=$('jobs');body.replaceChildren();$('empty-jobs').hidden=total>0;
+  $('pagination').hidden=total===0;$('page-summary').textContent=`${start+1}–${Math.min(start+jobsPerPage,total)} of ${total} jobs`;
+  $('page-position').textContent=`Page ${jobPage+1} of ${pages}`;$('previous-page').disabled=jobPage===0;$('next-page').disabled=jobPage===pages-1;
+  for(const job of boardJobs.slice(start,start+jobsPerPage)){
+    const row=document.createElement('tr'),id=job.job||job.job_id||'',where=job.placement||job.runner||(id.startsWith('laptop-')?'laptop':'spark');
+    const fields=[id.slice(0,16),job.client||'—',where,job.state||'unknown',job.cache_hit?'Cached result':job.exit_code==null?'—':`Exit ${job.exit_code}`];
+    fields.forEach((text,i)=>{const cell=document.createElement('td');if(i===0){const button=document.createElement('button');button.className='job-link';button.textContent=text;button.title=id;button.setAttribute('aria-label',`View output for job ${id}`);button.addEventListener('click',()=>showLogs(id));cell.append(button);}else if(i===3){const badge=document.createElement('span');badge.className='job-state';badge.dataset.state=text;badge.textContent=text[0].toUpperCase()+text.slice(1);cell.append(badge);}else cell.textContent=text;row.append(cell);});body.append(row);
+  }
+}
+$('previous-page').addEventListener('click',()=>{jobPage--;renderJobPage();});
+$('next-page').addEventListener('click',()=>{jobPage++;renderJobPage();});
 async function refresh(){if(refreshing)return;refreshing=true;$('refresh').disabled=true;
-  try{const result=await command(['status','--all']);renderJobs(result);const available=result.remote_available!==false;$('spark-state').textContent=available?'Connected':'Unavailable';$('spark-state').classList.toggle('warn',!available);$('transport').textContent=result.transport?.selected==='ssh'?'Pinned SSH · LAN':result.transport?.selected==='iroh'?'Paired remote link':'Connection unavailable';$('connection-detail').textContent=JSON.stringify(result,null,2);message(available?'':result.remote_error?.message||'Spark is unavailable. Retained laptop jobs are shown.');}
-  catch(error){$('spark-state').textContent='Not connected';$('spark-state').classList.add('warn');$('transport').textContent='Set up a trusted connection';message(String(error.message||error));}
+  try{const result=await command(['status','--all']);renderJobs(result);const available=result.remote_available!==false;$('machine-grid').dataset.connected=String(available);$('spark-state').textContent=available?'Connected':'Unavailable';$('spark-state').classList.toggle('warn',!available);$('transport').textContent=result.transport?.selected==='ssh'?'Pinned SSH · LAN':result.transport?.selected==='iroh'?'Paired remote link':'Connection unavailable';$('connection-detail').textContent=JSON.stringify(result,null,2);message(available?'':result.remote_error?.message||'Spark is unavailable. Retained laptop jobs are shown.');}
+  catch(error){$('machine-grid').dataset.connected='false';$('spark-state').textContent='Not connected';$('spark-state').classList.add('warn');$('transport').textContent='Set up a trusted connection';message(String(error.message||error));}
   finally{refreshing=false;$('refresh').disabled=false;}}
 $('refresh').addEventListener('click',refresh);
-async function showLogs(job){$('job-output').textContent='Loading retained output…';$('log-dialog').showModal();try{const result=await command(['logs',job,'--since','0']);$('job-output').textContent=result.text||result.output||JSON.stringify(result,null,2);}catch(error){$('job-output').textContent=String(error.message||error);}}
+async function showLogs(job){$('job-output').textContent='Loading retained output…';$('log-dialog').showModal();try{const result=await command(['logs',job,'--since','0']);const output=typeof result.data==='string'?new TextDecoder().decode(Uint8Array.from(atob(result.data),c=>c.charCodeAt(0))):result.text||result.output||'';$('job-output').textContent=output||'No output recorded yet.';}catch(error){$('job-output').textContent=String(error.message||error);}}
 $('close-logs').addEventListener('click',()=>$('log-dialog').close());
 $('ssh-form').addEventListener('submit',async event=>{event.preventDefault();const form=new FormData(event.target),host=form.get('host').trim(),hostname=form.get('hostname').trim(),alias=form.get('hostKeyAlias').trim()||host;const button=event.target.querySelector('button');button.disabled=true;message('Saving the trusted SSH connection…');try{const args=['setup','--ssh-alias',host,'--host-key-alias',alias];if(hostname)args.push('--host',hostname);for(const fallback of (savedConfig?.hosts||[]).slice(1)){if(fallback!==hostname)args.push('--host',fallback);}if(savedConfig?.port)args.push('--port',String(savedConfig.port));for(const [key,flag] of [['identity_file','--identity-file'],['user','--user'],['local_build_gate','--local-build-gate']]){if(savedConfig?.[key])args.push(flag,savedConfig[key]);}const remoteAccess=form.get('remoteAccess')==='on';if(remoteAccess)args.push('--allow-remote');await command(args);savedConfig=(await invoke('preferences')).config;message('Installing your independent bridge service over trusted SSH…');const receipt=requireOk(await invoke('bootstrap',{remoteAccess}));message(receipt.runtime_state==='building'?'Connected. The Spark is preparing its pinned build runtime; you can link this laptop while it finishes.':'Connected. Your independent Spark bridge is installed.');if(remoteAccess)message('Connected. Create a new pairing code to include the selected remote relay route; existing LAN-only pairings do not gain it automatically.');}catch(error){message(String(error.message||error));}finally{button.disabled=false;}});
 

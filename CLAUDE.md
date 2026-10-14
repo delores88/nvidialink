@@ -1,4 +1,4 @@
-# Spark Dev Bridge for Claude Code
+# DGXBridge for Claude Code
 
 Follow AGENTS.md and the repository's PhaseForge read-only boundary. For Linux-capable jobs use the installed `sparkdev` CLI with the real client label `claude`. Do not invent agent acceptance by changing that label.
 

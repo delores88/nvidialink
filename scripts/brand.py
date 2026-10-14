@@ -24,7 +24,7 @@ def font(n,bold=False): return ImageFont.truetype('C:/Windows/Fonts/segoeuib.ttf
 art=Image.new('RGB',(1600,900),'#111915');d=ImageDraw.Draw(art)
 d.rounded_rectangle((55,55,1545,845),radius=30,outline='#34432f',width=2)
 mark=icon(110);art.paste(mark,(110,110),mark)
-d.text((255,120),'SPARK DEV BRIDGE',font=font(32,True),fill='#c4ef87')
+d.text((255,120),'DGXBRIDGE',font=font(32,True),fill='#c4ef87')
 d.text((255,168),'BY DELORESAI',font=font(18),fill='#93a78d')
 d.text((110,282),'Room to build.',font=font(90),fill='#edf3e8')
 d.text((116,401),'Your laptop. Your Spark.',font=font(32),fill='#abbda3')

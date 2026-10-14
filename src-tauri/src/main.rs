@@ -81,7 +81,7 @@ fn binary(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {
         return Ok(adjacent);
     }
     Err(format!(
-        "Bundled {name} is missing. Reinstall Spark Dev Bridge."
+        "Bundled {name} is missing. Reinstall DGXBridge."
     ))
 }
 
@@ -401,5 +401,5 @@ fn main() {
         .manage(PairState::default())
         .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap])
         .run(tauri::generate_context!())
-        .expect("Spark Dev Bridge could not start");
+        .expect("DGXBridge could not start");
 }

@@ -1,6 +1,6 @@
-# Spark Dev Bridge design
+# DGXBridge design
 
-Status: implementation contract, 2026-10-13. Product name Spark Dev Bridge; repository nvidialink; CLI `sparkdev`.
+Status: implementation contract, 2026-10-13. Product name DGXBridge; repository nvidialink; CLI `sparkdev`.
 
 ## Evidence and boundaries
 
@@ -57,4 +57,4 @@ Verified relay clarification from PhaseForge release agent: the shipped option i
 
 ## Product separation and license
 
-Owner direction: cross-agent questions, delegation and reviews belong to a separate CodaClauda utility, not this implementation. Both may use Spark Dev Bridge CLI/MCP job contracts. PhaseForge remains featured; both utilities are non-featured. Both utilities have public repositories/listings and MIT first-party source. Ben's explicit license direction applies to his reused first-party code in these projects, with attribution and provenance; third-party licenses are preserved. No PhaseForge files or licensing are changed.
+Owner direction: cross-agent questions, delegation and reviews belong to a separate CodaClauda utility, not this implementation. Both may use DGXBridge CLI/MCP job contracts. PhaseForge remains featured; both utilities are non-featured. Both utilities have public repositories/listings and MIT first-party source. Ben's explicit license direction applies to his reused first-party code in these projects, with attribution and provenance; third-party licenses are preserved. No PhaseForge files or licensing are changed.

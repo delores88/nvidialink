@@ -1,6 +1,6 @@
 # Product assets
 
-Original geometric Spark Dev Bridge mark and catalog artwork created with `scripts/brand.py`. MIT, copyright 2026 Ben Van Dorn / DeloresAI. No NVIDIA or beverage-company logo is used. The product describes compatibility with the owner's NVIDIA DGX Spark; it does not claim NVIDIA endorsement.
+Original geometric DGXBridge mark and catalog artwork created with `scripts/brand.py`. MIT, copyright 2026 Ben Van Dorn / DeloresAI. No NVIDIA or beverage-company logo is used. The product describes compatibility with the owner's NVIDIA DGX Spark; it does not claim NVIDIA endorsement.
 
 `assets/icon.png`: 1024-square raster; `assets/thumbnail.png`: 1600x900 catalog artwork. `src-tauri/icons/icon.ico` contains 16/24/32/48/64/128/256-pixel images for executable/installer/taskbar use. `ui/brand/icon.png` is the same original mark.
 

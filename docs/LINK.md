@@ -1,4 +1,4 @@
-# Spark Dev Bridge owner link
+# DGXBridge owner link
 
 This independent iroh bridge uses Spark Link's pinned cryptographic primitives, with its own endpoint identities, state, ALPNs and services. It does not contact PhaseForge's node or Ollama. See `PROVENANCE-LINK.md` for the upstream boundary and license.
 

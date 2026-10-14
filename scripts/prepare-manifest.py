@@ -90,7 +90,7 @@ def verify_media(item, label, input_directory):
         require(0 < width <= 4096 and 0 < height <= 4096 and width * height * 4 <= 64 * 1024**2,
                 label + ' exceeds the decoded image limits')
         picture.verify()
-    request = urllib.request.Request(item['url'], headers={'User-Agent': 'SparkDevBridge-release-check'})
+    request = urllib.request.Request(item['url'], headers={'User-Agent': 'DGXBridge-release-check'})
     # Anonymous HTTP only: gh credentials are never passed to image requests.
     with urllib.request.build_opener(ApprovedRedirect()).open(request, timeout=30) as response:
         remote = response.read(MAX_IMAGE + 1)
@@ -189,12 +189,12 @@ def manifest(value, downloads):
     commit = value['sourceCommit']
     repo_url = 'https://github.com/' + REPOSITORY
     return {
-        'schemaVersion': 1, 'appId': 'spark-dev-bridge', 'publisherId': value['publisherId'],
-        'name': 'Spark Dev Bridge', 'slug': 'spark-dev-bridge',
+        'schemaVersion': 1, 'appId': 'dgxbridge', 'publisherId': value['publisherId'],
+        'name': 'DGXBridge', 'slug': 'dgxbridge',
         'repository': {'id': REPOSITORY_ID, 'url': repo_url},
         'release': {'id': value['releaseId'], 'tag': value['tag'], 'version': value['version'], 'channel': 'beta', 'sourceCommit': commit},
         'summary': 'Run agent-directed builds and tests on your own NVIDIA DGX Spark, with a Windows desktop job board and CLI.',
-        'description': 'Spark Dev Bridge connects a Windows laptop to an owner-controlled NVIDIA DGX Spark. It provides a shared job board, resumable project transfer, durable job IDs, retained output, cancellation, per-project caches and a stdio MCP interface for coding agents. Windows work can run as native owner processes; Linux work runs in restricted Spark containers. Native laptop execution is not sandboxed.\n\nFirst setup requires an existing authenticated SSH configuration with a verified host key, Windows OpenSSH and preinstalled Microsoft Edge WebView2. Spark requires ARM64 Linux, Python 3, a working user Docker setup, systemd user services and sufficient disk/memory headroom. Setup installs independent bridge services. Phone QR approval is a separate owner action on the same LAN; optional encrypted public n0 relays can then provide remote connectivity. No owner VM is configured or assumed.\n\nRuntime setup downloads a digest-pinned OCI base, installs Debian repository packages and hash-locked Python wheels, then locks jobs to the resulting local image ID. Debian package versions are resolved at setup rather than pinned individually in this release. Optional CUDA provisioning is separate. Dependency preparation downloads project packages through a fixed domain allowlist; normal Spark jobs have no network. This beta has no automatic data cleanup and does not bundle an AI model or call model APIs. Consult the release receipts for the exact tested workflows and remaining phone/hotspot/native acceptance limits.',
+        'description': 'DGXBridge connects a Windows laptop to an owner-controlled NVIDIA DGX Spark. It provides a shared job board, resumable project transfer, durable job IDs, retained output, cancellation, per-project caches and a stdio MCP interface for coding agents. Windows work can run as native owner processes; Linux work runs in restricted Spark containers. Native laptop execution is not sandboxed.\n\nFirst setup requires an existing authenticated SSH configuration with a verified host key, Windows OpenSSH and preinstalled Microsoft Edge WebView2. Spark requires ARM64 Linux, Python 3, a working user Docker setup, systemd user services and sufficient disk/memory headroom. Setup installs independent bridge services. Phone QR approval is a separate owner action on the same LAN; optional encrypted public n0 relays can then provide remote connectivity. No owner VM is configured or assumed.\n\nRuntime setup downloads a digest-pinned OCI base, installs Debian repository packages and hash-locked Python wheels, then locks jobs to the resulting local image ID. Debian package versions are resolved at setup rather than pinned individually in this release. Optional CUDA provisioning is separate. Dependency preparation downloads project packages through a fixed domain allowlist; normal Spark jobs have no network. This beta has no automatic data cleanup and does not bundle an AI model or call model APIs. Consult the release receipts for the exact tested workflows and remaining phone/hotspot/native acceptance limits.',
         'category': 'automation', 'sourceVisibility': 'public', 'license': 'MIT',
         'distributionAuthorization': {'freeUse': True, 'marketplaceDistribution': True},
         'free': {'price': 0, 'trial': False, 'paidUnlocks': False, 'mandatoryDeveloperCredits': False},

@@ -2,7 +2,7 @@
 
 `scripts/prepare-manifest.py` prepares a release-specific manifest and verification receipt. It does not create a release, upload assets, modify another repository, submit a Marketplace draft or approve admission. Its command line has no validation bypass.
 
-The product identity is `spark-dev-bridge` for both app ID and slug. It is a public, free, MIT first-party application with explicit free-use and Marketplace distribution authorization. The release channel is beta; product version, tag and GitHub prerelease state must agree. No `featured` property is emitted. The Marketplace's existing featured-app selection is independent and stays unchanged.
+DGXBridge uses `dgxbridge` for both app ID and slug. Its Windows GUI executable is `dgxbridge.exe`, bundle identifier is `com.deloresai.dgxbridge`, and installed application directory is `DGXBridge`. It is a public, free, MIT first-party application with explicit free-use and Marketplace distribution authorization. The release channel is beta; product version, tag and GitHub prerelease state must agree. No `featured` property is emitted. The Marketplace's existing featured-app selection is independent and stays unchanged.
 
 ## Supply actual release inputs
 
