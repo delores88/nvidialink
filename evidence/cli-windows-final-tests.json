@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "platform": "Windows x86_64",
+  "status": "passed",
+  "command": "python -I D:/PhaseForge-claude/scripts/buildlock.py -- cargo test -p sparkdev --lib --locked",
+  "passed": 23,
+  "failed": 0,
+  "ignored": 0,
+  "test_seconds": 0.83,
+  "compile_seconds": 5.21,
+  "build_gate_wait_seconds": 115,
+  "release_build": "cargo auditable build -p sparkdev --release --locked through the same prescribed build gate",
+  "release_sha256": "21bfcc929b6b82be859b5c0e22e523cd14ac86255fc26bec27c6ae90012c31e7",
+  "final_source_sha256": {
+    "crates/sparkdev/src/transport.rs": "66370cc21d5d651c86f0d209eb9ddc44a6232bbb12bbe991775852f3af0ed42f",
+    "crates/sparkdev/src/mcp.rs": "787fd2bcd96f6cfdae046260c7da1ec5d193ee12d911f3bc48a12140683db99b"
+  },
+  "limitations": [
+    "Unit tests and release build do not establish installed GUI or actual model-session acceptance",
+    "Release device/planning checks are recorded separately in cli-devices-release.json"
+  ]
+}

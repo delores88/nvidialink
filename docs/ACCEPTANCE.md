@@ -59,8 +59,10 @@ the one-comment change uploaded 2220 bytes in 2.39 seconds.
 The first laptop baseline never compiled because its isolated fixture was
 nested inside this repository's Cargo workspace. That failed attempt is retained
 in `evidence/phaseforge-laptop-cold.txt`. A separate fixture outside the workspace
-was submitted with the unchanged mandatory build gate. Its completed timings
-and test counts must be added before claiming a laptop comparison.
+compiled in 15 minutes 23 seconds through the unchanged mandatory build gate.
+The bridge's own comparison job was then cancelled during tests to release
+laptop resources. It exited 130, so there are no completed laptop test counts or
+fair end-to-end comparison. [Interrupted baseline receipt](../evidence/phaseforge-laptop-corrected-interrupted.json).
 
 ## Not yet accepted
 
@@ -74,11 +76,13 @@ and test counts must be added before claiming a laptop comparison.
 - Physical network interruption during transfer and execution, and actual laptop
   sleep while a job runs. A restarted controller and interrupted CLI are different
   failure modes.
-- Marketplace publisher identity/repository grant, a release-specific manifest,
+- A release-specific Marketplace manifest,
   actual installed screenshots, payload vulnerability scan, admission and
   authenticated download verification. The installed native Marketplace is
-  signed in, but its loaded authorized repository list currently contains only
-  MyCast, PhaseForge and TuningSpork; the new repository grant remains required.
+  signed in. The publisher identity was checked against its public catalog, and
+  the public nvidialink repository was added to the existing read-only GitHub App
+  installation without changing its permissions. Native repository-list refresh
+  and submission validation remain pending.
   Browser and native login state are separate. No featured listing is requested.
 
 ## Current functional limits

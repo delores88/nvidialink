@@ -4,10 +4,8 @@ permissions:
   contents: read
 jobs:
   core:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    # Owner requirement: Windows builds and acceptance stay on the laptop.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -107,6 +107,7 @@ def main():
             handles.extend([stdout, stderr])
             procs[client] = subprocess.Popen(command, cwd=projects[client]["path"], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             receipt["actual_agent_sessions"][client] = {"fresh_process": True, "model_override": False, "session_resume": False}
+            print("Started fresh " + client + " CLI session", flush=True)
         save()
         deadline = time.monotonic() + min(max(args.deadline, 90), 600)
         jobs = {}
@@ -117,6 +118,8 @@ def main():
                     if entry.get("project") == project["id"]:
                         jobs[client] = entry
             if len(jobs) == 2 and all(j.get("state") == "running" for j in jobs.values()):
+                if not receipt["both_jobs_observed_running"]:
+                    print("Both acceptance jobs observed running on the Spark", flush=True)
                 receipt["both_jobs_observed_running"] = True
                 receipt.setdefault("overlap_observed_unix", time.time())
                 save()
