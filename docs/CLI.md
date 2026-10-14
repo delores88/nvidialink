@@ -1,0 +1,84 @@
+# Agent and human CLI
+
+`sparkdev` never prompts, invokes a pager, allocates a TTY, or interpolates workload arguments into SSH shell text. `--json` produces structured output. Attached runs stream JSON log events followed by the final result; detached commands return one JSON object. Client labels support accounting and fairness; they are not evidence that a particular AI agent actually ran a command.
+
+## Setup and state
+
+Run setup with your existing SSH alias and pinned `known_hosts` identity. All identifiers below are examples, not owner configuration.
+
+```powershell
+sparkdev setup --ssh-alias my-spark --host 192.0.2.10 --host-key-alias pinned-spark --identity-file C:/Users/You/.ssh/spark --user owner --local-build-gate C:/path/to/buildlock.py --json
+sparkdev doctor --json
+```
+
+The key path is referenced, never read, copied, or uploaded by Spark Dev Bridge. OpenSSH performs authentication in BatchMode with strict known-host verification. Multiple `--host` values are tried on connection refusal, timeout, DNS failure, or unreachable network. Authentication and host-key errors fail closed and prevent remote fallback. `--allow-remote` explicitly permits the separately paired `sparkdev-link` transport after LAN reachability fails. Pair through the desktop QR workflow after SSH bootstrap. No owner-operated relay is assumed.
+
+State defaults to the owner's unredirected Windows LocalAppData known folder plus `SparkDevBridge`, and `~/.local/state/sparkdev` on Linux. Windows uses `SHGetKnownFolderPath` with `KF_FLAG_NO_PACKAGE_REDIRECTION`, so packaged Codex and an Explorer-launched app find the same configuration. `SPARKDEV_HOME` overrides it. On first use, a valid prior config in a redirected `LOCALAPPDATA` location is copied only when the new location has no config; the original stays intact. Configuration, immutable request receipts, transfer objects, pending cancellation, job records and logs stay outside the repository. Never point this directory into a source tree. SSH bootstrap separately installs the remote controller under `~/sparkdev`.
+
+## Submit, poll and reattach
+
+```powershell
+sparkdev --client codex --json run C:/work/project --where spark --runtime rust --detach --request-id build-001 -- cargo test --locked
+sparkdev --client codex --json wait JOB_ID --timeout 20
+sparkdev --client codex --json logs JOB_ID --since 0
+sparkdev --client codex --json logs JOB_ID --since NEXT_OFFSET
+sparkdev --client codex --json status --all
+sparkdev --client codex --json cancel JOB_ID
+```
+
+Use the returned `next_offset` for subsequent logs calls. Offsets count bytes, and `data` is base64 for lossless retrieval; `text` is a UTF-8 presentation. Every captured chunk is saved locally at its original byte offset. Log queries are repeatable. SSH requests have bounded connection and process timeouts; `wait` accepts 0–60 seconds of server waiting. Network setup adds bounded transport overhead. An attached run passes through the workload exit code; its JSON contains `process_exit_code`. Detached submission, wait and logs return success for a valid operation even if a completed workload failed: inspect `state` and `exit_code`.
+
+Reuse the same `--request-id` after an ambiguous submission disconnect. The immutable request is saved before network submission and cannot be reused for different source, argv, runtime or placement. Without an explicit ID each new invocation is a new request. No-cache controls result reuse, not request identity. Run requests survive laptop disconnection once accepted by the Spark; cancel requests made offline are queued and delivered at the next authenticated command.
+
+`--argv-json C:/path/args.json` accepts a JSON array of strings instead of arguments after `--`. It is useful when shell-specific quoting is difficult. Do not put credentials in argv or that file.
+
+```json
+["python3", "-c", "import sys; print(repr(sys.argv[1:]))", "argument with spaces", "", "$literal; & text"]
+```
+
+## Placement and shared board
+
+`--where auto` chooses the laptop for explicit Windows/MSVC targets, PowerShell/cmd scripts, Windows sandbox commands, NSIS tools and Tauri installers. Other work goes to the Spark. Use `--where laptop` or `--where spark` when the command has requirements the classifier cannot infer. The selected machine and reason are included in submission output. Runtime defaults are `rust` for cargo/rustc/rustup, `node` for node/npm/npx and `python` otherwise; `--runtime` selects only an owner-provisioned registry name.
+
+The laptop runner executes native owner processes and is not Docker-sandboxed. It obtains the same worktree lease from the Spark scheduler before starting, so it requires an authenticated scheduler connection. At most two laptop jobs run concurrently. Direct Cargo invocation is wrapped in the configured build gate, with per-project CARGO_TARGET_DIR under application state. On this owner's machine all local Cargo commands must use the prescribed PhaseForge build gate unchanged, and state/build output must stay on C:. Commands that indirectly invoke Cargo must themselves use the owner's build gate; the CLI cannot inspect arbitrary script behavior.
+
+Laptop workers persist independently of the invoking CLI. On Windows they launch without inheriting the caller's capture pipes, run at lower process priority, send a shared-board heartbeat, and stop their owned process tree on cancellation or a lost lease. An expired laptop lease remains blocking on the scheduler because a sleeping laptop may resume a process. This protects the worktree from a second job; explicit terminal acknowledgement releases it. Final laptop log/board updates interrupted by a disconnect are saved and retried at the next authenticated command. `status --all` returns scheduler jobs plus laptop receipts and indicates unavailable remote state. Jobs for distinct worktrees may run independently on both machines. Laptop successful-result caching is disabled because the native host toolchain has no locked digest. Spark result reuse is scoped to the same worktree and requires matching source, exact argv, pinned runtime, worker and resource policy. Different worktrees keep isolated caches and do not share completed results. `--no-cache` forces a new execution.
+
+## Sync and locked dependency preparation
+
+```powershell
+sparkdev sync C:/work/project --check --json
+sparkdev sync C:/work/project --json
+sparkdev prepare C:/work/project --runtime rust --json
+```
+
+Sync checks every included file before network upload. Git inventory includes tracked and untracked non-ignored files. Plain directories use a guarded walk. Build outputs, symlinks/reparse points, paths outside the root, credential/key names, secret directories and recognizable credential contents are refused or excluded. Source files named `secrets.rs` are permitted; actual credential-shaped content is not. This is a conservative safety filter, not a guarantee that arbitrary unknown secret formats can be detected. Transfer uses verified SHA-256 1 MiB chunks; retries upload only missing objects. Deleted files disappear in the next immutable snapshot.
+
+`prepare` submits a fixed runtime-specific locked downloader, with the same job/wait/logs interface. It cannot run caller-supplied setup commands. Normal jobs remain network-disabled. Dependency egress uses the separately installed allowlisting proxy and fails closed if it is unavailable. See the remote controller docs for registry provisioning and supported lockfiles.
+
+## MCP
+
+Start `sparkdev --client codex mcp` or `sparkdev --client claude mcp` as an MCP stdio server. It supports initialization, tools/list, and run/wait/logs/status/cancel through the same core. Run always detaches; wait is bounded. Server launch arguments bind the accounting client, and tool calls cannot override it. JSON-RPC output contains no progress chatter. The transport uses newline-delimited JSON with a 2 MiB message limit. Real agent-session acceptance is separate from these protocol tests.
+
+## Stable control exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Command succeeded; inspect job state for detached work |
+| 2 | Invalid arguments, JSON or immutable request conflict |
+| 3 | Local configuration, filesystem or process problem |
+| 4 | Connection failure or bounded transport timeout |
+| 5 | Source/credential/path policy rejection |
+| 6 | Remote operation or protocol integrity failure |
+| 7 | SSH authentication or pinned host-key failure; no fallback |
+| 8 | Laptop admission or worktree claim conflict |
+
+Attached workload exit codes take precedence and may overlap control codes. Distinguish them through `process_exit_code` versus `{ok:false,code,message}`.
+
+## Copy-paste agent instructions
+
+For AGENTS.md or CLAUDE.md in a project that uses this utility:
+
+> Prefer sparkdev for Linux-capable builds, tests and heavy compute. Use your actual client label (`codex` or `claude`), `--json`, `run --detach` with a retained request ID, bounded `wait --timeout 20`, and incremental `logs --since OFFSET`. Check `status --all` before submitting. Keep Windows installers and Windows-only tests local using `--where laptop`. Never claim another agent's label as acceptance evidence. Treat host-key rejection as a hard stop; never disable host verification. After tool interruption reuse the request ID or job ID, rather than submit duplicate work.
+
+Codex requires process-launch permission for the installed executable and SSH/paired-link network access. In restricted environments allow those capabilities explicitly through the environment's existing controls; never weaken SSH identity verification. The owner's present session is unrestricted, which does not prove behavior in a different Codex sandbox.
