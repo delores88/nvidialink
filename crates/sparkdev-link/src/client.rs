@@ -26,8 +26,17 @@ pub async fn status() -> Result<Value> {
 }
 
 pub async fn rpc(input: Value) -> Result<Value> {
-    let request = input.get("request").context("missing RPC request")?;
+    let mut request = input.get("request").context("missing RPC request")?.clone();
+    if request.get("op").and_then(Value::as_str) == Some("wait") {
+        let timeout = request
+            .get("timeout")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(2);
+        request["timeout"] = json!(timeout);
+    }
     let dir = storage::client_dir()?;
+    let _lease = storage::endpoint_lease(&dir).await?;
     let peer: Peer = storage::read(&dir, "peer.json").context("this computer is not paired")?;
     let endpoint = wire::endpoint(storage::identity(&dir)?, &peer.relay, false).await?;
     let conn = tokio::time::timeout(
@@ -41,7 +50,7 @@ pub async fn rpc(input: Value) -> Result<Value> {
         "remote identity mismatch"
     );
     let (mut send, mut recv) = conn.open_bi().await?;
-    write_frame(&mut send, request, wire::RPC_LIMIT).await?;
+    write_frame(&mut send, &request, wire::RPC_LIMIT).await?;
     send.finish()?;
     let result = tokio::time::timeout(
         Duration::from_secs(70),
@@ -72,6 +81,7 @@ pub async fn pair(input: Value) -> Result<()> {
         "approval page is not on a private LAN"
     );
     let dir = storage::client_dir()?;
+    let _lease = storage::endpoint_lease(&dir).await?;
     let key = storage::identity(&dir)?;
     anyhow::ensure!(
         key.public().to_string() == ticket.device_id,

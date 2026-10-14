@@ -20,7 +20,7 @@ zeroize = "=1.9.1"
 url = "=2.5.8"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Registry"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_System_Registry", "Win32_UI_Shell", "Win32_System_Com"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.190"

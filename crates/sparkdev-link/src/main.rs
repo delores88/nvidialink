@@ -29,7 +29,12 @@ async fn main() {
     let result = run().await;
     if let Err(e) = result {
         // The error chain contains only fixed diagnostics; never request/ticket/key bytes.
-        let _ = output(json!({"ok":false,"error":{"code":"link_error","message":e.to_string()}}));
+        let code = if e.downcast_ref::<storage::LinkBusy>().is_some() {
+            "link_busy"
+        } else {
+            "link_error"
+        };
+        let _ = output(json!({"ok":false,"error":{"code":code,"message":e.to_string()}}));
         std::process::exit(70);
     }
 }

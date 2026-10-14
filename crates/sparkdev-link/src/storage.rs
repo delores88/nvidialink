@@ -12,13 +12,94 @@ pub fn client_dir() -> Result<PathBuf> {
     let root = if let Some(v) = std::env::var_os("SPARKDEV_HOME") {
         PathBuf::from(v)
     } else if cfg!(windows) {
-        PathBuf::from(std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA unavailable")?)
-            .join("SparkDevBridge")
+        windows_local_data()?.join("SparkDevBridge")
     } else {
         PathBuf::from(std::env::var_os("HOME").context("HOME unavailable")?)
             .join(".local/state/sparkdev")
     };
     Ok(root.join("link"))
+}
+
+#[cfg(windows)]
+fn windows_local_data() -> Result<PathBuf> {
+    use windows_sys::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
+    };
+    let mut ptr = std::ptr::null_mut();
+    let code = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_LocalAppData,
+            0x10000,
+            std::ptr::null_mut(),
+            &mut ptr,
+        )
+    };
+    if code >= 0 && !ptr.is_null() {
+        let mut len = 0;
+        unsafe {
+            while *ptr.add(len) != 0 && len < 32768 {
+                len += 1;
+            }
+        }
+        let text = unsafe { String::from_utf16(std::slice::from_raw_parts(ptr, len)) };
+        unsafe {
+            CoTaskMemFree(ptr.cast());
+        }
+        let path = PathBuf::from(text.context("invalid Windows local-data path")?);
+        anyhow::ensure!(
+            path.is_absolute(),
+            "Windows local-data path is not absolute"
+        );
+        return Ok(path);
+    }
+    let home = PathBuf::from(std::env::var_os("USERPROFILE").context("USERPROFILE unavailable")?);
+    anyhow::ensure!(
+        home.is_absolute() && home.is_dir(),
+        "invalid Windows user profile"
+    );
+    Ok(home.join("AppData/Local"))
+}
+#[cfg(not(windows))]
+fn windows_local_data() -> Result<PathBuf> {
+    anyhow::bail!("Windows local-data path unavailable")
+}
+
+/// Iroh relays route one active connection per endpoint key. Serialize the brief
+/// subprocess endpoints; remote jobs themselves stay concurrent in Docker.
+#[derive(Debug)]
+pub struct LinkBusy;
+impl std::fmt::Display for LinkBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Another Spark connection is active; retry this idempotent request")
+    }
+}
+impl std::error::Error for LinkBusy {}
+
+pub async fn endpoint_lease(dir: &Path) -> Result<File> {
+    private_dir(dir)?;
+    let path = dir.join("endpoint.lock");
+    if path.exists() {
+        regular(&path)?;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(path)?;
+    let start = std::time::Instant::now();
+    loop {
+        if file.try_lock().is_ok() {
+            return Ok(file);
+        }
+        if start.elapsed() >= std::time::Duration::from_secs(5) {
+            return Err(LinkBusy.into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }
 pub fn server_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(std::env::var_os("HOME").context("HOME unavailable")?).join("sparkdev/link"))
@@ -270,6 +351,36 @@ mod tests {
             let bytes = fs::read(d.path().join("identity.key")).unwrap();
             assert!(!bytes.windows(32).any(|w| w == a.as_bytes()));
         }
+    }
+
+    #[tokio::test]
+    async fn endpoint_lease_serializes_process_connections() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = endpoint_lease(dir.path()).await.unwrap();
+        let path = dir.path().to_path_buf();
+        let second = tokio::spawn(async move { endpoint_lease(&path).await });
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        assert!(!second.is_finished());
+        drop(first);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), second)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_ok()
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn local_data_is_not_package_redirected() {
+        let path = windows_local_data().unwrap();
+        assert!(path.is_absolute());
+        assert!(
+            !path
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("localcache\\local")
+        );
     }
     #[cfg(unix)]
     #[test]
