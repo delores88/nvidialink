@@ -1,0 +1,13 @@
+/target/
+/dist/
+/node_modules/
+**/__pycache__/
+*.pyc
+/.local/
+/evidence/private/
+*.log
+/marketplace-coordination.md
+/relay-coordination.md
+/src-tauri/target/
+/vendor-download/
+
