@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "product": "DGXBridge",
+  "version": "0.1.0-beta.2",
+  "recorded_at": "2026-10-14T04:47:48Z",
+  "method": "Windows Computer Use through @oai/sky, installed application window",
+  "installed_package_receipt": "dgxbridge-beta2-installed-package.json",
+  "checks": {
+    "startup": "passed",
+    "visible_version": "By DeloresAI · 0.1.0 beta 2",
+    "connection": "Connected; Pinned SSH · LAN",
+    "saved_jobs": "Existing Claude Code and Codex jobs displayed as Succeeded, Exit 0",
+    "pagination": "1–6 of 42 jobs; Page 1 of 7",
+    "title_bar_icon": "DGXBridge icon visible",
+    "windows_identity_and_large_icon_startup_checks": "passed by successful application startup",
+    "taskbar_pixels": "not verified: taskbar auto-hides and is outside the bounded application screenshot"
+  },
+  "limitations": [
+    "This inspection did not start new agent workloads.",
+    "Successful Windows icon assignment and readback do not establish taskbar visual acceptance.",
+    "Marketplace admission remains a separate check."
+  ]
+}

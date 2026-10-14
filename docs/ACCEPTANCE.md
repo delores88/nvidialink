@@ -38,13 +38,20 @@ Marketplace admission. A successful build does not satisfy every layer.
   October 14, before the phone confirmation UI update. This records accepted
   pairing, without identifying the physical approver or proving the new animation.
   [Sanitized pairing receipt](../remote/receipts/owner-pairing-before-phone-update.json).
-- The final DGXBridge Windows installer completed without elevation; the installed
+- The beta.1 DGXBridge Windows installer completed without elevation; the installed
   payload matched the release inputs, allowing only Tauri's documented three-byte
   NSIS bundle marker change. Installed doctor confirmed authenticated LAN SSH and
   a healthy scheduler. Native inspection showed successful pairing confirmation,
   six jobs per page, working next/previous navigation and retained page position.
   [Package receipt](../evidence/dgxbridge-installed-package.json),
   [native receipt](../evidence/dgxbridge-native-ui.json).
+- Beta.2 installed without elevation and retained working authenticated LAN SSH
+  and scheduler access. Its payload hashes matched the release inputs; CLI, link
+  sidecars and remote bundle were unchanged. The audited GUI inventory contains
+  215 packages. The source tree containing the receipt correction and taskbar fix
+  passed default Gitleaks rules with zero findings across 222 supplied files.
+  [Beta.2 package receipt](../evidence/dgxbridge-beta2-installed-package.json),
+  [source scan](../evidence/dgxbridge-beta2-source-scan.json).
 
 ## PhaseForge benchmark
 
@@ -83,6 +90,13 @@ laptop resources. It exited 130, so there are no completed laptop test counts or
 fair end-to-end comparison. [Interrupted baseline receipt](../evidence/phaseforge-laptop-corrected-interrupted.json).
 
 ## Not yet accepted
+
+Beta.2's installed native window was inspected with Computer Use: the correct
+version, title-bar icon, authenticated LAN connection, and preserved Claude/Codex
+jobs were visible. The board displayed six of 42 jobs on page one of seven.
+Startup passed its Windows identity and large-icon readback checks. This does not
+establish direct visual taskbar acceptance; see the
+[native receipt](../evidence/dgxbridge-beta2-native-ui.json).
 
 - Direct taskbar inspection; the installed executable/title bar and Start-menu
   shortcut contain the DGXBridge icon, but no taskbar screenshot was captured.

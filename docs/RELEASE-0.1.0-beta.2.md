@@ -10,8 +10,13 @@ This release also addresses the owner's report that the installed app's logo was
 missing from the Windows taskbar. It assigns the Windows process identity to the
 same ID as the installed shortcut and explicitly sets the large taskbar icon from
 the embedded multi-size ICO. Startup checks that Windows retained the icon. The
-title-bar icon keeps its existing framework-managed lifetime. Installed visual
-verification is pending; the owner's taskbar auto-hides by default.
+title-bar icon keeps its existing framework-managed lifetime. The installed app
+opens with the correct beta.2 version, title-bar icon, authenticated LAN connection
+and preserved paginated job board. Successful startup passed the Windows identity
+and large-icon readback checks. Direct taskbar visual verification remains pending;
+the owner's taskbar auto-hides and is outside the bounded application capture.
+[Installed receipt](../evidence/dgxbridge-beta2-installed-package.json) and
+[native inspection](../evidence/dgxbridge-beta2-native-ui.json) record these layers.
 
 The CLI, link sidecars and remote controller behavior remain the same as beta.1.
 Previously verified physical Spark jobs and real Claude Code/Codex MCP acceptance
