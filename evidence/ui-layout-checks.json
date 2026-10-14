@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "product": "DGXBridge",
+  "scope": "Local browser fixture with 37 synthetic jobs; not native installed acceptance",
+  "pagination": {
+    "page_size": 6,
+    "pages": 7,
+    "last_page_rows": 1,
+    "last_page_next_disabled": true,
+    "refresh_preserves_page": true
+  },
+  "connection_layout": {
+    "checked_viewports": [
+      {
+        "width": 1140,
+        "height": 790
+      },
+      {
+        "width": 850,
+        "height": 650
+      }
+    ],
+    "pending_pair_actions_separated": true,
+    "narrow_document_width": 835,
+    "narrow_scroll_width": 835,
+    "pair_button_gap_px": 10
+  },
+  "qr_primitives_changed": false,
+  "reduced_motion_styles_present": true,
+  "source_files": [
+    {
+      "path": "ui/app.js",
+      "sha256": "4a1743a7097f49e5cb1d94405d0fcadd220327d95fb3f3440739a6c93ace2003"
+    },
+    {
+      "path": "ui/index.html",
+      "sha256": "86c38a2c740687c61dfedace22d862c5fb8b9c15f4be5f07bbf4d47f6597d57b"
+    },
+    {
+      "path": "ui/style.css",
+      "sha256": "7dfd99904b12e9e291db534c0da00ee290244c9097523096d9f833206c1880b9"
+    }
+  ],
+  "limitations": [
+    "The 37 jobs and pairing ticket were synthetic fixture data",
+    "Browser module cache and CDP input timeouts occurred during checking; observed page states are recorded, not attempted inputs",
+    "Native app installation and real owner pairing confirmation still require their own receipts"
+  ]
+}

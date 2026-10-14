@@ -27,6 +27,16 @@ Marketplace admission. A successful build does not satisfy every layer.
   that it had no owner connection credentials. This is not proof of an actual
   Claude Code or Codex model calling MCP.
   [Linux CLI receipt](../remote/receipts/linux-arm64-cli-final.json).
+- A real Claude Code session called devices, plan, run, wait and logs using the
+  installed CLI, and its Spark workload succeeded. Codex called devices and plan,
+  but job submission required approval and its restricted Windows shell failed
+  because writable-root capability SIDs were unavailable. The combined test
+  correctly failed; it does not establish concurrent agent acceptance.
+  [Real session receipt](../evidence/real-agent-mcp.json).
+- The Spark recorded phone approval and device approval at 02:51:10 UTC on
+  October 14, before the phone confirmation UI update. This records accepted
+  pairing, without identifying the physical approver or proving the new animation.
+  [Sanitized pairing receipt](../remote/receipts/owner-pairing-before-phone-update.json).
 
 ## PhaseForge benchmark
 
@@ -67,8 +77,8 @@ fair end-to-end comparison. [Interrupted baseline receipt](../evidence/phaseforg
 ## Not yet accepted
 
 - Final installed Windows GUI, taskbar icon and native workflow inspection.
-- Owner phone approval of an actual QR ticket; synthetic pairing tests are a
-  separate protocol layer.
+- Actual phone inspection of the updated approval confirmation. The prior real
+  pairing receipt and synthetic confirmation tests establish separate layers.
 - Actual Claude Code and Codex sessions calling MCP and completing concurrent
   jobs. Client labels alone do not establish this.
 - Phone-hotspot remote execution through an owner VM. No deployed owner relay

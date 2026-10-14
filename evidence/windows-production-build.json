@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "status": "built",
+  "production_webview_protocol": true,
+  "windows_gui_build": {
+    "command": "cargo auditable build --manifest-path src-tauri/Cargo.toml --release --locked",
+    "gate": "unchanged owner buildlock.py",
+    "gate_wait_seconds": 1385,
+    "compile_seconds": 130
+  },
+  "files": [
+    {
+      "file": "spark-dev-bridge.exe",
+      "platform": "windows-x64",
+      "bytes": 9402368,
+      "sha256": "4f67d87fa25e810fd1db719f332d4fc9e981d8708810206a6ec393ebd3a9d28e"
+    },
+    {
+      "file": "sparkdev.exe",
+      "platform": "windows-x64",
+      "bytes": 3149824,
+      "sha256": "21bfcc929b6b82be859b5c0e22e523cd14ac86255fc26bec27c6ae90012c31e7"
+    },
+    {
+      "file": "sparkdev-link.exe",
+      "platform": "windows-x64",
+      "bytes": 13851648,
+      "sha256": "34130f9180cfe149b2ef7ea18d269d92555ac51d644e3dfac743c7658f47e53e"
+    },
+    {
+      "file": "sparkdev",
+      "platform": "linux-arm64",
+      "bytes": 3710256,
+      "sha256": "07b3b979880fbce55def2ecc434bc49987404c001f9e283ec625faee071203a7"
+    },
+    {
+      "file": "sparkdev-link",
+      "platform": "linux-arm64",
+      "bytes": 22194336,
+      "sha256": "36f15f98e9399ce507d2e296f9725b944baf63b99ebfd6be81ffe87d22525b5e"
+    },
+    {
+      "file": "sparkdev-bundle.json",
+      "platform": "bundle",
+      "bytes": 29699344,
+      "sha256": "f9dbb3c1b1d26e352bddd3d05cac3839322161360294bdf9dfde49c60d0a42fc"
+    }
+  ],
+  "inventories": [
+    {
+      "file": "syft-windows-gui.json",
+      "packages": 215,
+      "sha256": "8aad665669f7c726cedf0646b78f85175f60b9a1bdb326dc3272815195690d70",
+      "cataloger": "syft",
+      "cataloger_version": "1.54.1"
+    },
+    {
+      "file": "syft-windows-cli.json",
+      "packages": 42,
+      "sha256": "b281fe60d22a6c0ad54c783322dac1e4e08721cc3d3a3242121f5f2b62b26ac1",
+      "cataloger": "syft",
+      "cataloger_version": "1.54.1"
+    }
+  ],
+  "limitations": [
+    "Build and SBOM inventory do not establish vulnerability clearance or installed acceptance",
+    "NSIS may patch the Tauri bundle marker; verify installed payload separately"
+  ]
+}
