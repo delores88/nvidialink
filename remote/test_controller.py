@@ -241,13 +241,29 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.docker.calls)
 
     def test_owner_project_limits_are_bounded_and_reflected_in_receipt(self):
-        (self.root.parent / "limits.json").write_text(json.dumps({"v": 1, "projects": {PROJECT: {"cpu": 8, "memory_gb": 32}}}))
+        (self.root.parent / "limits.json").write_text(json.dumps({"v": 1, "projects": {PROJECT: {"cpu": 8, "memory_gb": 32, "scratch_mb": 4096}}}))
         first, _ = self.run_job()
         self.assertEqual((first["cpu"], first["memory_gb"]), (8, 32))
         argv = self.c.create_args(self.c.get_job(first["job"]))
         self.assertEqual(argv[argv.index("--memory")+1], "32g")
         self.assertEqual(argv[argv.index("--cpus")+1], "8")
         self.assertIn("CARGO_BUILD_JOBS=8", argv)
+        self.assertEqual(first["scratch_mb"], 4096)
+        self.assertIn("/tmp:rw,nosuid,nodev,size=4294967296", argv)
+
+    def test_owner_scratch_policy_is_bounded_by_memory_and_part_of_cache_key(self):
+        first, _ = self.run_job()
+        self.c.db.execute("UPDATE jobs SET state='succeeded',exit_code=0,finished=1 WHERE id=?", (first["job"],))
+        profile = self.root.parent / "limits.json"
+        profile.write_text(json.dumps({"v": 1, "projects": {PROJECT: {"cpu": 4, "memory_gb": 8, "scratch_mb": 1024}}}))
+        second, request = self.run_job(request_id="new-scratch")
+        self.assertFalse(second["cache_hit"])
+        self.assertEqual(second["scratch_mb"], 1024)
+        self.c.db.execute("UPDATE jobs SET state='succeeded',exit_code=0,finished=1 WHERE id=?", (second["job"],))
+        for memory, scratch in ((8, 4097), (1, 1024), (8, 127), (8, True)):
+            profile.write_text(json.dumps({"v": 1, "projects": {PROJECT: {"cpu": 4, "memory_gb": memory, "scratch_mb": scratch}}}))
+            with self.assertRaises(Rejected):
+                self.c.run({"v": 1, "op": "run", **request, "request_id": "invalid-scratch"})
 
     def test_gpu_watchdog_stops_only_own_job(self):
         (self.root.parent / "runtimes.json").write_text(json.dumps({"v": 1, "runtimes": {"cuda": {"image": IMAGE, "gpu": True, "provenance": "test fixture"}}}))

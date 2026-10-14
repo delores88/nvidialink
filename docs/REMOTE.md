@@ -110,10 +110,14 @@ prove that a workload stopped exactly when a lease expired.
 
 An owner-local, protected `~/sparkdev/limits.json` can grant a named worktree up to
 8 CPUs / 32 GiB without changing defaults or global/client quotas. Its schema is
-`{"v":1,"projects":{"PROJECT_SHA256":{"cpu":8,"memory_gb":32}}}`. Callers cannot
+`{"v":1,"projects":{"PROJECT_SHA256":{"cpu":8,"memory_gb":32,"scratch_mb":4096}}}`. Callers cannot
 change it through RPC. The admission record, cache key, Docker limits and thread
 environment all use the same resolved grant. Dependency preparation keeps its
 conservative default limits. Owner configuration must never be committed.
+Optional `scratch_mb` changes the job's `/tmp` tmpfs from its 512 MiB default;
+the grant must be 128–4096 MiB and no more than half the job memory limit. Tmpfs
+usage counts against that same memory limit. The resolved scratch limit is recorded
+with the job, included in cache identity, and cannot be changed for existing jobs.
 
 The container is nonroot, read-only-root, cap-drop ALL, no-new-privileges, PID limited,
 CPU/memory/swap limited, nice 10, bounded tmpfs, and network-none. Host mounts contain
@@ -153,3 +157,11 @@ for inspection; no garbage collector currently deletes them automatically. The
 controller refuses new jobs at 4096 retained records. Owners should monitor disk
 space and archive old completed work deliberately. There is no general remote output
 artifact download command yet; CLI logs and exit-code receipts are implemented.
+
+The physical PhaseForge backend benchmark at pinned upstream `ac30e04` is recorded
+in `remote/receipts/phaseforge-benchmark.json`; its corrected scratch-policy rerun
+is in `phaseforge-scratch-corrected.json`. The latter reports 1969 passed, 18 failed,
+75 ignored, including integration targets. See `NOTES_FOR_CLAUDE.md` for the
+read-only ARM64 diagnosis and Windows-only failure. This is a complete test run,
+not a passing upstream suite. The initial upload receipt describes a resumed
+73.5 MB transfer; it must not be described as a fresh whole-tree upload timing.

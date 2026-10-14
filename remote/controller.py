@@ -205,6 +205,8 @@ class Controller:
             self.db.execute("ALTER TABLE jobs ADD COLUMN proxy_image TEXT")
         if "proxy_cleaned" not in columns:
             self.db.execute("ALTER TABLE jobs ADD COLUMN proxy_cleaned INTEGER NOT NULL DEFAULT 0")
+        if "scratch_mb" not in columns:
+            self.db.execute("ALTER TABLE jobs ADD COLUMN scratch_mb INTEGER NOT NULL DEFAULT 512")
         self.docker = docker or Docker()
         self.memory_probe = memory_probe or available_gb
 
@@ -391,7 +393,7 @@ class Controller:
                 "where": "spark", "state": row["state"], "exit_code": row["exit_code"],
                 "created_at": row["created"], "started_at": row["started"], "finished_at": row["finished"],
                 "cancel_requested": bool(row["cancel"]), "cache_hit": row["cached_from"] is not None,
-                "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"]}
+                "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"], "scratch_mb": row["scratch_mb"]}
 
     def claim_conflict(self, project):
         remote = self.db.execute("SELECT id FROM jobs WHERE project=? AND state IN ('queued','starting','running')", (project,)).fetchone()
@@ -430,7 +432,7 @@ class Controller:
             if self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= MAX_JOBS:
                 reject("capacity", "Retained job capacity reached; owner must archive receipts")
             worker = Path(__file__).with_name("worker.py").read_bytes()
-            cpu, memory = CPUS, MEMORY_GB
+            cpu, memory, scratch_mb = CPUS, MEMORY_GB, 512
             profile = self.root.parent / "limits.json"
             if profile.exists() and request["op"] != "prepare":
                 if profile.is_symlink() or (os.name == "posix" and (profile.stat().st_uid != os.getuid() or profile.stat().st_mode & 0o022)):
@@ -441,12 +443,13 @@ class Controller:
                     reject("invalid_request", "Invalid owner resource policy")
                 limits = policy["projects"].get(project)
                 if limits:
-                    fields(limits, ("cpu", "memory_gb"))
+                    fields(limits, ("cpu", "memory_gb"), ("scratch_mb",))
                     cpu = integer(limits["cpu"], 1, 8)
                     memory = integer(limits["memory_gb"], 1, 32)
+                    scratch_mb = integer(limits.get("scratch_mb", 512), 128, min(4096, memory * 512))
             cache_key = sha(canonical({"project": project, "manifest": manifest_id, "argv": args,
                                       "runtime": runtime, "worker": sha(worker), "policy": 1,
-                                      "cpu": cpu, "memory": memory}))
+                                      "cpu": cpu, "memory": memory, "scratch_mb": scratch_mb}))
             cached = None if request.get("no_cache") else self.db.execute(
                 "SELECT id FROM jobs WHERE cache_key=? AND state='succeeded' AND cached_from IS NULL ORDER BY finished DESC LIMIT 1", (cache_key,)).fetchone()
             if not cached:
@@ -466,7 +469,7 @@ class Controller:
                              cache_key, cached[0] if cached else None))
             if request["op"] == "prepare":
                 self.db.execute("UPDATE jobs SET proxy_image=? WHERE id=?", (registry["python"]["image"], job))
-            self.db.execute("UPDATE jobs SET cpu=?,memory=? WHERE id=?", (cpu, memory, job))
+            self.db.execute("UPDATE jobs SET cpu=?,memory=?,scratch_mb=? WHERE id=?", (cpu, memory, scratch_mb, job))
             self.audit("job_cached" if cached else "job_queued", job, client, cache_key=cache_key, cached_from=cached[0] if cached else None)
         return self.job_status(self.get_job(job))
 
@@ -690,7 +693,7 @@ class Controller:
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}",
                 "--cpus", str(row["cpu"]), "--cpu-shares", "256", "--memory", f"{row['memory']}g", "--memory-swap", f"{row['memory']}g",
                 "--pids-limit", "1024", "--init", "--restart", "no", "--log-driver", "none", "--ulimit", f"fsize={MAX_FILE}:{MAX_FILE}",
-                "--tmpfs", "/tmp:rw,nosuid,nodev,size=536870912", "--workdir", "/work",
+                "--tmpfs", "/tmp:rw,nosuid,nodev,size=" + str(row["scratch_mb"] * 1024 * 1024), "--workdir", "/work",
                 "--label", "com.delores.sparkdev.job=" + row["id"], "--label", "com.delores.sparkdev.client=" + row["client"],
                 "--mount", f"type=bind,src={work},dst=/work", "--mount", f"type=bind,src={output},dst=/sparkdev-output",
                 "--mount", f"type=bind,src={root / 'argv.json'},dst=/sparkdev-argv.json,readonly",
@@ -799,7 +802,7 @@ class Controller:
                 self.docker.call(["start", name])
                 with self.transaction():
                     self.db.execute("UPDATE jobs SET state='running',started=COALESCE(started,?) WHERE id=?", (time.time(), row["id"]))
-                    self.audit("job_started", row["id"], row["client"], image=row["image"], cpu=row["cpu"], memory_gb=row["memory"])
+                    self.audit("job_started", row["id"], row["client"], image=row["image"], cpu=row["cpu"], memory_gb=row["memory"], scratch_mb=row["scratch_mb"])
             elif state == "running":
                 self.db.execute("UPDATE jobs SET state='running',started=COALESCE(started,?) WHERE id=?", (time.time(), row["id"]))
             elif state in ("exited", "dead"):

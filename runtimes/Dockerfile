@@ -3,7 +3,7 @@
 FROM rust:1.98.1-slim-trixie@sha256:441452f8033b93f69dce3a3ff5c821c411f0a580723e6343932fc34a1b03ba5d
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 RUN apt-get update \
- && apt-get install -y --no-install-recommends pkg-config libdbus-1-dev libssl-dev python3 python3-venv nodejs npm ca-certificates \
+ && apt-get install -y --no-install-recommends git pkg-config libdbus-1-dev libssl-dev python3 python3-venv nodejs npm ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /opt/sparkdev/requirements.txt
 RUN python3 -m venv /opt/pyenv \

@@ -50,10 +50,9 @@ def main():
                                      "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics",
                                      "--env", "OMP_NUM_THREADS=1", "--tmpfs", "/tmp:rw,nosuid,nodev,size=268435456",
                                      "--entrypoint", "python", image_id, "-c", program], timeout=120)
-    registry_path = root / "runtimes.json"
-    registry = json.loads(registry_path.read_text()) if registry_path.exists() else {"v": 1, "runtimes": {}}
-    registry["runtimes"]["cuda"] = {"image": image_id, "gpu": True, "provenance": "sparkdev CUDA Dockerfile; base " + BASE}
-    atomic(registry_path, registry)
+    import runpy
+    register = runpy.run_path(str(root / "install-runtime.py"))["register_runtimes"]
+    register(root, {"cuda": {"image": image_id, "gpu": True, "provenance": "sparkdev CUDA Dockerfile; base " + BASE}})
     receipt.update(state="succeeded", image=image_id, probe=json.loads(probe), probe_sha256=hashlib.sha256(probe).hexdigest(), finished_at=time.time(), exit_code=0)
     atomic(status, receipt)
     print(json.dumps(receipt))

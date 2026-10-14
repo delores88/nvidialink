@@ -22,7 +22,7 @@ honestly be attributed to that commit. The exact files inspected were:
 | `D:/PhaseForge-claude/spark-runtimes/pf-build/requirements.txt` | `c0174d9d0f4037c0b5f44ebab369b9df0001a33696cf35f4422780a47c41b474` |
 
 `runtimes/Dockerfile` adapts the prototype's Rust base digest, Linux development
-packages and Python virtual environment; Node was added and all product paths/tags
+packages and Python virtual environment; Node and Git were added and all product paths/tags
 were changed to Spark Dev Bridge. `runtimes/requirements.txt` copies the exact two
 version/hash pins for NumPy 2.4.6 and Pillow 12.3.0, with a new provenance comment.
 Source credential/path policy was independently implemented from the reviewed policy.
@@ -35,7 +35,15 @@ image ID; they never retag PhaseForge images. The Spark cache may reuse existing
 read-only base layers through Docker's normal content-addressed storage.
 
 Spark Dev Bridge's MIT license covers its first-party code only. Rust, Debian,
-Python, Node.js, NumPy, Pillow and NVIDIA NGC/PyTorch retain their respective
+Python, Node.js, Git, NumPy, Pillow and NVIDIA NGC/PyTorch retain their respective
 upstream licenses and notices inside their images/packages. This repository contains
 runtime recipes and hash pins, not redistributed third-party image layers. Installing
 the optional NGC runtime downloads/uses the official image under its published terms.
+
+`remote/build_linux_cli.py` uses the official build-only cargo-auditable 0.7.7
+ARM64 archive, SHA-256
+`bcb2d46002a8dd8e94d0d669cb39d38c9651db2ae5d1f3f1f1bab516ee1e212c`.
+It verifies the extracted tool digest as well. The release URL and checksum binding
+are recorded in `evidence/link/2026-10-13-arm64-auditable.json`. The tool is not
+redistributed with Spark Dev Bridge; compiled binary dependency metadata identifies
+the libraries actually linked into each release.
