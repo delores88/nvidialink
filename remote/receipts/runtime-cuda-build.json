@@ -1,0 +1,17 @@
+{
+  "base": "nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130",
+  "exit_code": 0,
+  "finished_at": 1791941201.8277838,
+  "image": "sha256:7b3d0750495e7e726631b46a369b1d534f0c7bab80ba53eff1d2c125534da9ea",
+  "probe": {
+    "bytes": 16777216,
+    "cuda": "13.0",
+    "device": "NVIDIA GB10",
+    "sum": 4194304.0,
+    "torch": "2.9.0a0+50eac811a6.nv25.09"
+  },
+  "probe_sha256": "80533c5f91b5b247a77b6453f177d1cacbddd2fbdf3ff65ec3da6d0715485987",
+  "started_at": 1791941199.7018616,
+  "state": "succeeded",
+  "tag": "sparkdev/cuda:25.09-arm64"
+}

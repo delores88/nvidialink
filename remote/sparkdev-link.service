@@ -1,0 +1,15 @@
+[Unit]
+Description=Spark Dev Bridge authenticated device bridge
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/sparkdev/bin/sparkdev-link serve
+WorkingDirectory=%h/sparkdev
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

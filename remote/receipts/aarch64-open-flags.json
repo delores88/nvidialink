@@ -1,0 +1,14 @@
+{
+  "arch": "aarch64",
+  "O_DIRECTORY": "0x4000",
+  "O_NOFOLLOW": "0x8000",
+  "O_DIRECT": "0x10000",
+  "O_LARGEFILE": "0x0",
+  "upstream_literals": {
+    "ok": false,
+    "errno": 22
+  },
+  "platform_constants": {
+    "ok": true
+  }
+}

@@ -1,0 +1,17 @@
+[Unit]
+Description=Spark Dev Bridge isolated job scheduler
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/sparkdev/controller.py serve
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+Nice=10
+# Containers are detached and deliberately survive controller stop/restart.
+KillMode=process
+
+[Install]
+WantedBy=default.target

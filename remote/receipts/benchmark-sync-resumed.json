@@ -1,0 +1,20 @@
+{
+  "kind": "resumed_sync_after_interrupted_per_chunk_upload",
+  "started_at": 1791941844.7233043,
+  "finished_at": 1791941924.674915,
+  "exit_code": 0,
+  "result": {
+    "bytes": 80873980,
+    "files": 2292,
+    "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+    "ok": true,
+    "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+    "sync_seconds": 62.6592702,
+    "transport": {
+      "reason": "LAN SSH authenticated with the configured known-host pin",
+      "selected": "ssh"
+    },
+    "uploaded_bytes": 73525917
+  },
+  "stderr": ""
+}

@@ -1,0 +1,3 @@
+# Hash-locked ARM64 wheels from the read-only prototype; provenance recorded.
+numpy==2.4.6 --hash=sha256:72fbe16c6fac95aedf5937fa873445cec2110be35d8a4e9433d7501fd98dae6b
+pillow==12.3.0 --hash=sha256:f7401aebd7f581d7f83a439d87d474999317ee099218e5ad25d125290990ba65

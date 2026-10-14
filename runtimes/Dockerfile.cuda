@@ -1,0 +1,7 @@
+# Optional owner-local runtime, derived from the official immutable NGC base.
+# This creates a distinct Spark Dev Bridge image; it does not retag any existing image.
+FROM nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130
+LABEL org.opencontainers.image.title="Spark Dev Bridge CUDA runtime"
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /work
+ENTRYPOINT ["/usr/bin/python3"]
