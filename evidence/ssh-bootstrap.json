@@ -1,0 +1,27 @@
+{
+  "cuda_state": "not_started",
+  "file_hashes": {
+    "bin/sparkdev-link": "36f15f98e9399ce507d2e296f9725b944baf63b99ebfd6be81ffe87d22525b5e",
+    "bootstrap.py": "f971e474e78c858ac385e22c9ec8d3442726c11399e5518e1a6a8693542d2b7f",
+    "controller.py": "17fceac061c73efc22e86cee0917575f85f1b55714b51574f445904b3476d421",
+    "install-cuda.py": "ec47214e7c9c035a7182cfe39e85d38e8e1ac206c946f2379bef09e0f8f1300a",
+    "install-runtime.py": "31ffd969c3dbd7a87dba75131c0990af3da958555377b23991cbd472377eaed0",
+    "prepare.py": "a573d021514019a7762b1394c7c2427dc31f02ac91e85f236380ca7be8d16778",
+    "proxy.py": "e6114a886bb6f0c8e4e4037912c7bc79df30dd60ac2c90ce9086bcf7e6dda74f",
+    "runtime/Dockerfile": "8776adff03ddd7023c75457bcd7a3d530ce9e21b254e9230d88940da594dc82a",
+    "runtime/Dockerfile.cuda": "ab31672f67b82eac6420ef002118ba9cda2c549bc83b7499507ab975352ec62a",
+    "runtime/requirements.txt": "daab21c902130834e7b1648b69ec9b6f892fa7c12747df633663f4756d8f667c",
+    "sparkdev-controller.service": "2bf6e679e0e068d696300a3d3d4a7e4acb3e7062146b345a2956dd5a51e66406",
+    "sparkdev-link.service": "0b8b3809a8d39088d439687ae8b9a94d3d830720c28c04e9f8803e696d4c93e7",
+    "worker.py": "3bf3a75a33f90e5e7c0f8f75a5f70d960b6dbd8ec9e94e75d5a6efd5c53e4ebc"
+  },
+  "installed_at": 1791942167.5215847,
+  "ok": true,
+  "revision": "f6f4e242370eec2532210e0053c7baf8f4e7c29dbbde0c3653f11921aebb7120",
+  "runtime_state": "provisioned",
+  "services": [
+    "sparkdev-controller.service",
+    "sparkdev-link.service"
+  ],
+  "elapsed_seconds": 3.922
+}

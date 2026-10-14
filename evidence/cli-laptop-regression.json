@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "client": "codex",
+  "checks": [
+    {
+      "name": "same_state_in_codex_and_explorer_environment",
+      "result": {
+        "known_folder_without_package_redirection": true,
+        "both_ssh_doctors_pass": true
+      }
+    },
+    {
+      "name": "detached_auto_laptop_and_spark_overlap",
+      "result": {
+        "laptop_job": "laptop-b9775fa59d4a4f47a06f68bc41e5189b",
+        "spark_job": "b347846fd40846bcba3a3e9d47f514af",
+        "both_observed_running": true,
+        "exit_codes": [
+          0,
+          0
+        ],
+        "admission_seconds_for_20_second_job": 0.8599999998696148,
+        "placements": [
+          "laptop",
+          "spark"
+        ],
+        "same_worktree_claim_refused": true
+      }
+    },
+    {
+      "name": "owned_laptop_process_tree_cancel",
+      "result": {
+        "job": "laptop-682bf5ded69b3104bee644a255261e66",
+        "state": "cancelled",
+        "exit_code": 130
+      }
+    }
+  ],
+  "limitations": [
+    "No actual Claude Code session in this receipt",
+    "No hotspot or laptop sleep acceptance"
+  ],
+  "status": "passed",
+  "binary_sha256": "9f995f9d11cd56183ee60af9b5fca115cb458e36f678e655969fbcee8370ef33",
+  "binary_kind": "debug validation binary; not installed release acceptance"
+}

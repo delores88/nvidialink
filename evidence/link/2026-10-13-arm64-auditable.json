@@ -1,0 +1,41 @@
+{
+  "job": {
+    "cache_hit": false,
+    "cached_from": null,
+    "cancel_requested": false,
+    "client": "codex",
+    "cpu": 4,
+    "created_at": 1791941990.59123,
+    "error": null,
+    "exit_code": 0,
+    "finished_at": 1791942071.45164,
+    "job": "e7f037c46a3a47d2b5508bda275204ee",
+    "manifest_id": "dffc319332afb4dd92ae19c0c42d7ee2e6cd04a14eb68a9c9dd3e3a0f6ff9922",
+    "memory_gb": 8,
+    "ok": true,
+    "project": "7df58191b766cabc1cbd627615f34e9f95d6cd3dabfa9b2e980079c12bfe6b11",
+    "runtime": "rust",
+    "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+    "started_at": 1791942045.5418923,
+    "state": "succeeded",
+    "where": "spark"
+  },
+  "tool": {
+    "repository": "https://github.com/rust-secure-code/cargo-auditable",
+    "release": "v0.7.7",
+    "archive_url": "https://github.com/rust-secure-code/cargo-auditable/releases/download/v0.7.7/cargo-auditable-aarch64-unknown-linux-gnu.tar.xz",
+    "archive_sha256": "bcb2d46002a8dd8e94d0d669cb39d38c9651db2ae5d1f3f1f1bab516ee1e212c",
+    "executable_sha256": "f1fe64c099129892a42c11c863a4e7c1fac94d61e16d16b7382690cf8a8c6f72",
+    "archive_digest_binding": "Official GitHub release API, then downloaded bytes checked locally and again in isolated build container"
+  },
+  "build_script": "from pathlib import Path\nimport hashlib,json,os,subprocess,tarfile\narchive=Path(\"/work/build-tools/cargo-auditable-aarch64-unknown-linux-gnu.tar.xz\")\nexpected=\"bcb2d46002a8dd8e94d0d669cb39d38c9651db2ae5d1f3f1f1bab516ee1e212c\"\nassert hashlib.sha256(archive.read_bytes()).hexdigest()==expected\nwith tarfile.open(archive) as package:\n    members=[m for m in package.getmembers() if m.isfile() and Path(m.name).name==\"cargo-auditable\"]\n    assert len(members)==1\n    raw=package.extractfile(members[0]).read()\ntool=Path(\"/work/build-tools/cargo-auditable\")\ntool.write_bytes(raw);tool.chmod(0o700)\nprint(json.dumps({\"tool\":\"cargo-auditable\",\"version\":\"0.7.7\",\"archive_sha256\":expected,\"executable_sha256\":hashlib.sha256(raw).hexdigest()}),flush=True)\nos.environ[\"PATH\"]=str(tool.parent)+\":\"+os.environ[\"PATH\"]\nraise SystemExit(subprocess.call([\"cargo\",\"auditable\",\"build\",\"--release\",\"--locked\",\"--offline\",\"-p\",\"sparkdev-link\"]))\n",
+  "source_matches_prior_76_test_receipt": true,
+  "artifact": {
+    "name": "sparkdev-link-aarch64-unknown-linux-gnu-auditable",
+    "bytes": 22194336,
+    "sha256": "36f15f98e9399ce507d2e296f9725b944baf63b99ebfd6be81ffe87d22525b5e",
+    "embedded_metadata": ".dep-v0",
+    "package_count": 266,
+    "metadata_sha256": "9e026e1d1a0aaac18892c3d9fe0e853b7da2ed3fbcf5fe8aee9fafe27722c795"
+  }
+}

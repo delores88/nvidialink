@@ -1,0 +1,32 @@
+{
+  "started_at": 1791941972.750383,
+  "finished_at": 1791941981.6438613,
+  "exit_code": 0,
+  "result": {
+    "cache_hit": false,
+    "cached_from": null,
+    "cancel_requested": false,
+    "client": "codex",
+    "cpu": 4,
+    "created_at": 1791941981.5652084,
+    "error": null,
+    "exit_code": null,
+    "finished_at": null,
+    "job": "c70dd94646914aecb79c9867d40a0030",
+    "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+    "memory_gb": 8,
+    "ok": true,
+    "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+    "request_id": "phaseforge-ac30e04-prepare-1",
+    "runtime": "rust",
+    "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+    "started_at": null,
+    "state": "queued",
+    "transport": {
+      "reason": "LAN SSH authenticated with the configured known-host pin",
+      "selected": "ssh"
+    },
+    "where": "spark"
+  },
+  "stderr": ""
+}

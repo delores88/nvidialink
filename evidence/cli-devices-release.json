@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "binary_sha256": "21bfcc929b6b82be859b5c0e22e523cd14ac86255fc26bec27c6ae90012c31e7",
+  "checks": [
+    {
+      "name": "offline_plan_without_state_upload_or_claim",
+      "passed": true
+    },
+    {
+      "name": "unconfigured_spark_does_not_imply_offline_laptop_admission",
+      "passed": true
+    },
+    {
+      "name": "refused_ssh_route_and_disabled_remote_reported_separately",
+      "passed": true,
+      "attempted_routes": [
+        {
+          "attempted": true,
+          "reason": "SSH reported connection refusal, timeout, unreachable network or DNS failure",
+          "route": "lan_ssh",
+          "status": "host_unreachable",
+          "target_index": 0
+        },
+        {
+          "attempted": false,
+          "reason": "Remote transport is disabled in local configuration",
+          "route": "paired_iroh",
+          "status": "disabled",
+          "target_index": null
+        }
+      ]
+    }
+  ],
+  "status": "passed",
+  "limitations": [
+    "Synthetic loopback refusal is not physical LAN drop or hotspot acceptance",
+    "SSH authentication failure classification has unit coverage; this test does not alter owner host pins"
+  ]
+}

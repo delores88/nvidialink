@@ -1,0 +1,9 @@
+{
+  "command": "python -I D:/PhaseForge-claude/scripts/buildlock.py -- cargo test -p sparkdev-link --locked",
+  "target_dir": "C:/Users/Benny/.cache/sparkdev-target",
+  "chunk_id": "a950b2",
+  "wall_time_seconds": 0.0000105,
+  "exit_code": 0,
+  "original_token_count": 251,
+  "output": "   Compiling sparkdev-link v0.1.0 (C:\\Users\\Benny\\OneDrive\\Desktop\\NVIDIALink\\crates\\sparkdev-link)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 29s\n     Running unittests src\\main.rs (C:/Users/Benny/.cache/sparkdev-target\\debug\\deps\\sparkdev_link-4ba32929876f64a5.exe)\n\nrunning 9 tests\ntest wire::tests::relay_policy ... ok\ntest storage::tests::local_data_is_not_package_redirected ... ok\ntest storage::tests::identity_survives_restart ... ok\ntest daemon::tests::deny_needs_token_but_not_code_and_only_decides_once ... ok\ntest daemon::tests::three_wrong_codes_burn_ticket_without_grant ... ok\ntest daemon::tests::five_bad_tokens_burn_ticket ... ok\ntest daemon::tests::unauthenticated_iroh_peer_cannot_open_rpc ... ok\ntest daemon::tests::approved_pairing_binds_both_identities_and_persists_allowlist ... ok\ntest storage::tests::endpoint_lease_serializes_process_connections ... ok\n\ntest result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s\n\n"
+}

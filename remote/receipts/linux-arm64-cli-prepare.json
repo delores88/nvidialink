@@ -1,0 +1,52 @@
+{
+  "submitted": {
+    "cache_hit": false,
+    "cached_from": null,
+    "cancel_requested": false,
+    "client": "codex",
+    "cpu": 4,
+    "created_at": 1791943471.624001,
+    "error": null,
+    "exit_code": null,
+    "finished_at": null,
+    "job": "9b4acd286a9f42bcade8734f51fcd19e",
+    "manifest_id": "b8c57acab755a9d8ea10b9869449bd33b58fc943bd10b1d4f9a491a3252af801",
+    "memory_gb": 8,
+    "ok": true,
+    "project": "7df58191b766cabc1cbd627615f34e9f95d6cd3dabfa9b2e980079c12bfe6b11",
+    "request_id": "linux-cli-git-runtime-prepare-1791943467707145600",
+    "runtime": "rust",
+    "runtime_digest": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+    "scratch_mb": 512,
+    "started_at": null,
+    "state": "queued",
+    "transport": {
+      "reason": "LAN SSH authenticated with the configured known-host pin",
+      "selected": "ssh"
+    },
+    "where": "spark"
+  },
+  "status": {
+    "cache_hit": false,
+    "cached_from": null,
+    "cancel_requested": false,
+    "client": "codex",
+    "cpu": 4,
+    "created_at": 1791943471.624001,
+    "error": null,
+    "exit_code": 0,
+    "finished_at": 1791943507.944138,
+    "job": "9b4acd286a9f42bcade8734f51fcd19e",
+    "manifest_id": "b8c57acab755a9d8ea10b9869449bd33b58fc943bd10b1d4f9a491a3252af801",
+    "memory_gb": 8,
+    "ok": true,
+    "project": "7df58191b766cabc1cbd627615f34e9f95d6cd3dabfa9b2e980079c12bfe6b11",
+    "runtime": "rust",
+    "runtime_digest": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+    "scratch_mb": 512,
+    "started_at": 1791943472.8096154,
+    "state": "succeeded",
+    "where": "spark"
+  },
+  "log_bytes": 13115
+}

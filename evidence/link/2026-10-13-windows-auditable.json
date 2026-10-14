@@ -1,0 +1,21 @@
+{
+  "command": "python -I D:/PhaseForge-claude/scripts/buildlock.py -- cargo auditable build --release --locked -p sparkdev-link",
+  "artifact": {
+    "name": "sparkdev-link.exe",
+    "bytes": 13851648,
+    "sha256": "34130f9180cfe149b2ef7ea18d269d92555ac51d644e3dfac743c7658f47e53e",
+    "dependency_metadata": ".dep-v0",
+    "packages": 272,
+    "metadata_sha256": "3ccb386eec95857ef1e970f461d8a1117619dab93cb98ca7be8da3706efc6f49"
+  },
+  "cargo_elapsed": "6m 45s",
+  "build_gate_wait_seconds": 180,
+  "release_status_smoke": {
+    "linked": false,
+    "ok": true,
+    "reachable": false,
+    "reason": "Pair this computer with the Spark over SSH first"
+  },
+  "build_output": "2026-10-13-windows-release-build.txt",
+  "test_result": "2026-10-13-windows-tests.json"
+}

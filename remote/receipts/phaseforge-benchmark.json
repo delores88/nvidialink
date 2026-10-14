@@ -1,0 +1,354 @@
+{
+  "kind": "physical_phaseforge_backend_benchmark",
+  "source_commit": "ac30e04fbf0ddc03ae0144fb06b6350cacdce1fc",
+  "actual_caller": "codex",
+  "platform": "aarch64 Linux on physical Spark",
+  "phases": [
+    {
+      "phase": "cold",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--all-targets",
+        "--no-fail-fast",
+        "--manifest-path",
+        "backend/Cargo.toml"
+      ],
+      "sync": {
+        "bytes": 80873980,
+        "files": 2292,
+        "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+        "ok": true,
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "sync_seconds": 1.7636158,
+        "transport": {
+          "reason": "LAN SSH authenticated with the configured known-host pin",
+          "selected": "ssh"
+        },
+        "uploaded_bytes": 0
+      },
+      "submitted": {
+        "cache_hit": false,
+        "cached_from": null,
+        "cancel_requested": false,
+        "client": "codex",
+        "cpu": 8,
+        "created_at": 1791942244.720997,
+        "error": null,
+        "exit_code": null,
+        "finished_at": null,
+        "job": "bad2769f76514f888ded697f0b6eed90",
+        "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+        "memory_gb": 32,
+        "ok": true,
+        "placement": "spark",
+        "placement_reason": "Explicit --where selection",
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "request_id": "pf-benchmark-cold-1791942234869825100",
+        "runtime": "rust",
+        "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+        "started_at": null,
+        "state": "queued",
+        "transport": {
+          "reason": "LAN SSH authenticated with the configured known-host pin",
+          "selected": "ssh"
+        },
+        "where": "spark"
+      },
+      "started_at": 1791942225.0881338,
+      "status": {
+        "cache_hit": false,
+        "cached_from": null,
+        "cancel_requested": false,
+        "client": "codex",
+        "cpu": 8,
+        "created_at": 1791942244.720997,
+        "error": null,
+        "exit_code": 101,
+        "finished_at": 1791942428.8413332,
+        "job": "bad2769f76514f888ded697f0b6eed90",
+        "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+        "memory_gb": 32,
+        "ok": true,
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "runtime": "rust",
+        "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+        "started_at": 1791942245.684895,
+        "state": "failed",
+        "where": "spark"
+      },
+      "log_bytes": 317407,
+      "finished_at": 1791942429.932451,
+      "wall_seconds": 204.84431719779968,
+      "execution_seconds": 183.1564381122589,
+      "test_summaries": [
+        {
+          "passed": 1962,
+          "failed": 19,
+          "ignored": 75,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        }
+      ],
+      "log": "phaseforge-cold.log",
+      "cargo_build_reports": [
+        "1m 42s"
+      ]
+    },
+    {
+      "phase": "no_change",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--all-targets",
+        "--no-fail-fast",
+        "--manifest-path",
+        "backend/Cargo.toml"
+      ],
+      "sync": {
+        "bytes": 80873980,
+        "files": 2292,
+        "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+        "ok": true,
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "sync_seconds": 1.9613117,
+        "transport": {
+          "reason": "LAN SSH authenticated with the configured known-host pin",
+          "selected": "ssh"
+        },
+        "uploaded_bytes": 0
+      },
+      "submitted": {
+        "cache_hit": false,
+        "cached_from": null,
+        "cancel_requested": false,
+        "client": "codex",
+        "cpu": 8,
+        "created_at": 1791942446.533185,
+        "error": null,
+        "exit_code": null,
+        "finished_at": null,
+        "job": "0d7cb22bde9a43bfbcc37912f9a67ace",
+        "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+        "memory_gb": 32,
+        "ok": true,
+        "placement": "spark",
+        "placement_reason": "Explicit --where selection",
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "request_id": "pf-benchmark-no_change-1791942438453394900",
+        "runtime": "rust",
+        "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+        "started_at": null,
+        "state": "queued",
+        "transport": {
+          "reason": "LAN SSH authenticated with the configured known-host pin",
+          "selected": "ssh"
+        },
+        "where": "spark"
+      },
+      "started_at": 1791942429.9410295,
+      "status": {
+        "cache_hit": false,
+        "cached_from": null,
+        "cancel_requested": false,
+        "client": "codex",
+        "cpu": 8,
+        "created_at": 1791942446.533185,
+        "error": null,
+        "exit_code": 101,
+        "finished_at": 1791942528.165629,
+        "job": "0d7cb22bde9a43bfbcc37912f9a67ace",
+        "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+        "memory_gb": 32,
+        "ok": true,
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "runtime": "rust",
+        "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+        "started_at": 1791942447.4381068,
+        "state": "failed",
+        "where": "spark"
+      },
+      "log_bytes": 307002,
+      "finished_at": 1791942529.1932626,
+      "wall_seconds": 99.25223302841187,
+      "execution_seconds": 80.72752213478088,
+      "test_summaries": [
+        {
+          "passed": 1962,
+          "failed": 19,
+          "ignored": 75,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        }
+      ],
+      "log": "phaseforge-no_change.log",
+      "cargo_build_reports": [
+        "0.16s"
+      ]
+    },
+    {
+      "phase": "one_file_change",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--all-targets",
+        "--no-fail-fast",
+        "--manifest-path",
+        "backend/Cargo.toml"
+      ],
+      "sync": {
+        "bytes": 80874045,
+        "files": 2292,
+        "manifest_id": "b5ea3867e179abaad03e3e82159571579c1a8bc367b39d19702b79bca012b795",
+        "ok": true,
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "sync_seconds": 2.3910456,
+        "transport": {
+          "reason": "LAN SSH authenticated with the configured known-host pin",
+          "selected": "ssh"
+        },
+        "uploaded_bytes": 2220
+      },
+      "submitted": {
+        "cache_hit": false,
+        "cached_from": null,
+        "cancel_requested": false,
+        "client": "codex",
+        "cpu": 8,
+        "created_at": 1791942546.832024,
+        "error": null,
+        "exit_code": null,
+        "finished_at": null,
+        "job": "71e815c64c6b4bbc9e2b1d20748301e8",
+        "manifest_id": "b5ea3867e179abaad03e3e82159571579c1a8bc367b39d19702b79bca012b795",
+        "memory_gb": 32,
+        "ok": true,
+        "placement": "spark",
+        "placement_reason": "Explicit --where selection",
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "request_id": "pf-benchmark-one_file_change-1791942538316951600",
+        "runtime": "rust",
+        "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+        "started_at": null,
+        "state": "queued",
+        "transport": {
+          "reason": "LAN SSH authenticated with the configured known-host pin",
+          "selected": "ssh"
+        },
+        "where": "spark"
+      },
+      "started_at": 1791942529.2037363,
+      "status": {
+        "cache_hit": false,
+        "cached_from": null,
+        "cancel_requested": false,
+        "client": "codex",
+        "cpu": 8,
+        "created_at": 1791942546.832024,
+        "error": null,
+        "exit_code": 101,
+        "finished_at": 1791942652.3111491,
+        "job": "71e815c64c6b4bbc9e2b1d20748301e8",
+        "manifest_id": "b5ea3867e179abaad03e3e82159571579c1a8bc367b39d19702b79bca012b795",
+        "memory_gb": 32,
+        "ok": true,
+        "project": "7dc5a54e93b4ae4163004e365d088e0faf9a1f70959701d0465ca3770e6fe80d",
+        "runtime": "rust",
+        "runtime_digest": "sha256:9ce43302dc3560a6719a127b9f8c3b113a460be74d5ffa46b3e9e7fe739dd327",
+        "started_at": 1791942547.7743986,
+        "state": "failed",
+        "where": "spark"
+      },
+      "log_bytes": 307060,
+      "finished_at": 1791942653.4880102,
+      "wall_seconds": 124.28427386283875,
+      "execution_seconds": 104.53675055503845,
+      "test_summaries": [
+        {
+          "passed": 1962,
+          "failed": 19,
+          "ignored": 75,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 2,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        },
+        {
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        }
+      ],
+      "log": "phaseforge-one_file_change.log",
+      "cargo_build_reports": [
+        "24.04s"
+      ]
+    }
+  ],
+  "started_at": 1791942225.0881338,
+  "laptop_comparison": "pending separate receipt",
+  "completed": true,
+  "finished_at": 1791942653.5008857
+}

@@ -1,0 +1,15 @@
+{
+  "source": "https://deloresai.com/api/v1/catalog/phaseforge?acceptancePolicy=immutable-release",
+  "observed_at": "2026-10-14T02:21:48.4032992Z",
+  "app": {
+    "id": "re0UrK_3SdRXiC5SoJttPHPP",
+    "slug": "phaseforge",
+    "publisherId": "idFUpIv8h0zRX8OxpjsAWgQk",
+    "publisher": {
+      "id": "idFUpIv8h0zRX8OxpjsAWgQk",
+      "name": "DeloresAI"
+    }
+  },
+  "native_account_and_existing_release_ownership_observed": true,
+  "new_repository_grant_observed": false
+}

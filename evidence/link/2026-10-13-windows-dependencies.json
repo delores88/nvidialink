@@ -1,0 +1,2546 @@
+{
+  "packages": [
+    {
+      "name": "aead",
+      "version": "0.5.2",
+      "source": "crates.io",
+      "dependencies": [
+        35,
+        74
+      ]
+    },
+    {
+      "name": "aes",
+      "version": "0.8.4",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        26,
+        33
+      ]
+    },
+    {
+      "name": "aes-gcm",
+      "version": "0.10.3",
+      "source": "crates.io",
+      "dependencies": [
+        0,
+        1,
+        26,
+        37,
+        77,
+        202
+      ]
+    },
+    {
+      "name": "anyhow",
+      "version": "1.0.104",
+      "source": "crates.io"
+    },
+    {
+      "name": "arc-swap",
+      "version": "1.9.2",
+      "source": "crates.io",
+      "dependencies": [
+        172
+      ]
+    },
+    {
+      "name": "arrayvec",
+      "version": "0.7.8",
+      "source": "crates.io"
+    },
+    {
+      "name": "atomic-waker",
+      "version": "1.1.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "attohttpc",
+      "version": "0.30.1",
+      "source": "crates.io",
+      "dependencies": [
+        11,
+        84,
+        118,
+        238
+      ]
+    },
+    {
+      "name": "autocfg",
+      "version": "1.5.1",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "backon",
+      "version": "1.6.0",
+      "source": "crates.io",
+      "dependencies": [
+        58,
+        214
+      ]
+    },
+    {
+      "name": "base16ct",
+      "version": "1.0.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "base64",
+      "version": "0.22.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "base64",
+      "version": "0.23.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "base64ct",
+      "version": "1.8.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "bip39",
+      "version": "2.2.0",
+      "source": "crates.io",
+      "dependencies": [
+        15,
+        177,
+        233
+      ]
+    },
+    {
+      "name": "bitcoin_hashes",
+      "version": "0.13.1",
+      "source": "crates.io",
+      "dependencies": [
+        81
+      ]
+    },
+    {
+      "name": "bitflags",
+      "version": "2.13.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "blake3",
+      "version": "1.8.7",
+      "source": "crates.io",
+      "dependencies": [
+        5,
+        21,
+        22,
+        30,
+        34
+      ]
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "source": "crates.io",
+      "dependencies": [
+        74
+      ]
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.12.1",
+      "source": "crates.io",
+      "dependencies": [
+        89
+      ]
+    },
+    {
+      "name": "bytes",
+      "version": "1.12.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "cc",
+      "version": "1.8.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        59,
+        186
+      ]
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.5",
+      "source": "crates.io"
+    },
+    {
+      "name": "cfg_aliases",
+      "version": "0.2.2",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "chacha20",
+      "version": "0.10.2",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        34,
+        162
+      ]
+    },
+    {
+      "name": "chrono",
+      "version": "0.4.45",
+      "source": "crates.io",
+      "dependencies": [
+        135,
+        177,
+        250
+      ]
+    },
+    {
+      "name": "cipher",
+      "version": "0.4.4",
+      "source": "crates.io",
+      "dependencies": [
+        35,
+        105
+      ]
+    },
+    {
+      "name": "cmov",
+      "version": "0.5.4",
+      "source": "crates.io"
+    },
+    {
+      "name": "cobs",
+      "version": "0.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        207
+      ]
+    },
+    {
+      "name": "const-oid",
+      "version": "0.10.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "constant_time_eq",
+      "version": "0.4.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "convert_case",
+      "version": "0.10.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        234
+      ]
+    },
+    {
+      "name": "cordyceps",
+      "version": "0.3.5",
+      "source": "crates.io"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17",
+      "source": "crates.io"
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.3.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "source": "crates.io",
+      "dependencies": [
+        74,
+        231
+      ]
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.2.2",
+      "source": "crates.io",
+      "dependencies": [
+        89,
+        162
+      ]
+    },
+    {
+      "name": "ctr",
+      "version": "0.9.2",
+      "source": "crates.io",
+      "dependencies": [
+        26
+      ]
+    },
+    {
+      "name": "ctutils",
+      "version": "0.4.3",
+      "source": "crates.io",
+      "dependencies": [
+        27
+      ]
+    },
+    {
+      "name": "curve25519-dalek",
+      "version": "5.0.0",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        34,
+        40,
+        50,
+        162,
+        167,
+        177,
+        202,
+        266
+      ]
+    },
+    {
+      "name": "curve25519-dalek-derive",
+      "version": "0.1.1",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "data-encoding",
+      "version": "2.11.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "data-encoding-macro",
+      "version": "0.1.21",
+      "source": "crates.io",
+      "dependencies": [
+        41,
+        43
+      ]
+    },
+    {
+      "name": "data-encoding-macro-internal",
+      "version": "0.1.19",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        41,
+        204
+      ]
+    },
+    {
+      "name": "der",
+      "version": "0.8.2",
+      "source": "crates.io",
+      "dependencies": [
+        29,
+        144,
+        266
+      ]
+    },
+    {
+      "name": "deranged",
+      "version": "0.5.9",
+      "source": "crates.io"
+    },
+    {
+      "name": "derive_more",
+      "version": "2.1.1",
+      "source": "crates.io",
+      "dependencies": [
+        47
+      ]
+    },
+    {
+      "name": "derive_more-impl",
+      "version": "2.1.1",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        31,
+        158,
+        160,
+        167,
+        203,
+        235
+      ]
+    },
+    {
+      "name": "diatomic-waker",
+      "version": "0.2.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7",
+      "source": "crates.io",
+      "dependencies": [
+        18,
+        35,
+        202
+      ]
+    },
+    {
+      "name": "digest",
+      "version": "0.11.3",
+      "source": "crates.io",
+      "dependencies": [
+        19,
+        36
+      ]
+    },
+    {
+      "name": "displaydoc",
+      "version": "0.2.7",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "ed25519",
+      "version": "3.0.0",
+      "source": "crates.io",
+      "dependencies": [
+        149,
+        182,
+        187
+      ]
+    },
+    {
+      "name": "ed25519-dalek",
+      "version": "3.0.0",
+      "source": "crates.io",
+      "dependencies": [
+        39,
+        52,
+        162,
+        177,
+        185,
+        187,
+        202,
+        266
+      ]
+    },
+    {
+      "name": "embedded-io",
+      "version": "0.4.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "embedded-io",
+      "version": "0.6.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "enum-assoc",
+      "version": "1.4.1",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "equivalent",
+      "version": "1.0.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "fastrand",
+      "version": "2.5.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.14",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "fnv",
+      "version": "1.0.7",
+      "source": "crates.io"
+    },
+    {
+      "name": "foldhash",
+      "version": "0.2.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "form_urlencoded",
+      "version": "1.2.2",
+      "source": "crates.io",
+      "dependencies": [
+        145
+      ]
+    },
+    {
+      "name": "futures",
+      "version": "0.3.34",
+      "source": "crates.io",
+      "dependencies": [
+        65,
+        66,
+        67,
+        68,
+        71,
+        72,
+        73
+      ]
+    },
+    {
+      "name": "futures-buffered",
+      "version": "0.2.13",
+      "source": "crates.io",
+      "dependencies": [
+        32,
+        48,
+        66,
+        148,
+        197
+      ]
+    },
+    {
+      "name": "futures-channel",
+      "version": "0.3.34",
+      "source": "crates.io",
+      "dependencies": [
+        66,
+        71
+      ]
+    },
+    {
+      "name": "futures-core",
+      "version": "0.3.34",
+      "source": "crates.io"
+    },
+    {
+      "name": "futures-executor",
+      "version": "0.3.34",
+      "source": "crates.io",
+      "dependencies": [
+        66,
+        72,
+        73
+      ]
+    },
+    {
+      "name": "futures-io",
+      "version": "0.3.34",
+      "source": "crates.io"
+    },
+    {
+      "name": "futures-lite",
+      "version": "2.6.1",
+      "source": "crates.io",
+      "dependencies": [
+        58,
+        66,
+        68,
+        141,
+        148
+      ]
+    },
+    {
+      "name": "futures-macro",
+      "version": "0.3.34",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "futures-sink",
+      "version": "0.3.34",
+      "source": "crates.io"
+    },
+    {
+      "name": "futures-task",
+      "version": "0.3.34",
+      "source": "crates.io"
+    },
+    {
+      "name": "futures-util",
+      "version": "0.3.34",
+      "source": "crates.io",
+      "dependencies": [
+        65,
+        66,
+        68,
+        70,
+        71,
+        72,
+        122,
+        148,
+        190
+      ]
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7",
+      "source": "crates.io",
+      "dependencies": [
+        231,
+        240
+      ]
+    },
+    {
+      "name": "getrandom",
+      "version": "0.2.17",
+      "source": "crates.io",
+      "dependencies": [
+        22
+      ]
+    },
+    {
+      "name": "getrandom",
+      "version": "0.4.3",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        162
+      ]
+    },
+    {
+      "name": "ghash",
+      "version": "0.5.1",
+      "source": "crates.io",
+      "dependencies": [
+        139,
+        150
+      ]
+    },
+    {
+      "name": "h2",
+      "version": "0.4.20",
+      "source": "crates.io",
+      "dependencies": [
+        6,
+        20,
+        60,
+        66,
+        71,
+        84,
+        104,
+        190,
+        214,
+        218,
+        227
+      ]
+    },
+    {
+      "name": "hashbrown",
+      "version": "0.17.1",
+      "source": "crates.io",
+      "dependencies": [
+        61
+      ]
+    },
+    {
+      "name": "heck",
+      "version": "0.5.0",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "hex-conservative",
+      "version": "0.1.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "hkdf",
+      "version": "0.12.4",
+      "source": "crates.io",
+      "dependencies": [
+        83
+      ]
+    },
+    {
+      "name": "hmac",
+      "version": "0.12.1",
+      "source": "crates.io",
+      "dependencies": [
+        49
+      ]
+    },
+    {
+      "name": "http",
+      "version": "1.5.0",
+      "source": "crates.io",
+      "dependencies": [
+        20,
+        114
+      ]
+    },
+    {
+      "name": "http-body",
+      "version": "1.1.0",
+      "source": "crates.io",
+      "dependencies": [
+        20,
+        84
+      ]
+    },
+    {
+      "name": "http-body-util",
+      "version": "0.1.5",
+      "source": "crates.io",
+      "dependencies": [
+        20,
+        66,
+        84,
+        85,
+        148
+      ]
+    },
+    {
+      "name": "httparse",
+      "version": "1.10.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "httpdate",
+      "version": "1.0.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "hybrid-array",
+      "version": "0.4.15",
+      "source": "crates.io",
+      "dependencies": [
+        231
+      ]
+    },
+    {
+      "name": "hyper",
+      "version": "1.12.0",
+      "source": "crates.io",
+      "dependencies": [
+        6,
+        20,
+        65,
+        66,
+        78,
+        84,
+        85,
+        87,
+        88,
+        114,
+        148,
+        191,
+        214,
+        241
+      ]
+    },
+    {
+      "name": "hyper-rustls",
+      "version": "0.27.10",
+      "source": "crates.io",
+      "dependencies": [
+        84,
+        90,
+        92,
+        168,
+        214,
+        216,
+        226
+      ]
+    },
+    {
+      "name": "hyper-util",
+      "version": "0.1.21",
+      "source": "crates.io",
+      "dependencies": [
+        12,
+        20,
+        65,
+        73,
+        84,
+        85,
+        87,
+        90,
+        107,
+        115,
+        145,
+        148,
+        192,
+        214,
+        226,
+        227
+      ]
+    },
+    {
+      "name": "icu_collections",
+      "version": "2.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        51,
+        155,
+        239,
+        262,
+        264,
+        269
+      ]
+    },
+    {
+      "name": "icu_locale_core",
+      "version": "2.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        51,
+        116,
+        212,
+        259,
+        269
+      ]
+    },
+    {
+      "name": "icu_normalizer",
+      "version": "2.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        93,
+        96,
+        97,
+        99,
+        191,
+        269
+      ]
+    },
+    {
+      "name": "icu_normalizer_data",
+      "version": "2.3.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "icu_properties",
+      "version": "2.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        51,
+        93,
+        94,
+        98,
+        99,
+        268,
+        269
+      ]
+    },
+    {
+      "name": "icu_properties_data",
+      "version": "2.3.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "icu_provider",
+      "version": "2.3.1",
+      "source": "crates.io",
+      "dependencies": [
+        51,
+        94,
+        259,
+        262,
+        264,
+        268,
+        269
+      ]
+    },
+    {
+      "name": "identity-hash",
+      "version": "0.1.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "idna",
+      "version": "1.1.0",
+      "source": "crates.io",
+      "dependencies": [
+        102,
+        191,
+        239
+      ]
+    },
+    {
+      "name": "idna_adapter",
+      "version": "1.2.2",
+      "source": "crates.io",
+      "dependencies": [
+        95,
+        97
+      ]
+    },
+    {
+      "name": "igd-next",
+      "version": "0.17.1",
+      "source": "crates.io",
+      "dependencies": [
+        7,
+        20,
+        63,
+        84,
+        86,
+        90,
+        92,
+        118,
+        161,
+        214,
+        238,
+        261
+      ]
+    },
+    {
+      "name": "indexmap",
+      "version": "2.14.2",
+      "source": "crates.io",
+      "dependencies": [
+        57,
+        79
+      ]
+    },
+    {
+      "name": "inout",
+      "version": "0.1.4",
+      "source": "crates.io",
+      "dependencies": [
+        74
+      ]
+    },
+    {
+      "name": "ipconfig",
+      "version": "0.3.4",
+      "source": "crates.io",
+      "dependencies": [
+        192,
+        243,
+        252,
+        253,
+        255
+      ]
+    },
+    {
+      "name": "ipnet",
+      "version": "2.12.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "iroh",
+      "version": "1.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        9,
+        17,
+        20,
+        23,
+        38,
+        41,
+        46,
+        53,
+        73,
+        84,
+        107,
+        109,
+        110,
+        111,
+        113,
+        125,
+        127,
+        128,
+        130,
+        131,
+        132,
+        133,
+        140,
+        146,
+        151,
+        152,
+        161,
+        164,
+        166,
+        168,
+        169,
+        177,
+        191,
+        200,
+        214,
+        217,
+        218,
+        227,
+        238
+      ]
+    },
+    {
+      "name": "iroh-base",
+      "version": "1.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        39,
+        41,
+        42,
+        46,
+        53,
+        125,
+        161,
+        177,
+        238,
+        266
+      ]
+    },
+    {
+      "name": "iroh-dns",
+      "version": "1.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        4,
+        23,
+        46,
+        109,
+        124,
+        125,
+        127,
+        151,
+        161,
+        168,
+        189,
+        200,
+        214,
+        227,
+        238
+      ]
+    },
+    {
+      "name": "iroh-metrics",
+      "version": "1.0.2",
+      "source": "crates.io",
+      "dependencies": [
+        112,
+        114,
+        125,
+        151,
+        173,
+        177,
+        227
+      ]
+    },
+    {
+      "name": "iroh-metrics-derive",
+      "version": "1.0.1",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        80,
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "iroh-relay",
+      "version": "1.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        17,
+        20,
+        23,
+        41,
+        46,
+        84,
+        86,
+        90,
+        92,
+        109,
+        110,
+        111,
+        119,
+        125,
+        127,
+        131,
+        132,
+        136,
+        146,
+        153,
+        161,
+        164,
+        168,
+        169,
+        177,
+        178,
+        200,
+        214,
+        216,
+        218,
+        219,
+        227,
+        238,
+        242
+      ]
+    },
+    {
+      "name": "itoa",
+      "version": "1.0.18",
+      "source": "crates.io"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.190",
+      "source": "crates.io"
+    },
+    {
+      "name": "litemap",
+      "version": "0.8.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "lock_api",
+      "version": "0.4.14",
+      "source": "crates.io",
+      "dependencies": [
+        174
+      ]
+    },
+    {
+      "name": "log",
+      "version": "0.4.34",
+      "source": "crates.io"
+    },
+    {
+      "name": "lru",
+      "version": "0.18.5",
+      "source": "crates.io",
+      "dependencies": [
+        79
+      ]
+    },
+    {
+      "name": "lru-slab",
+      "version": "0.1.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "mac-addr",
+      "version": "0.3.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "memchr",
+      "version": "2.8.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "mio",
+      "version": "1.2.4",
+      "source": "crates.io",
+      "dependencies": [
+        255
+      ]
+    },
+    {
+      "name": "n0-dns-resolver",
+      "version": "0.1.0",
+      "source": "crates.io",
+      "dependencies": [
+        46,
+        106,
+        119,
+        125,
+        127,
+        161,
+        164,
+        166,
+        168,
+        189,
+        214,
+        216,
+        227,
+        242
+      ]
+    },
+    {
+      "name": "n0-error",
+      "version": "1.0.1",
+      "source": "crates.io",
+      "dependencies": [
+        126,
+        196
+      ]
+    },
+    {
+      "name": "n0-error-macros",
+      "version": "1.0.1",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "n0-future",
+      "version": "0.3.2",
+      "source": "crates.io",
+      "dependencies": [
+        23,
+        46,
+        64,
+        69,
+        73,
+        146,
+        214,
+        218
+      ]
+    },
+    {
+      "name": "n0-watcher",
+      "version": "1.0.0",
+      "source": "crates.io",
+      "dependencies": [
+        46,
+        125,
+        127
+      ]
+    },
+    {
+      "name": "netdev",
+      "version": "0.45.1",
+      "source": "crates.io",
+      "dependencies": [
+        107,
+        121,
+        255
+      ]
+    },
+    {
+      "name": "netwatch",
+      "version": "0.19.3",
+      "source": "crates.io",
+      "dependencies": [
+        6,
+        20,
+        23,
+        46,
+        107,
+        115,
+        125,
+        127,
+        128,
+        129,
+        133,
+        148,
+        177,
+        192,
+        209,
+        214,
+        218,
+        227,
+        244,
+        253,
+        258
+      ]
+    },
+    {
+      "name": "noq",
+      "version": "1.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        20,
+        23,
+        46,
+        132,
+        133,
+        148,
+        166,
+        168,
+        192,
+        207,
+        214,
+        217,
+        227
+      ]
+    },
+    {
+      "name": "noq-proto",
+      "version": "1.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        2,
+        20,
+        46,
+        56,
+        100,
+        120,
+        161,
+        163,
+        165,
+        166,
+        168,
+        190,
+        193,
+        207,
+        213,
+        227
+      ]
+    },
+    {
+      "name": "noq-udp",
+      "version": "1.3.0",
+      "source": "crates.io",
+      "dependencies": [
+        23,
+        115,
+        192,
+        227,
+        255
+      ]
+    },
+    {
+      "name": "num-conv",
+      "version": "0.2.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "num-traits",
+      "version": "0.2.19",
+      "source": "crates.io",
+      "dependencies": [
+        8
+      ]
+    },
+    {
+      "name": "num_enum",
+      "version": "0.7.6",
+      "source": "crates.io",
+      "dependencies": [
+        137,
+        172
+      ]
+    },
+    {
+      "name": "num_enum_derive",
+      "version": "0.7.6",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        157,
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "once_cell",
+      "version": "1.21.4",
+      "source": "crates.io"
+    },
+    {
+      "name": "opaque-debug",
+      "version": "0.3.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "papaya",
+      "version": "0.2.5",
+      "source": "crates.io",
+      "dependencies": [
+        57,
+        175
+      ]
+    },
+    {
+      "name": "parking",
+      "version": "2.2.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "parking_lot",
+      "version": "0.12.5",
+      "source": "crates.io",
+      "dependencies": [
+        117,
+        143
+      ]
+    },
+    {
+      "name": "parking_lot_core",
+      "version": "0.9.12",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        191,
+        250
+      ]
+    },
+    {
+      "name": "pem-rfc7468",
+      "version": "1.0.0",
+      "source": "crates.io",
+      "dependencies": [
+        13
+      ]
+    },
+    {
+      "name": "percent-encoding",
+      "version": "2.3.2",
+      "source": "crates.io"
+    },
+    {
+      "name": "pin-project",
+      "version": "1.1.13",
+      "source": "crates.io",
+      "dependencies": [
+        147
+      ]
+    },
+    {
+      "name": "pin-project-internal",
+      "version": "1.1.13",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "pin-project-lite",
+      "version": "0.2.17",
+      "source": "crates.io"
+    },
+    {
+      "name": "pkcs8",
+      "version": "0.11.0",
+      "source": "crates.io",
+      "dependencies": [
+        44,
+        198
+      ]
+    },
+    {
+      "name": "polyval",
+      "version": "0.6.2",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        33,
+        139,
+        236
+      ]
+    },
+    {
+      "name": "portable-atomic",
+      "version": "1.15.0",
+      "source": "crates.io",
+      "dependencies": [
+        177
+      ]
+    },
+    {
+      "name": "portmapper",
+      "version": "0.19.3",
+      "source": "crates.io",
+      "dependencies": [
+        11,
+        20,
+        46,
+        92,
+        103,
+        111,
+        115,
+        125,
+        127,
+        130,
+        136,
+        161,
+        177,
+        191,
+        192,
+        209,
+        214,
+        218,
+        225,
+        227,
+        238
+      ]
+    },
+    {
+      "name": "postcard",
+      "version": "1.1.3",
+      "source": "crates.io",
+      "dependencies": [
+        28,
+        54,
+        55,
+        154,
+        177
+      ]
+    },
+    {
+      "name": "postcard-derive",
+      "version": "0.2.2",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "potential_utf",
+      "version": "0.1.6",
+      "source": "crates.io",
+      "dependencies": [
+        269
+      ]
+    },
+    {
+      "name": "powerfmt",
+      "version": "0.2.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "proc-macro-crate",
+      "version": "3.5.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        221
+      ]
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "source": "crates.io",
+      "dependencies": [
+        232
+      ]
+    },
+    {
+      "name": "qrcode",
+      "version": "0.14.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47",
+      "source": "crates.io",
+      "dependencies": [
+        158
+      ]
+    },
+    {
+      "name": "rand",
+      "version": "0.10.3",
+      "source": "crates.io",
+      "dependencies": [
+        24,
+        76,
+        162
+      ]
+    },
+    {
+      "name": "rand_core",
+      "version": "0.10.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "rand_pcg",
+      "version": "0.10.2",
+      "source": "crates.io",
+      "dependencies": [
+        162
+      ]
+    },
+    {
+      "name": "reqwest",
+      "version": "0.13.5",
+      "source": "crates.io",
+      "dependencies": [
+        12,
+        20,
+        66,
+        73,
+        84,
+        85,
+        86,
+        90,
+        91,
+        92,
+        118,
+        145,
+        148,
+        168,
+        169,
+        170,
+        205,
+        214,
+        216,
+        218,
+        223,
+        224,
+        226,
+        238
+      ]
+    },
+    {
+      "name": "ring",
+      "version": "0.17.14",
+      "source": "crates.io",
+      "dependencies": [
+        21,
+        22,
+        75,
+        237
+      ]
+    },
+    {
+      "name": "rustc-hash",
+      "version": "2.1.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "rustc_version",
+      "version": "0.4.1",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        176
+      ]
+    },
+    {
+      "name": "rustls",
+      "version": "0.23.45",
+      "source": "crates.io",
+      "dependencies": [
+        118,
+        138,
+        165,
+        169,
+        171,
+        202,
+        266
+      ]
+    },
+    {
+      "name": "rustls-pki-types",
+      "version": "1.15.1",
+      "source": "crates.io",
+      "dependencies": [
+        266
+      ]
+    },
+    {
+      "name": "rustls-platform-verifier",
+      "version": "0.7.1",
+      "source": "crates.io",
+      "dependencies": [
+        118,
+        168,
+        255
+      ]
+    },
+    {
+      "name": "rustls-webpki",
+      "version": "0.103.15",
+      "source": "crates.io",
+      "dependencies": [
+        165,
+        169,
+        237
+      ]
+    },
+    {
+      "name": "rustversion",
+      "version": "1.0.23",
+      "source": "crates.io"
+    },
+    {
+      "name": "ryu",
+      "version": "1.0.23",
+      "source": "crates.io"
+    },
+    {
+      "name": "scopeguard",
+      "version": "1.2.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "seize",
+      "version": "0.5.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "semver",
+      "version": "1.0.28",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "serde",
+      "version": "1.0.229",
+      "source": "crates.io",
+      "dependencies": [
+        179,
+        180
+      ]
+    },
+    {
+      "name": "serde_bytes",
+      "version": "0.11.19",
+      "source": "crates.io",
+      "dependencies": [
+        179
+      ]
+    },
+    {
+      "name": "serde_core",
+      "version": "1.0.229",
+      "source": "crates.io"
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.152",
+      "source": "crates.io",
+      "dependencies": [
+        114,
+        122,
+        179,
+        271
+      ]
+    },
+    {
+      "name": "serdect",
+      "version": "0.4.3",
+      "source": "crates.io",
+      "dependencies": [
+        10,
+        177
+      ]
+    },
+    {
+      "name": "sha1_smol",
+      "version": "1.0.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        33,
+        49
+      ]
+    },
+    {
+      "name": "sha2",
+      "version": "0.11.1",
+      "source": "crates.io",
+      "dependencies": [
+        22,
+        34,
+        50
+      ]
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "signature",
+      "version": "3.0.0",
+      "source": "crates.io",
+      "dependencies": [
+        162
+      ]
+    },
+    {
+      "name": "simdutf8",
+      "version": "0.1.5",
+      "source": "crates.io"
+    },
+    {
+      "name": "simple-dns",
+      "version": "0.12.0",
+      "source": "crates.io",
+      "dependencies": [
+        16
+      ]
+    },
+    {
+      "name": "slab",
+      "version": "0.4.12",
+      "source": "crates.io"
+    },
+    {
+      "name": "smallvec",
+      "version": "1.16.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "socket2",
+      "version": "0.6.5",
+      "source": "crates.io",
+      "dependencies": [
+        255
+      ]
+    },
+    {
+      "name": "sorted-index-buffer",
+      "version": "0.2.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "spark-link-proto",
+      "version": "0.1.0",
+      "source": "local",
+      "dependencies": [
+        11,
+        14,
+        41,
+        53,
+        76,
+        82,
+        83,
+        177,
+        181,
+        184,
+        207,
+        214,
+        238,
+        266
+      ]
+    },
+    {
+      "name": "sparkdev-link",
+      "version": "0.1.0",
+      "source": "local",
+      "dependencies": [
+        3,
+        11,
+        108,
+        159,
+        177,
+        181,
+        184,
+        194,
+        214,
+        238,
+        255,
+        266
+      ],
+      "root": true
+    },
+    {
+      "name": "spez",
+      "version": "0.1.2",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "spin",
+      "version": "0.10.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "spki",
+      "version": "0.8.1",
+      "source": "crates.io",
+      "dependencies": [
+        13,
+        44
+      ]
+    },
+    {
+      "name": "stable_deref_trait",
+      "version": "1.2.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "strum",
+      "version": "0.28.0",
+      "source": "crates.io",
+      "dependencies": [
+        201
+      ]
+    },
+    {
+      "name": "strum_macros",
+      "version": "0.28.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        80,
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "subtle",
+      "version": "2.6.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "syn",
+      "version": "2.0.119",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        232
+      ]
+    },
+    {
+      "name": "syn",
+      "version": "3.0.9",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        232
+      ]
+    },
+    {
+      "name": "sync_wrapper",
+      "version": "1.0.2",
+      "source": "crates.io",
+      "dependencies": [
+        66
+      ]
+    },
+    {
+      "name": "synstructure",
+      "version": "0.14.0",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "thiserror",
+      "version": "2.0.21",
+      "source": "crates.io",
+      "dependencies": [
+        208
+      ]
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "2.0.21",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "time",
+      "version": "0.3.55",
+      "source": "crates.io",
+      "dependencies": [
+        45,
+        134,
+        156,
+        179,
+        210,
+        211
+      ]
+    },
+    {
+      "name": "time-core",
+      "version": "0.1.9",
+      "source": "crates.io"
+    },
+    {
+      "name": "time-macros",
+      "version": "0.2.32",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        134,
+        210
+      ]
+    },
+    {
+      "name": "tinystr",
+      "version": "0.8.4",
+      "source": "crates.io",
+      "dependencies": [
+        51,
+        269
+      ]
+    },
+    {
+      "name": "tinyvec",
+      "version": "1.13.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "tokio",
+      "version": "1.53.2",
+      "source": "crates.io",
+      "dependencies": [
+        20,
+        123,
+        142,
+        148,
+        192,
+        215,
+        255
+      ]
+    },
+    {
+      "name": "tokio-macros",
+      "version": "2.7.2",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "tokio-rustls",
+      "version": "0.26.6",
+      "source": "crates.io",
+      "dependencies": [
+        168,
+        214
+      ]
+    },
+    {
+      "name": "tokio-stream",
+      "version": "0.1.19",
+      "source": "crates.io",
+      "dependencies": [
+        66,
+        148,
+        214,
+        218
+      ]
+    },
+    {
+      "name": "tokio-util",
+      "version": "0.7.20",
+      "source": "crates.io",
+      "dependencies": [
+        20,
+        66,
+        71,
+        73,
+        148,
+        214
+      ]
+    },
+    {
+      "name": "tokio-websockets",
+      "version": "0.13.3",
+      "source": "crates.io",
+      "dependencies": [
+        11,
+        20,
+        66,
+        71,
+        76,
+        84,
+        87,
+        161,
+        165,
+        169,
+        183,
+        188,
+        214,
+        216,
+        218
+      ]
+    },
+    {
+      "name": "toml_datetime",
+      "version": "1.1.2+spec-1.1.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        179
+      ]
+    },
+    {
+      "name": "toml_edit",
+      "version": "0.25.17+spec-1.1.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        104,
+        220,
+        222,
+        257
+      ]
+    },
+    {
+      "name": "toml_parser",
+      "version": "1.1.5+spec-1.1.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        257
+      ]
+    },
+    {
+      "name": "tower",
+      "version": "0.5.3",
+      "source": "crates.io",
+      "dependencies": [
+        66,
+        73,
+        148,
+        205,
+        214,
+        225,
+        226
+      ]
+    },
+    {
+      "name": "tower-http",
+      "version": "0.6.11",
+      "source": "crates.io",
+      "dependencies": [
+        16,
+        20,
+        73,
+        84,
+        85,
+        148,
+        223,
+        225,
+        226,
+        238
+      ]
+    },
+    {
+      "name": "tower-layer",
+      "version": "0.3.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "tower-service",
+      "version": "0.3.3",
+      "source": "crates.io"
+    },
+    {
+      "name": "tracing",
+      "version": "0.1.44",
+      "source": "crates.io",
+      "dependencies": [
+        118,
+        148,
+        228,
+        229
+      ]
+    },
+    {
+      "name": "tracing-attributes",
+      "version": "0.1.31",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "tracing-core",
+      "version": "0.1.36",
+      "source": "crates.io",
+      "dependencies": [
+        138
+      ]
+    },
+    {
+      "name": "try-lock",
+      "version": "0.2.5",
+      "source": "crates.io"
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.27",
+      "source": "crates.io"
+    },
+    {
+      "name": "unicode-normalization",
+      "version": "0.1.25",
+      "source": "crates.io",
+      "dependencies": [
+        213
+      ]
+    },
+    {
+      "name": "unicode-segmentation",
+      "version": "1.13.3",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "unicode-xid",
+      "version": "0.2.6",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "universal-hash",
+      "version": "0.5.1",
+      "source": "crates.io",
+      "dependencies": [
+        35,
+        202
+      ]
+    },
+    {
+      "name": "untrusted",
+      "version": "0.9.0",
+      "source": "crates.io"
+    },
+    {
+      "name": "url",
+      "version": "2.5.8",
+      "source": "crates.io",
+      "dependencies": [
+        62,
+        101,
+        145,
+        177,
+        180
+      ]
+    },
+    {
+      "name": "utf8_iter",
+      "version": "1.0.4",
+      "source": "crates.io"
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5",
+      "source": "crates.io",
+      "kind": "build"
+    },
+    {
+      "name": "want",
+      "version": "0.3.2",
+      "source": "crates.io",
+      "dependencies": [
+        230
+      ]
+    },
+    {
+      "name": "webpki-roots",
+      "version": "1.0.9",
+      "source": "crates.io",
+      "dependencies": [
+        169
+      ]
+    },
+    {
+      "name": "widestring",
+      "version": "1.2.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "windows",
+      "version": "0.62.2",
+      "source": "crates.io",
+      "dependencies": [
+        245,
+        246,
+        247,
+        251
+      ]
+    },
+    {
+      "name": "windows-collections",
+      "version": "0.3.2",
+      "source": "crates.io",
+      "dependencies": [
+        246
+      ]
+    },
+    {
+      "name": "windows-core",
+      "version": "0.62.2",
+      "source": "crates.io",
+      "dependencies": [
+        248,
+        249,
+        250,
+        253,
+        254
+      ]
+    },
+    {
+      "name": "windows-future",
+      "version": "0.3.2",
+      "source": "crates.io",
+      "dependencies": [
+        246,
+        250,
+        256
+      ]
+    },
+    {
+      "name": "windows-implement",
+      "version": "0.60.2",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "windows-interface",
+      "version": "0.59.3",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "windows-link",
+      "version": "0.2.1",
+      "source": "crates.io"
+    },
+    {
+      "name": "windows-numerics",
+      "version": "0.3.1",
+      "source": "crates.io",
+      "dependencies": [
+        246,
+        250
+      ]
+    },
+    {
+      "name": "windows-registry",
+      "version": "0.6.1",
+      "source": "crates.io",
+      "dependencies": [
+        250,
+        253,
+        254
+      ]
+    },
+    {
+      "name": "windows-result",
+      "version": "0.4.1",
+      "source": "crates.io",
+      "dependencies": [
+        250
+      ]
+    },
+    {
+      "name": "windows-strings",
+      "version": "0.5.1",
+      "source": "crates.io",
+      "dependencies": [
+        250
+      ]
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.61.2",
+      "source": "crates.io",
+      "dependencies": [
+        250
+      ]
+    },
+    {
+      "name": "windows-threading",
+      "version": "0.2.1",
+      "source": "crates.io",
+      "dependencies": [
+        250
+      ]
+    },
+    {
+      "name": "winnow",
+      "version": "1.0.4",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        122
+      ]
+    },
+    {
+      "name": "wmi",
+      "version": "0.18.4",
+      "source": "crates.io",
+      "dependencies": [
+        25,
+        63,
+        118,
+        177,
+        207,
+        244,
+        246
+      ]
+    },
+    {
+      "name": "writeable",
+      "version": "0.6.4",
+      "source": "crates.io"
+    },
+    {
+      "name": "xml-rs",
+      "version": "0.8.29",
+      "source": "crates.io"
+    },
+    {
+      "name": "xmltree",
+      "version": "0.10.3",
+      "source": "crates.io",
+      "dependencies": [
+        260
+      ]
+    },
+    {
+      "name": "yoke",
+      "version": "0.8.3",
+      "source": "crates.io",
+      "dependencies": [
+        199,
+        263,
+        264
+      ]
+    },
+    {
+      "name": "yoke-derive",
+      "version": "0.8.4",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        204,
+        206
+      ]
+    },
+    {
+      "name": "zerofrom",
+      "version": "0.1.8",
+      "source": "crates.io",
+      "dependencies": [
+        265
+      ]
+    },
+    {
+      "name": "zerofrom-derive",
+      "version": "0.1.8",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        204,
+        206
+      ]
+    },
+    {
+      "name": "zeroize",
+      "version": "1.9.1",
+      "source": "crates.io",
+      "dependencies": [
+        267
+      ]
+    },
+    {
+      "name": "zeroize_derive",
+      "version": "1.5.0",
+      "source": "crates.io",
+      "kind": "build",
+      "dependencies": [
+        158,
+        160,
+        203
+      ]
+    },
+    {
+      "name": "zerotrie",
+      "version": "0.2.5",
+      "source": "crates.io",
+      "dependencies": [
+        51,
+        262,
+        264
+      ]
+    },
+    {
+      "name": "zerovec",
+      "version": "0.11.8",
+      "source": "crates.io",
+      "dependencies": [
+        262,
+        264,
+        270
+      ]
+    },
+    {
+      "name": "zerovec-derive",
+      "version": "0.11.6",
+      "source": "crates.io",
+      "dependencies": [
+        158,
+        160,
+        204
+      ]
+    },
+    {
+      "name": "zmij",
+      "version": "1.0.23",
+      "source": "crates.io"
+    }
+  ],
+  "format": 1
+}

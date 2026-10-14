@@ -1,0 +1,4 @@
+{"tool": "cargo-auditable", "version": "0.7.7", "archive_sha256": "bcb2d46002a8dd8e94d0d669cb39d38c9651db2ae5d1f3f1f1bab516ee1e212c", "executable_sha256": "f1fe64c099129892a42c11c863a4e7c1fac94d61e16d16b7382690cf8a8c6f72"}
+   Compiling spark-link-proto v0.1.0 (/work/crates/sparkdev-link/vendor/spark-link-proto)
+   Compiling sparkdev-link v0.1.0 (/work/crates/sparkdev-link)
+    Finished `release` profile [optimized] target(s) in 24.95s

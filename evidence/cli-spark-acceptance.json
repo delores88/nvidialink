@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "run_id": "dffb7ea4-0c2b-4be2-8982-98a7a5dbb080",
+  "client": "codex",
+  "platform": "Windows",
+  "source": "physical Spark via authenticated SSH",
+  "checks": [
+    {
+      "name": "authenticated_ssh_doctor",
+      "result": {
+        "ok": true,
+        "selected": "ssh"
+      }
+    },
+    {
+      "name": "exact_argv_PowerShell",
+      "result": {
+        "job": "8e6859158c2c431d93117402e5d95455",
+        "exit_code": 0,
+        "argv_verified": [
+          "two words",
+          "",
+          "$literal; & text",
+          "quotes\"inside"
+        ],
+        "cache_hit": false
+      }
+    },
+    {
+      "name": "exact_argv_cmd",
+      "result": {
+        "job": "8a188eff35674d55b636dbd5aa2f8afe",
+        "exit_code": 0,
+        "argv_verified": [
+          "two words",
+          "",
+          "$literal; & text",
+          "quotes\"inside"
+        ],
+        "cache_hit": true
+      }
+    },
+    {
+      "name": "exact_argv_Git Bash",
+      "result": {
+        "job": "3856bc514bb344ff9e59bbb83c1aecee",
+        "exit_code": 0,
+        "argv_verified": [
+          "two words",
+          "",
+          "$literal; & text",
+          "quotes\"inside"
+        ],
+        "cache_hit": true
+      }
+    },
+    {
+      "name": "successful_result_reuse",
+      "result": {
+        "job": "beaa2a0d7c874a099611d58300392d7d",
+        "cached_from": "8e6859158c2c431d93117402e5d95455",
+        "cache_hit": true
+      }
+    },
+    {
+      "name": "request_idempotency",
+      "result": {
+        "job": "8fb75d2e3a0840978697f557df55d4c5",
+        "duplicate_run": false
+      }
+    },
+    {
+      "name": "lossless_offset_logs",
+      "result": {
+        "first_offset": 0,
+        "next_offset": 7,
+        "complete_bytes": 56,
+        "repeat_identical": true
+      }
+    },
+    {
+      "name": "no_change_sync",
+      "result": {
+        "uploaded_bytes": 0,
+        "sync_seconds": 0.8781067
+      }
+    }
+  ],
+  "limitations": [
+    "Not an actual Claude Code invocation",
+    "No phone hotspot, laptop sleep or native UI acceptance in this receipt"
+  ],
+  "status": "failed",
+  "failure": "{'f3c0b5c634684eeb971086e170b0e054': 'queued', 'laptop-15061eb4-4cfc-4051-9331-5e9deef144ec': 'succeeded', '8fb75d2e3a0840978697f557df55d4c5': 'succeeded', 'beaa2a0d7c874a099611d58300392d7d': 'succeeded', '3856bc514bb344ff9e59bbb83c1aecee': 'succeeded', '8a188eff35674d55b636dbd5aa2f8afe': 'succeeded', '8e6859158c2c431d93117402e5d95455': 'succeeded', '8f01abbf50a34524989805d6aad505a1': 'succeeded'}"
+}

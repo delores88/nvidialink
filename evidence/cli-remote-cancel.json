@@ -1,0 +1,10 @@
+{
+  "status": "passed",
+  "client": "codex",
+  "job": "7b82b3ac16b54354aabf9a7d42a11526",
+  "observed_before_cancel": "running",
+  "state": "cancelled",
+  "exit_code": 130,
+  "binary_sha256": "9f995f9d11cd56183ee60af9b5fca115cb458e36f678e655969fbcee8370ef33",
+  "binary_kind": "debug validation binary; not installed release acceptance"
+}

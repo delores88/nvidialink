@@ -1,0 +1,229 @@
+{
+  "kind": "physical_linux_arm64_cli_release",
+  "actual_caller": "codex",
+  "source_sha256": {
+    "Cargo.toml": "10814da58b8023637952bcca290bd1e23a1e1a6525fa12b327ad18dc4f102c36",
+    "Cargo.lock": "2c7ec3e915d79c7ad1a862e25229ea35a86149ec06eb9061ef238e7ad591e98e",
+    "crates/sparkdev/src/inventory.rs": "baac018023505992ef23dafee18a465310eed330ddb5d758916e5612bb972c82",
+    "crates/sparkdev/src/lib.rs": "4350e60f1f2251892b4ecf28367b4930908c4ff9be5bf560d146617ef106ff92",
+    "crates/sparkdev/src/local.rs": "7bdccd1f0dbf14fdb6711fc2ab0c554ba85555da790f77591f09bfb6d63613ae",
+    "crates/sparkdev/src/main.rs": "26b206cf28b6791a069de6bcb22a2702263a3b3163a925d1d1b33452479d0366",
+    "crates/sparkdev/src/mcp.rs": "1f905294a3c1e29f073b0a1240424c3a29747c9d10e269272540606e688c1018",
+    "crates/sparkdev/src/state.rs": "907df624dd2af199514fbe79578afc977319d8dd19d702fd06ed31507a1546db",
+    "crates/sparkdev/src/transport.rs": "03a594792e466e11b92d0c26aa1c7d8719e725e185e9deaffec7ee30d3874b32",
+    "crates/sparkdev/Cargo.toml": "05c7aa5037fa48e87046fc2a92bc2c05c4ef14a51a3ba7baffca1694f53db489",
+    "build_linux_cli.py": "b7d140962e5216964cb3551de23dde89a0069e918b62cb1a5997f372dada9a51"
+  },
+  "submitted": {
+    "cache_hit": false,
+    "cached_from": null,
+    "cancel_requested": false,
+    "client": "codex",
+    "cpu": 4,
+    "created_at": 1791943902.7871196,
+    "error": null,
+    "exit_code": null,
+    "finished_at": null,
+    "job": "ac366c463d7246b1a9565cb8bda7fc30",
+    "manifest_id": "3b67c1b6d40f574481233b9707aa7c848b06b47e7c294b9b8ae652b7f030d2d3",
+    "memory_gb": 8,
+    "ok": true,
+    "placement": "spark",
+    "placement_reason": "Explicit --where selection",
+    "project": "7df58191b766cabc1cbd627615f34e9f95d6cd3dabfa9b2e980079c12bfe6b11",
+    "request_id": "linux-cli-final-1791943900493298400",
+    "runtime": "rust",
+    "runtime_digest": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+    "scratch_mb": 512,
+    "started_at": null,
+    "state": "queued",
+    "transport": {
+      "reason": "LAN SSH authenticated with the configured known-host pin",
+      "selected": "ssh"
+    },
+    "where": "spark"
+  },
+  "started_at": 1791943902.8346202,
+  "tool_provenance": "evidence/link/2026-10-13-arm64-auditable.json",
+  "prior_attempt": "linux-arm64-cli.json",
+  "status": {
+    "cache_hit": false,
+    "cached_from": null,
+    "cancel_requested": false,
+    "client": "codex",
+    "cpu": 4,
+    "created_at": 1791943902.7871196,
+    "error": null,
+    "exit_code": 0,
+    "finished_at": 1791943919.6112995,
+    "job": "ac366c463d7246b1a9565cb8bda7fc30",
+    "manifest_id": "3b67c1b6d40f574481233b9707aa7c848b06b47e7c294b9b8ae652b7f030d2d3",
+    "memory_gb": 8,
+    "ok": true,
+    "project": "7df58191b766cabc1cbd627615f34e9f95d6cd3dabfa9b2e980079c12bfe6b11",
+    "runtime": "rust",
+    "runtime_digest": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+    "scratch_mb": 512,
+    "started_at": 1791943903.0738206,
+    "state": "succeeded",
+    "where": "spark"
+  },
+  "log_bytes": 9830,
+  "finished_at": 1791943920.8468373,
+  "execution_seconds": 16.537478923797607,
+  "artifact": {
+    "artifact": "sparkdev",
+    "bytes": 3712232,
+    "sha256": "bcf4c7b9416448125a0b085c509bf47411cbbe7ca280b9306634c07abf30dc45",
+    "path": "dist/linux-arm64/sparkdev",
+    "format": "ELF64 little-endian aarch64",
+    "embedded_metadata": ".dep-v0",
+    "package_count": 45,
+    "metadata_sha256": "840d1a54f0ca8373655184aa8d9e72d11c5bee6f35f9f68ec6d9e89637b473eb"
+  },
+  "observations": {
+    "cli_devices": {
+      "admission_required": true,
+      "claimed": false,
+      "devices": [
+        {
+          "admission": {
+            "available": "unavailable",
+            "reason": "Managed admission on both devices requires the Spark scheduler; offline laptop fallback is unavailable",
+            "reservation": false,
+            "scheduler_healthy": false,
+            "scheduler_reachable": false
+          },
+          "architecture": "aarch64",
+          "availability": "available",
+          "can_submit": false,
+          "capacity_note": "Logical parallelism is process-visible topology, not idle capacity. Native jobs are not container-sandboxed.",
+          "free_cpu": null,
+          "free_memory_bytes": null,
+          "id": "laptop",
+          "jobs": [],
+          "logical_parallelism": 4,
+          "managed_job_limit": 2,
+          "os": "linux",
+          "reachable": true
+        },
+        {
+          "admission": {
+            "available": "unavailable",
+            "reason": "Managed admission on both devices requires the Spark scheduler; offline laptop fallback is unavailable",
+            "reservation": false,
+            "scheduler_healthy": false,
+            "scheduler_reachable": false
+          },
+          "architecture": null,
+          "availability": "unconfigured",
+          "can_submit": false,
+          "error": {
+            "code": 3,
+            "kind": "configuration_unavailable",
+            "message": "Run sparkdev setup before connecting"
+          },
+          "free_cpu": null,
+          "free_memory_bytes": null,
+          "id": "spark",
+          "os": null,
+          "reachable": false,
+          "transport": {
+            "attempted_routes": [],
+            "authenticated": false,
+            "route": "none",
+            "selected": "unselected"
+          }
+        }
+      ],
+      "observation_only": true,
+      "observed_at": 1791943918,
+      "ok": true,
+      "shared_board": null
+    },
+    "cli_plan": {
+      "admission_required": true,
+      "argv": [
+        "python3",
+        "probe.py",
+        "a b",
+        ""
+      ],
+      "bytes": 19,
+      "claimed": false,
+      "files": 1,
+      "manifest_id": "e728f98a8b2411a08ed48c34ac955bc5e8a6f6cc335be38eb50a7539235a780e",
+      "note": "Placement preview only, not a reservation. Run revalidates source and requires current scheduler admission; runtime availability is checked on submission.",
+      "observation_only": true,
+      "ok": true,
+      "placement": "spark",
+      "placement_reason": "Command has no Windows-specific requirement; using the Spark runtime",
+      "project": "f2c104a04a6f69a7571caafcda589a8b33fa14e131503bfb920969f459ef2ecd",
+      "runtime": "python",
+      "runtime_registry_checked": false,
+      "submitted": false,
+      "uploaded": false
+    },
+    "mcp_tool_names": [
+      "devices",
+      "plan",
+      "prepare",
+      "run",
+      "wait",
+      "logs",
+      "status",
+      "cancel"
+    ],
+    "mcp_plan_response": {
+      "content": [
+        {
+          "text": "{\"admission_required\":true,\"argv\":[\"python3\",\"probe.py\",\"a b\",\"\"],\"bytes\":19,\"claimed\":false,\"files\":1,\"manifest_id\":\"e728f98a8b2411a08ed48c34ac955bc5e8a6f6cc335be38eb50a7539235a780e\",\"note\":\"Placement preview only, not a reservation. Run revalidates source and requires current scheduler admission; runtime availability is checked on submission.\",\"observation_only\":true,\"ok\":true,\"placement\":\"spark\",\"placement_reason\":\"Command has no Windows-specific requirement; using the Spark runtime\",\"project\":\"f2c104a04a6f69a7571caafcda589a8b33fa14e131503bfb920969f459ef2ecd\",\"runtime\":\"python\",\"runtime_registry_checked\":false,\"submitted\":false,\"uploaded\":false}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "admission_required": true,
+        "argv": [
+          "python3",
+          "probe.py",
+          "a b",
+          ""
+        ],
+        "bytes": 19,
+        "claimed": false,
+        "files": 1,
+        "manifest_id": "e728f98a8b2411a08ed48c34ac955bc5e8a6f6cc335be38eb50a7539235a780e",
+        "note": "Placement preview only, not a reservation. Run revalidates source and requires current scheduler admission; runtime availability is checked on submission.",
+        "observation_only": true,
+        "ok": true,
+        "placement": "spark",
+        "placement_reason": "Command has no Windows-specific requirement; using the Spark runtime",
+        "project": "f2c104a04a6f69a7571caafcda589a8b33fa14e131503bfb920969f459ef2ecd",
+        "runtime": "python",
+        "runtime_registry_checked": false,
+        "submitted": false,
+        "uploaded": false
+      }
+    },
+    "plan_state_unchanged": true
+  },
+  "tests": [
+    [
+      "22",
+      "0",
+      "0"
+    ],
+    [
+      "0",
+      "0",
+      "0"
+    ],
+    [
+      "0",
+      "0",
+      "0"
+    ]
+  ],
+  "source_still_matches": true
+}

@@ -1,0 +1,61 @@
+{
+  "kind": "interrupted_laptop_backend_test_comparison",
+  "source_commit": "ac30e04fbf0ddc03ae0144fb06b6350cacdce1fc",
+  "actual_caller": "codex",
+  "status": {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--all-targets",
+      "--no-fail-fast",
+      "--manifest-path",
+      "backend/Cargo.toml"
+    ],
+    "cache_hit": false,
+    "cache_reason": "Native toolchain identity is not locked; laptop result reuse is disabled",
+    "client": "codex",
+    "created_at": 1791943827,
+    "exit_code": 130,
+    "finished_at": 1791944869,
+    "job": "laptop-32b161c331ab0576f96a5eb82bbd5638",
+    "manifest_id": "0d624088bbcef444a41bb5591f2dabee8e8230bbbae9fbd8581720a511d587d6",
+    "ok": true,
+    "placement": "laptop",
+    "placement_reason": "Explicit --where selection",
+    "project": "ce8b2e46328605e5fdda45c3dcaad038a20e54be6befa0c50174308fd63e96d7",
+    "request_id": "pf-laptop-cold-outside-workspace-20261013",
+    "started_at": 1791943837,
+    "state": "cancelled"
+  },
+  "capture_at": "2026-10-14T02:28:41.411422+00:00",
+  "terminal_observed": true,
+  "completion_claim": false,
+  "reason": "Owner-directed release prioritization: parent cancelled only this benchmark to free laptop memory for the required Windows release build. No replacement benchmark was launched.",
+  "guard_acquisition": [
+    "[buildlock] slot 1 acquired after 75s; 10.3 GB free; CARGO_BUILD_JOBS=2"
+  ],
+  "cargo_build_reports": [
+    "15m 23s"
+  ],
+  "test_summaries": [],
+  "performance_comparison_claim": false,
+  "limitations": [
+    "Cargo reported compilation finished in 15m 23s, then test execution was cancelled. No full-suite pass/fail counts or completed benchmark comparison exist.",
+    "Laptop guard used two Cargo build workers; Spark benchmark used eight CPU cores.",
+    "Configured laptop Python was 3.12; Spark runtime Python was 3.13.5. Windows and Linux include different platform-specific tests."
+  ],
+  "raw_log_bytes": 46023,
+  "raw_log_sha256": "8032e03c6316a74b67818545a339690edc54a817b939b1b6645365e8eba9e234",
+  "credential_redactions": {
+    "private_key": 0,
+    "credential": 0
+  },
+  "sanitized_log": "phaseforge-laptop-corrected-interrupted.txt",
+  "sanitized_log_sha256": "f9121188c6a6d38b8a6f572377bff9dda4bba73e3be28d6c575e96eff9dd19fa",
+  "phase_at_cancellation": "test_execution",
+  "cargo_reported_compile_completed": true,
+  "reported_test_target_sizes": [
+    2112
+  ]
+}

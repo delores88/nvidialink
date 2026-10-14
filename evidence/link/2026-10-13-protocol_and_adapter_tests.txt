@@ -1,0 +1,137 @@
+   Compiling bitflags v2.13.2
+   Compiling fastrand v2.5.0
+   Compiling z32 v1.3.0
+   Compiling rustix v1.1.5
+   Compiling futures-lite v2.6.1
+   Compiling tower-http v0.6.11
+   Compiling netlink-packet-route v0.33.0
+   Compiling simple-dns v0.12.0
+   Compiling n0-future v0.3.2
+   Compiling reqwest v0.13.5
+   Compiling n0-watcher v1.0.0
+   Compiling netlink-packet-route v0.31.0
+   Compiling n0-dns-resolver v0.1.0
+   Compiling netdev v0.46.3
+   Compiling netwatch v0.19.3
+   Compiling iroh-dns v1.3.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling portmapper v0.19.3
+   Compiling backon v1.6.0
+   Compiling tempfile v3.27.0
+   Compiling spark-link-proto v0.1.0 (/work/crates/sparkdev-link/vendor/spark-link-proto)
+   Compiling iroh-relay v1.3.0
+   Compiling iroh v1.3.0
+   Compiling sparkdev-link v0.1.0 (/work/crates/sparkdev-link)
+    Finished `release` profile [optimized] target(s) in 52.25s
+     Running unittests src/lib.rs (/target/release/deps/spark_link_proto-661d416f76682711)
+
+running 52 tests
+test api::tests::role_and_scope_requirements ... ok
+test api::tests::rejects_noncanonical_and_unknown ... ok
+test api::tests::event_tags ... ok
+test api::tests::routing_table ... ok
+test frame::tests::encode_decode ... ok
+test errors::tests::wire_shape ... ok
+test audit::tests::chain_detects_edits_and_deletions ... ok
+test ipc::tests::a1_link_ssh_accepts_phaseforge_names ... ok
+test audit::tests::checkpoint_signature ... ok
+test ipc::tests::proof_round_trip ... ok
+test ipc::tests::request_frame_wire_shape ... ok
+test ipc::tests::secret_params_flagged ... ok
+test ipc::tests::a1_link_wire_shapes ... ok
+test ipc::tests::server_frames ... ok
+test job_transfer::tests::events_requests_are_closed_and_small ... ok
+test jobs::tests::every_operation_maps_to_one_fixed_route ... ok
+test link::tests::label_is_sanitized_and_unknown_keys_ignored ... ok
+test link::tests::rejects_bad_links ... ok
+test link::tests::round_trip_both_forms ... ok
+test mdns::tests::private_ranges ... ok
+test mdns::tests::tag_rotates_and_matches_adjacent_hours ... ok
+test owner_link::tests::lan_page_addr_filter ... ok
+test owner_link::tests::lan_routes ... ok
+test owner_link::tests::self_routes ... ok
+test owner_link::tests::token_is_bound_to_secret_and_ticket ... ok
+test owner_link::tests::url_shape ... ok
+test owner_link::tests::wire_shapes ... ok
+test pairing::tests::candidates_contain_correct_once ... ok
+test pairing::tests::mac2_covers_exact_body_bytes ... ok
+test pairing::tests::mac_binds_everything ... ok
+test pairing::tests::message_shapes ... ok
+test pairing::tests::sas_changes_with_ticket_and_nonce ... ok
+test paths::tests::layout ... ok
+test paths::tests::unix_layout ... ok
+test relay::tests::expected_relays ... ok
+test roles::tests::exclusive_roles ... ok
+test roles::tests::placement_follows_role ... ok
+test roles::tests::serde_names ... ok
+test scopes::tests::app_caps ... ok
+test scopes::tests::round_trip_strings ... ok
+test release::tests::verify_rules ... ok
+test scopes::tests::serializes_sorted ... ok
+test scopes::tests::subset_with_wildcard ... ok
+test scopes::tests::ticketability_matches_item_3 ... ok
+test secret::tests::debug_is_redacted ... ok
+test secret::tests::redacts_links ... ok
+test version::tests::negotiate ... ok
+test words::tests::indices ... ok
+test words::tests::verification_code_exact_vectors ... ok
+test words::tests::verification_code_modulo_boundaries_preserve_original_words ... ok
+test jobs::tests::version_one_bodies_are_unchanged_and_v2_fields_are_optional ... ok
+test job_transfer::tests::chunk_hashes_match_hashing_each_range_and_survive_any_write_split ... ok
+
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/job_contract.rs (/target/release/deps/job_contract-2fea414762929f86)
+
+running 9 tests
+test job_errors_map_to_node_api_codes ... ok
+test only_finished_jobs_with_confirmed_cleanup_are_removable ... ok
+test only_registry_runtimes_are_admitted_and_ready_ones_advertised ... ok
+test a_script_name_cannot_be_read_as_an_interpreter_option ... ok
+test blender_arguments_are_a_closed_schema_with_its_own_bounds ... ok
+test owner_counts_names_and_logs_are_checked_in_order ... ok
+test unclaimed_jobs_expire_after_their_grace_period_and_nothing_else_does ... ok
+test retention_prunes_acknowledged_jobs_least_recently_used_first ... ok
+test python_arguments_are_a_closed_schema ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vectors.rs (/target/release/deps/vectors-8159788129139c5b)
+
+running 5 tests
+test mdns_tags_match_python ... ok
+test pairing_transcript_macs_and_words ... ok
+test z32_matches_python_and_z32_crate ... ok
+test link_matches_python_byte_for_byte ... ok
+test ipc_handshake_proofs ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vectors_a1.rs (/target/release/deps/vectors_a1-7aa2d5962021d7c4)
+
+running 1 test
+test approve_token_and_url_match_python ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/target/release/deps/sparkdev_link-9aa9ebf5d4a2e1cd)
+
+running 9 tests
+test daemon::tests::deny_needs_token_but_not_code_and_only_decides_once ... ok
+test daemon::tests::three_wrong_codes_burn_ticket_without_grant ... ok
+test daemon::tests::five_bad_tokens_burn_ticket ... ok
+test storage::tests::identity_survives_restart ... ok
+test storage::tests::refuses_symlinked_state ... ok
+test wire::tests::relay_policy ... ok
+test daemon::tests::unauthenticated_iroh_peer_cannot_open_rpc ... ok
+test daemon::tests::approved_pairing_binds_both_identities_and_persists_allowlist ... ok
+test storage::tests::endpoint_lease_serializes_process_connections ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+   Doc-tests spark_link_proto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,812 @@
+[buildlock] all 2 build slots busy; waiting
+[buildlock] all 2 build slots busy; waiting
+[buildlock] slot 1 acquired after 75s; 10.3 GB free; CARGO_BUILD_JOBS=2
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling cfg-if v1.0.4
+   Compiling windows-link v0.2.1
+   Compiling version_check v0.9.5
+   Compiling smallvec v1.16.0
+   Compiling scopeguard v1.2.0
+   Compiling syn v3.0.5
+   Compiling syn v2.0.119
+   Compiling windows-sys v0.61.2
+   Compiling log v0.4.34
+   Compiling once_cell v1.21.4
+   Compiling parking_lot_core v0.9.12
+   Compiling lock_api v0.4.14
+   Compiling generic-array v0.14.7
+   Compiling parking_lot v0.12.5
+   Compiling typenum v1.20.1
+   Compiling synstructure v0.13.2
+   Compiling itoa v1.0.18
+   Compiling bitflags v2.13.1
+   Compiling bytes v1.12.1
+   Compiling pin-project-lite v0.2.17
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerofrom v0.1.8
+   Compiling stable_deref_trait v1.2.1
+   Compiling futures-core v0.3.34
+   Compiling serde_core v1.0.229
+   Compiling zerocopy v0.8.56
+   Compiling yoke v0.8.3
+   Compiling crypto-common v0.1.7
+   Compiling find-msvc-tools v0.1.12
+   Compiling subtle v2.6.1
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.5
+   Compiling zerovec-derive v0.11.6
+   Compiling getrandom v0.2.17
+   Compiling http v1.5.0
+   Compiling zerovec v0.11.8
+   Compiling displaydoc v0.2.7
+   Compiling winapi v0.3.9
+   Compiling autocfg v1.5.1
+   Compiling siphasher v1.0.4
+   Compiling foldhash v0.2.0
+   Compiling libm v0.2.16
+   Compiling windows_x86_64_msvc v0.52.6
+   Compiling hashbrown v0.17.1
+   Compiling num-traits v0.2.19
+   Compiling phf_shared v0.13.1
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.3
+   Compiling tracing-core v0.1.36
+   Compiling tokio-macros v2.7.2
+   Compiling thiserror v1.0.69
+   Compiling libc v0.2.189
+   Compiling tokio v1.53.1
+   Compiling block-buffer v0.10.4
+   Compiling thiserror-impl v1.0.69
+   Compiling tracing-attributes v0.1.31
+   Compiling futures-macro v0.3.34
+   Compiling futures-task v0.3.34
+   Compiling serde v1.0.229
+   Compiling futures-sink v0.3.34
+   Compiling slab v0.4.12
+   Compiling futures-util v0.3.34
+   Compiling tracing v0.1.44
+   Compiling digest v0.10.7
+   Compiling windows-targets v0.52.6
+   Compiling tinystr v0.8.4
+   Compiling http-body v1.1.0
+   Compiling serde_derive v1.0.229
+   Compiling equivalent v1.0.2
+   Compiling litemap v0.8.3
+   Compiling fastrand v2.5.0
+   Compiling syn v1.0.109
+   Compiling rustversion v1.0.23
+   Compiling httparse v1.10.1
+   Compiling khronos_api v3.1.0
+   Compiling writeable v0.6.4
+   Compiling cfg_aliases v0.1.1
+   Compiling icu_locale_core v2.3.0
+   Compiling phf_generator v0.13.1
+   Compiling indexmap v2.14.2
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling ring v0.17.14
+   Compiling tower-service v0.3.3
+   Compiling icu_normalizer_data v2.3.0
+   Compiling utf8_iter v1.0.4
+   Compiling rand_core v0.10.1
+   Compiling percent-encoding v2.3.2
+   Compiling cpufeatures v0.2.17
+   Compiling getrandom v0.4.3
+   Compiling icu_properties_data v2.3.0
+   Compiling icu_collections v2.3.0
+   Compiling icu_provider v2.3.1
+   Compiling block-padding v0.3.3
+   Compiling ahash v0.8.12
+   Compiling crossbeam-utils v0.8.23
+   Compiling zeroize v1.9.0
+   Compiling xml-rs v0.8.29
+   Compiling gl_generator v0.14.0
+   Compiling rustls-pki-types v1.15.1
+   Compiling inout v0.1.4
+   Compiling com_macros_support v0.6.0
+   Compiling phf_codegen v0.13.1
+   Compiling string_cache_codegen v0.6.1
+   Compiling windows-core v0.52.0
+   Compiling rand_core v0.6.4
+   Compiling ppv-lite86 v0.2.21
+   Compiling winapi-util v0.1.11
+   Compiling libloading v0.8.9
+   Compiling new_debug_unreachable v1.0.6
+   Compiling memchr v2.8.3
+   Compiling tower-layer v0.3.3
+   Compiling windows_x86_64_msvc v0.48.5
+   Compiling untrusted v0.9.0
+   Compiling try-lock v0.2.5
+   Compiling crossbeam-epoch v0.9.21
+   Compiling want v0.3.1
+   Compiling termcolor v1.4.1
+   Compiling rand_chacha v0.3.1
+   Compiling icu_properties v2.3.0
+   Compiling windows v0.52.0
+   Compiling web_atoms v0.2.6
+   Compiling com_macros v0.6.0
+   Compiling icu_normalizer v2.3.0
+   Compiling cipher v0.4.4
+   Compiling glutin_wgl_sys v0.5.0
+   Compiling form_urlencoded v1.2.2
+   Compiling futures-channel v0.3.34
+   Compiling sync_wrapper v1.0.2
+   Compiling ash v0.37.3+1.3.251
+   Compiling bit-vec v0.6.3
+   Compiling atomic-waker v1.1.2
+   Compiling crc32fast v1.5.2
+   Compiling khronos-egl v6.0.0
+   Compiling thiserror v2.0.20
+   Compiling unicode-width v0.1.14
+   Compiling crossbeam-deque v0.8.8
+   Compiling httpdate v1.0.3
+   Compiling rustls v0.23.44
+   Compiling precomputed-hash v0.1.1
+   Compiling tinyvec_macros v0.1.1
+   Compiling allocator-api2 v0.2.21
+   Compiling zmij v1.0.23
+   Compiling hashbrown v0.14.5
+   Compiling tinyvec v1.13.2
+   Compiling string_cache v0.9.0
+   Compiling hyper v1.11.1
+   Compiling codespan-reporting v0.11.1
+   Compiling bit-set v0.5.3
+   Compiling idna_adapter v1.2.2
+   Compiling com v0.6.0
+   Compiling rustls-webpki v0.103.15
+   Compiling rand v0.8.8
+   Compiling encoding_rs v0.8.42
+   Compiling wgpu-hal v0.19.5
+   Compiling http-body-util v0.1.5
+   Compiling libloading v0.7.4
+   Compiling phf v0.13.1
+   Compiling spirv v0.3.0+sdk-1.3.268.0
+   Compiling gpu-alloc-types v0.3.1
+   Compiling gpu-descriptor-types v0.1.2
+   Compiling thiserror-impl v2.0.20
+   Compiling unicode-xid v0.2.6
+   Compiling ipnet v2.12.2
+   Compiling pkg-config v0.3.34
+   Compiling presser v0.3.1
+   Compiling base64 v0.22.1
+   Compiling simd-adler32 v0.3.10
+   Compiling hexf-parse v0.2.1
+   Compiling widestring v1.2.1
+   Compiling serde_json v1.0.151
+   Compiling rustc-hash v1.1.0
+   Compiling rayon-core v1.13.0
+   Compiling adler2 v2.0.1
+   Compiling cpufeatures v0.3.1
+   Compiling vcpkg v0.2.15
+   Compiling byteorder v1.5.0
+   Compiling libsqlite3-sys v0.38.2
+   Compiling chacha20 v0.10.2
+   Compiling miniz_oxide v0.9.1
+   Compiling naga v0.19.2
+   Compiling hassle-rs v0.11.0
+   Compiling hyper-util v0.1.20
+   Compiling gpu-allocator v0.25.0
+   Compiling gpu-descriptor v0.2.4
+   Compiling gpu-alloc v0.6.2
+   Compiling windows-targets v0.48.5
+   Compiling idna v1.1.0
+   Compiling unicode-normalization v0.1.25
+   Compiling tower v0.5.3
+   Compiling tendril v0.5.1
+   Compiling d3d12 v0.19.0
+   Compiling sha1 v0.10.7
+   Compiling wgpu-core v0.19.4
+   Compiling wgpu-types v0.19.2
+   Compiling unicode-bidi v0.3.18
+   Compiling profiling v1.0.18
+   Compiling glow v0.13.1
+   Compiling ryu v1.0.23
+   Compiling raw-window-handle v0.6.2
+   Compiling arrayvec v0.7.8
+   Compiling ntapi v0.4.3
+   Compiling renderdoc-sys v1.1.0
+   Compiling range-alloc v0.1.5
+   Compiling lazy_static v1.5.0
+   Compiling data-encoding v2.11.1
+   Compiling pom v1.1.0
+   Compiling core_detect v1.0.0
+   Compiling regex-syntax v0.8.11
+   Compiling simdutf8 v0.1.5
+   Compiling multiversion_no_op v1.0.0
+   Compiling utf-8 v0.7.6
+   Compiling unicode-properties v0.1.4
+   Compiling stringprep v0.1.5
+   Compiling regex-automata v0.4.18
+   Compiling tungstenite v0.24.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling markup5ever v0.39.0
+   Compiling flate2 v1.1.10
+   Compiling url v2.5.8
+   Compiling tokio-rustls v0.26.5
+   Compiling windows-sys v0.48.0
+   Compiling rand v0.10.2
+   Compiling ecb v0.1.2
+   Compiling cbc v0.1.2
+   Compiling aes v0.8.4
+   Compiling nom v8.0.0
+   Compiling webpki-roots v1.0.9
+   Compiling sha2 v0.10.9
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling wgpu v0.19.4
+   Compiling md-5 v0.10.6
+   Compiling async-trait v0.1.92
+   Compiling mime v0.3.17
+   Compiling weezl v0.1.12
+   Compiling ttf-parser v0.25.1
+   Compiling winnow v0.7.15
+   Compiling either v1.18.0
+   Compiling anyhow v1.0.104
+   Compiling toml_write v0.1.2
+   Compiling rangemap v1.8.0
+   Compiling option-ext v0.2.0
+   Compiling dirs-sys v0.4.1
+   Compiling lopdf v0.42.0
+   Compiling toml_edit v0.22.27
+   Compiling rayon v1.12.0
+   Compiling axum-core v0.4.5
+   Compiling hyper-rustls v0.27.9
+   Compiling tower-http v0.6.11
+   Compiling html5ever v0.39.0
+   Compiling matchers v0.2.0
+   Compiling tokio-tungstenite v0.24.0
+   Compiling adobe-cmap-parser v0.4.1
+   Compiling type1-encoding-parser v0.1.1
+   Compiling sharded-slab v0.1.7
+   Compiling uuid v1.26.0
+   Compiling windows-sys v0.52.0
+   Compiling euclid v0.20.14
+   Compiling tracing-log v0.2.0
+   Compiling hashlink v0.12.2
+   Compiling serde_path_to_error v0.1.20
+   Compiling nu-ansi-term v0.50.3
+   Compiling axum-macros v0.4.2
+   Compiling bytemuck_derive v1.12.0
+   Compiling thread_local v1.1.10
+   Compiling cff-parser v0.2.0
+   Compiling matchit v0.7.3
+   Compiling static_assertions v1.1.0
+   Compiling fallible-iterator v0.3.0
+   Compiling postscript v0.14.1
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling unicode-width v0.2.2
+   Compiling html2text v0.17.1
+   Compiling rusqlite v0.40.2
+   Compiling pdf-extract v0.12.1
+   Compiling axum v0.7.9
+   Compiling tracing-subscriber v0.3.23
+   Compiling bytemuck v1.25.2
+   Compiling keyring v2.3.3
+   Compiling tower-http v0.5.2
+   Compiling sysinfo v0.30.13
+   Compiling reqwest v0.12.28
+   Compiling toml v0.8.23
+   Compiling directories v5.0.1
+   Compiling rand_distr v0.4.3
+   Compiling chrono v0.4.45
+   Compiling tokio-util v0.7.19
+   Compiling hmac v0.12.1
+   Compiling dotenvy v0.15.7
+   Compiling tempfile v3.27.0
+   Compiling phaseforge-backend v0.24.0 (<ISOLATED_PHASEFORGE_SOURCE>\backend)
+   Compiling approx v0.5.1
+warning: unused import: `Command`
+ --> src\studio\render.rs:2:82
+  |
+2 | use std::{collections::HashMap, fs, path::{Path as FilePath, PathBuf}, process::{Command, Stdio}, sync::{Arc, OnceLock}, time::{Durat...
+  |                                                                                  ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `windows_job::ProcessTree`
+   --> src\studio\render.rs:677:32
+    |
+677 | #[cfg(windows)] pub(crate) use windows_job::ProcessTree;
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `OsString`
+  --> src\studio\fixed_worker.rs:36:27
+   |
+36 |     use std::{ffi::{OsStr,OsString},mem::{size_of,size_of_val,zeroed},os::windows::{ffi::OsStrExt,io::AsRawHandle},ptr::{null,null_m...
+   |                           ^^^^^^^^
+
+warning: unused import: `sync::Arc`
+ --> src\laboratory\process.rs:2:64
+  |
+2 | use std::{path::Path,process::{Child,Command,Stdio,ExitStatus},sync::Arc,time::{Duration,Instant}};
+  |                                                                ^^^^^^^^^
+
+warning: unused import: `catalog`
+ --> src\laboratory\experiment_design.rs:3:13
+  |
+3 | use super::{catalog, generated::SourceImport, sweep::{SweepCase, SweepInput}};
+  |             ^^^^^^^
+
+warning: unnecessary parentheses around closure body
+   --> src\laboratory\orchestration.rs:284:55
+    |
+284 | ...t| (grant.scope.operations.iter().any(|operation| operation.tool() == name)||super::experiment_method::allowed_tool(name,&grant.scope.operations)))),
+    |       ^                                                                                                                                             ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+284 -             || execution.as_ref().is_some_and(|grant| (grant.scope.operations.iter().any(|operation| operation.tool() == name)||super::experiment_method::allowed_tool(name,&grant.scope.operations)))),
+284 +             || execution.as_ref().is_some_and(|grant| grant.scope.operations.iter().any(|operation| operation.tool() == name)||super::experiment_method::allowed_tool(name,&grant.scope.operations))),
+    |
+
+warning: unnecessary parentheses around closure body
+   --> src\laboratory\orchestration.rs:379:75
+    |
+379 | ...n| (execution.scope.operations.iter().any(|operation| operation.tool() == name)||super::experiment_method::allowed_tool(name,&execution.scope.operations))))),
+    |       ^                                                                                                                                                     ^
+    |
+help: remove these parentheses
+    |
+379 -                     || options.execution.as_ref().is_some_and(|execution| (execution.scope.operations.iter().any(|operation| operation.tool() == name)||super::experiment_method::allowed_tool(name,&execution.scope.operations))))),
+379 +                     || options.execution.as_ref().is_some_and(|execution| execution.scope.operations.iter().any(|operation| operation.tool() == name)||super::experiment_method::allowed_tool(name,&execution.scope.operations)))),
+    |
+
+warning: unused import: `Value`
+ --> src\persistence\reliability_tests.rs:5:18
+  |
+5 | use serde_json::{Value,json};
+  |                  ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `agent::laboratory::objective::artifact_requirements::Contract` is more private than the item `agent::laboratory::objective::Definition::artifact_requirements`
+  --> src\agent\laboratory_objective.rs:88:5
+   |
+88 |     pub artifact_requirements: Option<artifact_requirements::Contract>,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ field `agent::laboratory::objective::Definition::artifact_requirements` is reachable at visibility `pub(in crate::agent::laboratory)`
+   |
+note: but type `agent::laboratory::objective::artifact_requirements::Contract` is only usable at visibility `pub(in crate::agent::laboratory::objective)`
+  --> src\agent\laboratory_objective_artifact_requirements.rs:7:1
+   |
+ 7 | pub(super) struct Contract {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+warning: constant `MAX_PROPERTIES` is never used
+  --> src\agent\schema_strict.rs:24:7
+   |
+24 | const MAX_PROPERTIES: usize = 5000; const MAX_DEPTH: usize = 10; const MAX_ENUM_VALUES: usize = 1000; const MAX_SCHEMA_TEXT: usize =...
+   |       ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `MAX_DEPTH` is never used
+  --> src\agent\schema_strict.rs:24:43
+   |
+24 | const MAX_PROPERTIES: usize = 5000; const MAX_DEPTH: usize = 10; const MAX_ENUM_VALUES: usize = 1000; const MAX_SCHEMA_TEXT: usize =...
+   |                                           ^^^^^^^^^
+
+warning: constant `MAX_ENUM_VALUES` is never used
+  --> src\agent\schema_strict.rs:24:72
+   |
+24 | const MAX_PROPERTIES: usize = 5000; const MAX_DEPTH: usize = 10; const MAX_ENUM_VALUES: usize = 1000; const MAX_SCHEMA_TEXT: usize =...
+   |                                                                        ^^^^^^^^^^^^^^^
+
+warning: constant `MAX_SCHEMA_TEXT` is never used
+  --> src\agent\schema_strict.rs:24:109
+   |
+24 | const MAX_PROPERTIES: usize = 5000; const MAX_DEPTH: usize = 10; const MAX_ENUM_VALUES: usize = 1000; const MAX_SCHEMA_TEXT: usize =...
+   |                                                                                                             ^^^^^^^^^^^^^^^
+
+warning: function `openai_strict_violations` is never used
+   --> src\agent\schema_strict.rs:112:8
+    |
+112 | pub fn openai_strict_violations(root: &Value) -> Vec<String> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `Totals` is never constructed
+   --> src\agent\schema_strict.rs:126:8
+    |
+126 | struct Totals { properties: usize, enum_values: usize, text: usize }
+    |        ^^^^^^
+
+warning: function `check` is never used
+   --> src\agent\schema_strict.rs:128:4
+    |
+128 | fn check(schema: &Value, root: &Value, path: &str, found: &mut Vec<String>, totals: &mut Totals) {
+    |    ^^^^^
+
+warning: function `depth` is never used
+   --> src\agent\schema_strict.rs:169:4
+    |
+169 | fn depth(schema: &Value, root: &Value, guard: usize) -> usize {
+    |    ^^^^^
+
+warning: constant `MAX_NAME` is never used
+  --> src\agent\schema_anthropic.rs:22:7
+   |
+22 | const MAX_NAME: usize = 64;
+   |       ^^^^^^^^
+
+warning: constant `DEFINITION_KEYS` is never used
+  --> src\agent\schema_anthropic.rs:26:7
+   |
+26 | const DEFINITION_KEYS: &[&str] = &["name", "description", "input_schema"];
+   |       ^^^^^^^^^^^^^^^
+
+warning: constant `JSON_TYPES` is never used
+  --> src\agent\schema_anthropic.rs:27:7
+   |
+27 | const JSON_TYPES: &[&str] = &["object", "array", "string", "number", "integer", "boolean", "null"];
+   |       ^^^^^^^^^^
+
+warning: function `anthropic_tool_violations` is never used
+   --> src\agent\schema_anthropic.rs:166:8
+    |
+166 | pub fn anthropic_tool_violations(definition: &Value) -> Vec<String> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `shape` is never used
+   --> src\agent\schema_anthropic.rs:184:4
+    |
+184 | fn shape(schema: &Value, path: &str, found: &mut Vec<String>) {
+    |    ^^^^^
+
+warning: function `prompted_schema` is never used
+  --> src\agent\schema_anthropic_output.rs:86:8
+   |
+86 | pub fn prompted_schema(system: &str) -> Option<Value> {
+   |        ^^^^^^^^^^^^^^^
+
+warning: constant `DECLARATION_INSTRUCTIONS` is never used
+  --> src\agent\laboratory_local.rs:23:18
+   |
+23 | pub(super) const DECLARATION_INSTRUCTIONS:&str="Record what the user actually requested using set_objective_deliverables. This turn ...
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `compare_exchange_lab_record`, `heartbeat_worker`, `compare_exchange_worker_record`, and `release_worker_lease` are never used
+   --> src\persistence\laboratory_control.rs:183:19
+    |
+ 86 | impl Database {
+    | ------------- methods in this implementation
+...
+183 |     pub(crate) fn compare_exchange_lab_record(&self,expected:&str,job:&LabJob)->anyhow::Result<bool>{
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+290 |     pub(crate) fn heartbeat_worker(&self,key:&LeaseKey,owner:&WorkerIdentity,scope_sha256:&str,now:DateTime<Utc>)->anyhow::Result<(...
+    |                   ^^^^^^^^^^^^^^^^
+...
+315 |     pub(crate) fn compare_exchange_worker_record(&self,key:&LeaseKey,expected:&str,job:&LabJob,observed_control:u64,now:DateTime<Ut...
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+345 |     pub(crate) fn release_worker_lease(&self,key:&LeaseKey,observed_control:u64,drain_receipt:Value)->anyhow::Result<WorkerLease>{
+    |                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: method `observe_environment_progress` is never used
+   --> src\persistence\environment_control.rs:158:19
+    |
+ 76 | impl Database {
+    | ------------- method in this implementation
+...
+158 |     pub(crate) fn observe_environment_progress(&self, key: &EnvironmentLeaseKey, message: &str, progress: Value, now: DateTime<Utc>...
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `workspace_metadata` is never used
+  --> src\persistence\workspace_metadata.rs:40:19
+   |
+36 | impl Database {
+   | ------------- method in this implementation
+...
+40 |     pub(crate) fn workspace_metadata(&self, project: Uuid, limit: usize) -> anyhow::Result<(Vec<Value>, usize)> {
+   |                   ^^^^^^^^^^^^^^^^^^
+
+warning: method `lab_snapshots` is never used
+  --> src\persistence\laboratory_snapshots.rs:54:19
+   |
+50 | impl Database {
+   | ------------- method in this implementation
+...
+54 |     pub(crate) fn lab_snapshots(&self,project:Option<Uuid>)->anyhow::Result<Vec<LabSnapshot>>{
+   |                   ^^^^^^^^^^^^^
+
+warning: function `execute` is never used
+  --> src\science\ode.rs:77:21
+   |
+77 | pub(crate) async fn execute(
+   |                     ^^^^^^^
+
+warning: function `execute` is never used
+  --> src\science\particles.rs:69:15
+   |
+69 | pub(crate) fn execute(
+   |               ^^^^^^^
+
+warning: struct `Basic` is never constructed
+   --> src\studio\render.rs:665:40
+    |
+665 |     #[repr(C)]#[derive(Default)]struct Basic {process_time:i64,job_time:i64,flags:u32,min_working:usize,max_working:usize,active:u3...
+    |                                        ^^^^^
+
+warning: struct `Io` is never constructed
+   --> src\studio\render.rs:666:40
+    |
+666 |     #[repr(C)]#[derive(Default)]struct Io {read:u64,write:u64,other:u64,read_bytes:u64,write_bytes:u64,other_bytes:u64}
+    |                                        ^^
+
+warning: struct `Extended` is never constructed
+   --> src\studio\render.rs:667:40
+    |
+667 |     #[repr(C)]#[derive(Default)]struct Extended {basic:Basic,io:Io,process_memory:usize,job_memory:usize,peak_process:usize,peak_jo...
+    |                                        ^^^^^^^^
+
+warning: struct `ProcessTree` is never constructed
+   --> src\studio\render.rs:669:23
+    |
+669 |     pub(crate) struct ProcessTree(*mut c_void);
+    |                       ^^^^^^^^^^^
+
+warning: associated function `attach` is never used
+   --> src\studio\render.rs:670:37
+    |
+670 |     impl ProcessTree {pub(crate) fn attach(child:&std::process::Child,budget:u64)->anyhow::Result<Self>{unsafe {
+    |     ----------------                ^^^^^^
+    |     |
+    |     associated function in this implementation
+
+warning: function `CreateJobObjectW` is never used
+   --> src\studio\render.rs:668:56
+    |
+668 |     #[link(name="kernel32")]unsafe extern "system" {fn CreateJobObjectW(attributes:*const c_void,name:*const u16)->*mut c_void;fn S...
+    |                                                        ^^^^^^^^^^^^^^^^
+
+warning: function `SetInformationJobObject` is never used
+   --> src\studio\render.rs:668:131
+    |
+668 | ...utes:*const c_void,name:*const u16)->*mut c_void;fn SetInformationJobObject(job:*mut c_void,class:i32,info:*const c_void,size:u3...
+    |                                                        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `AssignProcessToJobObject` is never used
+   --> src\studio\render.rs:668:218
+    |
+668 | ...void,class:i32,info:*const c_void,size:u32)->i32;fn AssignProcessToJobObject(job:*mut c_void,process:*mut c_void)->i32;fn CloseH...
+    |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `CloseHandle` is never used
+   --> src\studio\render.rs:668:288
+    |
+668 | ...sToJobObject(job:*mut c_void,process:*mut c_void)->i32;fn CloseHandle(handle:*mut c_void)->i32;}
+    |                                                              ^^^^^^^^^^^
+
+warning: function `verified_geometry` is never used
+  --> src\studio\cad_contract.rs:91:15
+   |
+91 | pub(crate) fn verified_geometry(state: &AppState, project: Uuid, fabrication: Uuid, recipe_sha256: &str) -> anyhow::Result<Value> {
+   |               ^^^^^^^^^^^^^^^^^
+
+warning: function `verified_render_scene` is never used
+   --> src\studio\cad_contract.rs:103:15
+    |
+103 | pub(crate) fn verified_render_scene(state: &AppState, project: Uuid, fabrication: Uuid, recipe_sha256: &str) -> anyhow::Result<(Val...
+    |               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `queue_session_resume` is never used
+   --> src\laboratory\mod.rs:471:19
+    |
+298 | impl LaboratoryService {
+    | ---------------------- method in this implementation
+...
+471 |     pub(crate) fn queue_session_resume(&self,expected:&LabJob,token:&CancellationToken,parent:Option<Uuid>,deadline:Option<DateTime...
+    |                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `RECIPES_MAX_BYTES` is never used
+  --> src\laboratory\generated_blender.rs:55:18
+   |
+55 | pub(crate) const RECIPES_MAX_BYTES:usize=2200;
+   |                  ^^^^^^^^^^^^^^^^^
+
+warning: struct `Reservation` is never constructed
+   --> src\laboratory\nr_retention.rs:614:8
+    |
+614 | struct Reservation<'a> { service: &'a LaboratoryService, id: Uuid }
+    |        ^^^^^^^^^^^
+
+warning: method `issue_specialist_execution_grant` is never used
+   --> src\laboratory\specialist_grants.rs:267:19
+    |
+241 | impl LaboratoryService {
+    | ---------------------- method in this implementation
+...
+267 |     pub(crate) fn issue_specialist_execution_grant(&self, root_id: Uuid, id: Uuid,
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: fields `actor` and `grant` are never read
+ --> src\laboratory\specialist_grant_records.rs:8:9
+  |
+6 | pub(crate) struct ReservedAuthority {
+  |                   ----------------- fields in this struct
+7 |     pub root: LabJob,
+8 |     pub actor: LabJob,
+  |         ^^^^^
+9 |     pub grant: ExecutionGrant,
+  |         ^^^^^
+
+warning: field `config_sha256` is never read
+  --> src\laboratory\prepared_execution_files.rs:75:94
+   |
+75 | pub(super) struct RetainedStage{pub directory:PathBuf,pub files:BTreeMap<String,FilePin>,pub config_sha256:String}
+   |                   ------------- field in this struct                                         ^^^^^^^^^^^^^
+
+warning: function `scan_disk` is never used
+   --> src\laboratory\workspace_index.rs:107:4
+    |
+107 | fn scan_disk(db:&Database, project:Uuid, root:&Path, store:&str, rows:&mut Vec<Entry>, scan:&mut Scan)->anyhow::Result<()> {
+    |    ^^^^^^^^^
+
+warning: function `list` is never used
+   --> src\laboratory\workspace_index.rs:151:8
+    |
+151 | pub fn list(db:&Database, config:&AppConfig, project:Uuid, offset:usize, limit:usize)->anyhow::Result<Value>{
+    |        ^^^^
+
+warning: method `observe_environment_progress` is never used
+   --> src\persistence\environment_control.rs:158:19
+    |
+ 76 | impl Database {
+    | ------------- method in this implementation
+...
+158 |     pub(crate) fn observe_environment_progress(&self, key: &EnvironmentLeaseKey, message: &str, progress: Value, now: DateTime<Utc>...
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `phaseforge-backend` (lib) generated 48 warnings (run `cargo fix --lib -p phaseforge-backend` to apply 7 suggestions)
+warning: `phaseforge-backend` (lib test) generated 10 warnings (8 duplicates) (run `cargo fix --lib -p phaseforge-backend --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15m 23s
+     Running unittests src\lib.rs (<USER_PROFILE>\AppData\Local\SparkDevBridge\targets\ce8b2e46328605e5fdda45c3dcaad038a20e54be6befa0c50174308fd63e96d7\debug\deps\phaseforge_backend-1e18b823f504cc2f.exe)
+
+running 2112 tests
+test agent::context::tests::provider_compute_is_a_whitelist_with_actual_numerical_capacity ... ok
+test agent::background_tests::pro_does_not_accept_astra_only_reasoning ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::findings_require_acknowledged_exact_evidence_and_preserve_unresolved_supersession ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::incomplete_batches_and_pending_responses_never_reconcile_a_streak ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::findings_pages_bound_even_a_large_first_row_and_execution_projection_keeps_original_receipt ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::re_recorded_finding_ids_do_not_reset_the_derived_stall_count ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::retained_nonzero_page_uses_explicit_relative_cursor_and_rejects_split_utf8 ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::reviewer_checkpoint_exact_saved_and_complete_five_view_frontier ... ignored, Explicit read-only copied Saved replay; needs fixture/artifact environment paths
+test agent::laboratory::adversarial_review::review_checkpoint::tests::reviewer_trial4_exact_final_five_findings_and_resume_progress ... ignored, Explicit immutable trial4 copied Saved replay; no solver, app or provider execution
+test agent::laboratory::adversarial_review::review_checkpoint::tests::both_reviewer_schemas_and_admission_forbid_remote_recovery ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::numeric_receipt_recovery_and_finding_ranges_obey_the_same_union_rules ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::progress_unions_recovery_ranges_over_the_lifetime_not_call_ids_or_checkpoints ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::findings_reload_idempotency_and_rewording_do_not_renew_progress ... ok
+test agent::laboratory::adversarial_review::review_context::tests::reviewer_context_copied_browser_incident_fits_without_mutating_full_evidence ... ignored, Read-only replay of the exact copied browser incident; set PHASEFORGE_REVIEW_CONTEXT_FIXTURE
+test agent::laboratory::adversarial_review::review_checkpoint::tests::visible_superset_supports_an_old_page_but_a_visible_page_never_proves_the_whole_source ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::visibility_requires_gap_free_acknowledged_exact_bytes_and_current_pins ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::stalled_reconciliation_ignores_reinjected_pairs_and_cannot_renew_repeat_loops ... ok
+test agent::laboratory::adversarial_review::review_context::tests::reviewer_context_numerical_neighbor_keeps_required_measurements_and_admission_failure ... ok
+test agent::laboratory::adversarial_review::review_context::tests::reviewer_context_never_retires_undelivered_error_foreign_required_or_mismatched_pages ... ok
+test agent::laboratory::adversarial_review::review_context::tests::reviewer_context_under_limit_is_byte_identical_and_has_no_projection_receipt ... ok
+test agent::laboratory::adversarial_review::review_context::tests::reviewer_context_pressure_retires_acknowledged_optional_pages_only ... ok
+test agent::laboratory::adversarial_review::review_context::tests::reviewer_context_reload_reprojects_exactly_without_forging_inspection_or_acceptance ... ok
+test agent::laboratory::adversarial_review::review_context::tests::reviewer_context_local_capacity_uses_original_output_admission ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::checkpoints_preserve_unread_pairs_pixels_stop_and_full_saved_without_inventing_findings ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::checkpoint_unread_tail_projects_through_both_real_http_adapters ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::errors_and_unique_generated_lookalike_notes_remain_visible_and_never_positive_evidence ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::pending_denied_changed_and_overlarge_unread_boundaries_fail_without_mutation ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::new_finding_cannot_use_index_only_evidence_after_checkpoint ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::same_image_accounting_and_multi_proposal_return_room_are_checked_before_reads ... ok
+test agent::experiment_flow_tests::one_active_request_per_project ... ok
+test agent::experiment_flow_tests::build_only_cannot_spend_compute_even_if_model_requests_run ... ok
+test agent::experiment_flow_tests::non_length_incomplete_response_is_not_retried ... ok
+test agent::background_tests::stopping_pro_request_cancels_remote_response_and_retains_billed_tokens ... ok
+test agent::experiment_flow_tests::safety_refusal_is_not_repaired_or_bypassed ... ok
+test agent::experiment_flow_tests::explicit_build_and_run_uses_user_authority_not_model_veto ... ok
+test agent::experiment_flow_tests::openai_strict_scene_proposal_is_admitted_canonically_without_a_paid_repair ... ok
+test agent::experiment_flow_tests::output_exhaustion_gets_one_bounded_retry_with_usage_retained ... ok
+test agent::experiment_flow_tests::repeated_plan_is_repaired_into_executable_setup ... ok
+test agent::laboratory::adversarial_review::tests::cloud_reviewer_prose_reply_keeps_its_existing_typed_decision_error ... ok
+test agent::laboratory::adversarial_review::tests::paused_spark_review_resumes_from_its_saved_prose_reply_without_reposting_it ... ok
+test agent::laboratory::adversarial_review::tests::managed_reviewer_prose_gets_one_correction_then_delivers_unaccepted_without_an_error_stop ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_native_publication_pages_pin_whole_verified_bytes_and_reject_tampering ... ignored, Requires an explicitly selected copy of retained native molecular output; no solver or provider is run
+test agent::laboratory::adversarial_review::tests::cloud_reviewer_uses_separate_context_reads_owned_bytes_and_replays_decision_without_post ... ok
+test agent::laboratory::adversarial_review::tests::normal_resume_reconciles_exact_recovery_progress_then_executes_new_findings_and_read ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_output_budget_is_not_starved_at_high_reasoning_effort ... ok
+test agent::laboratory::adversarial_review::tests::managed_spark_reviewer_uses_local_json_schema_owned_evidence_and_zero_api_cost ... ok
+test agent::laboratory::adversarial_review::tests::managed_reviewer_corrected_after_one_prose_reply_completes_its_typed_review ... ok
+test agent::laboratory::adversarial_review::tests::cloud_review_appends_changing_budget_state_without_editing_its_system_prefix ... ok
+test agent::laboratory::adversarial_review::tests::ordinary_delivery_continues_from_distinct_review_then_new_evidence_can_stop_without_false_success ... ok
+test agent::background_tests::pro_background_polling_records_receipt_and_final_usage_without_duplicate_generation ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_dissent_reopens_managed_repair_projection_without_rewriting_worker_receipts ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_can_inspect_admitted_failed_attempt_without_completed_tool_credit ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_never_revives_stopped_unowned_expired_or_specialist_work ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_respects_handoff_legacy_review_and_uncertain_tool_boundaries ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_honors_paid_pause_before_dispatch_and_managed_disconnect_has_no_cloud_fallback ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_cannot_spend_the_reserved_budget_closing_allowance ... ok
+test agent::laboratory::adversarial_review::tests::numerical_review_is_eligible_without_relabeling_an_explanation_as_execution ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_requires_original_uploaded_pixels_even_when_worker_never_viewed_them ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_forbidden_tool_is_retained_as_error_and_never_executes ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_rechecks_source_bytes_after_model_decision_before_returning_it ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_explicit_resume_retires_only_a_confirmed_rejected_request_once ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_invalid_decisions_stop_after_three_without_evidence_or_acceptance ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_acceptance_requires_canonical_result_full_source_and_independent_pixels ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_output_cap_changes_twice_then_pauses_until_an_explicit_resume ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_same_response_read_then_decision_is_rejected_until_model_receives_the_bytes ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_saved_exhausted_reply_is_consumed_once_and_retried_with_the_larger_budget ... ok
+test agent::laboratory::adversarial_review::review_checkpoint::tests::max_single_image_can_progress_but_second_unread_image_is_not_admitted ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_execution_start_rechecks_terminal_expired_changed_and_unowned_roots ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_execution_start_refuses_wrong_or_terminal_usage_and_changed_pending_identity ... ok
+test agent::laboratory::budget::tests::finite_deadline_boundary_elapsed_and_off_are_distinct ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_snapshot_hashes_actual_generated_artifacts_and_original_instruction ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_unknown_tool_delta_cannot_be_laundered_through_saved_response_get ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_stop_before_response_identity_keeps_uncertain_reservation_without_replacement ... ok
+test agent::laboratory::budget::tests::spending_resolution_scales_with_small_budgets ... ok
+test agent::laboratory::catalog::tests::blender_discovery_uses_existing_visualization_without_admitting_solver_or_readiness ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_first_poll_guard_preserves_saved_envelope_without_dispatch ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_execution_start_cannot_resurrect_a_stop_between_preparation_and_start ... ok
+test agent::laboratory::catalog::tests::compact_index_preserves_all_scopes_gaps_and_optional_readiness ... ok
+test agent::laboratory::catalog::tests::current_discovery_supersedes_old_contract_across_compaction_but_metadata_does_not ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_pixel_acknowledgements_survive_replay_expiry_and_are_not_inherited_from_worker ... ok
+test agent::laboratory::catalog::tests::generated_runtime_index_is_bounded_without_claiming_a_scientific_adapter ... ok
+test agent::laboratory::catalog::tests::renderer_discovery_selects_its_existing_tools_without_admitting_numerical_work ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::queued_reviewer_steering_returns_to_parent_without_sending_stale_review ... ok
+test agent::laboratory::adversarial_review::tests::resume_model_reviewer_recovers_old_cached_or_remote_response_with_original_provider ... ok
+test agent::laboratory::catalog::tests::selected_adapter_preserves_exact_contract_and_rejects_unknown_physics ... ok
+test agent::laboratory::chemistry_native_routes::native_retained_chemistry_routes_after_read_fix ... ignored, Rechecks retained task-owned completed native Cantera jobs without copying a runtime or repeating a solve
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_dropped_stream_recovers_saved_response_without_reposting ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::resumed_reviewer_preserves_true_slot_wait_then_marks_held_dispatch_running ... ok
+test agent::laboratory::cloud_tools::tests::native_surface_preserves_all_research_tools_and_exact_contracts_without_local_convergence ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_explicit_resume_reconciles_uncertain_cancel_before_new_review_request ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_stop_checkpoints_stream_identity_and_cancels_without_admitting_partial_decision ... ok
+test agent::laboratory::compaction::checkpoint::continuity_tests::copied_aircraft_completion_survives_actual_checkpoint_and_historical_projection ... ignored, Set PHASEFORGE_CONTINUITY_COPY to the retained paused journal; offline only
+test agent::laboratory::compaction::checkpoint::continuity_tests::bounded_plan_projection_is_idempotent_and_keeps_exact_retrieval_identity ... ok
+test agent::laboratory::compaction::checkpoint::continuity_tests::execution_register_preserves_states_and_rejects_foreign_unacknowledged_future_receipts ... ok
+test agent::laboratory::compaction::checkpoint::continuity_tests::host_inspected_job_is_registered_by_its_terminal_state_not_its_admission ... ok
+test agent::laboratory::compaction::checkpoint::continuity_tests::large_plan_cannot_erase_completed_execution ... ok
+test agent::laboratory::compaction::checkpoint::continuity_tests::pending_admission_is_not_lost_or_promoted_to_completed ... ok
+test agent::laboratory::compaction::checkpoint::tests::byte_boundaries_preserve_utf8_and_bound_the_context ... ok
+test agent::laboratory::compaction::checkpoint::tests::checkpoint_uses_prefix_and_chronological_notes_not_sorted_ids ... ok
+test agent::laboratory::compaction::checkpoint::continuity_tests::execution_register_survives_catalog_traffic_reloads_and_all_provider_budgets ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_checkpoint_keeps_full_recent_code_without_recursive_journals ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_checkpoint_retains_public_decisions_without_private_or_future_text ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_checkpoint_keeps_method_contract_and_file_pins_within_shared_budget ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_checkpoint_retains_specification_after_long_provenance_and_deduplicates_ranges ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_checkpoint_source_rejects_failed_unconfirmed_unpinned_and_mismatched_reads ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_failure_retention_ignores_inventory_bulk_future_and_superseded_receipts ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_checkpoint_sources_share_existing_budget_without_partial_json ... ok
+test agent::laboratory::compaction::checkpoint::tests::complete_research_source_keeps_original_scope_hash_and_limitations ... ok
+test agent::laboratory::compaction::checkpoint::tests::dangling_and_prepared_calls_are_not_reported_as_unexecuted ... ok
+test agent::laboratory::compaction::checkpoint::tests::derived_source_coordinates_survive_checkpoint_without_becoming_original_bytes ... ok
+test agent::laboratory::compaction::checkpoint::tests::cloud_working_source_budget_is_bounded_and_does_not_admit_unconfirmed_reads ... ok
+test agent::laboratory::compaction::checkpoint::tests::later_completion_does_not_rewrite_the_checkpoint_boundary ... ok
+test agent::laboratory::anthropic_schema_tests::anthropic_wire_schema_is_wider_but_admission_stays_canonical ... ok
+test agent::laboratory::compaction::checkpoint::tests::ordinary_text_pages_preserve_utf8_offsets_exact_hashes_and_bounded_size ... ok
+test agent::laboratory::compaction::checkpoint::tests::recall_checkpoint_keeps_user_constraints_instead_of_unrelated_run_titles ... ok
+test agent::laboratory::compaction::checkpoint::tests::research_and_cad_pages_share_hash_cursors_but_private_records_do_not ... ok
+test agent::laboratory::compaction::checkpoint::tests::source_cursor_preserves_frontier_across_replays_gaps_hashes_and_checkpoint_boundary ... ok
+test agent::laboratory::budget::tests::budget_too_small_for_closing_still_publishes_partial_handoff_without_provider_request ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_saved_provider_receipt_recovers_and_uncertain_dispatch_never_reposts ... ok
+test agent::laboratory::anthropic_schema_tests::every_offered_tool_has_an_anthropic_root_object_schema_in_every_mode ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_frontier_skips_staged_inputs_and_admits_only_a_bounded_cloud_batch ... ok
+test agent::laboratory::compaction::compaction_recovery_tests::copied_cad_checkpoint_freezes_host_working_state_within_history_target ... ignored, Explicit copied aircraft incident; no provider or execution calls
+test agent::laboratory::compaction::compaction_recovery_tests::committed_context_and_outbox_replay_do_not_duplicate_summary_or_event ... ok
+test agent::laboratory::compaction::compaction_recovery_tests::cached_summary_recovers_without_credentials_or_generation ... ok
+test agent::laboratory::catalog::tests::python_numpy_catalog_tool_returns_current_contract_and_receipt_without_execution_authority ... ok
+test agent::laboratory::cloud_tools::tests::out_of_scope_and_out_of_state_calls_are_refused_when_executed ... ok
+test agent::laboratory::compaction::checkpoint::tests::four_provider_checkpoints_keep_root_source_pages_and_bounded_cursor_facts ... ok
+test agent::laboratory::catalog::tests::repeated_lab_catalog_calls_keep_one_receipt_file_per_contract ... ok
+test agent::laboratory::catalog::tests::resumed_provider_receives_contract_change_without_replaying_or_rewriting_old_discovery ... ok
+test agent::laboratory::compaction::compaction_recovery_tests::retained_cloud_checkpoint_keeps_source_with_context_headroom ... ignored, Requires an explicitly selected retained journal copy; no provider calls
+test agent::laboratory::compaction::compaction_recovery_tests::scoped_backlog_copied_astra_preserves_legacy_plan_and_stopped_guards ... ignored, Explicit retained aircraft checkpoint; never dispatches a model or worker
+test agent::laboratory::budget::tests::repeated_context_reads_current_saved_deadline_and_never_restores_a_historical_duration ... ok
+test agent::laboratory::catalog::tests::blender_view_is_resources_and_a_contract_ref_under_6_kb ... ok
+test agent::laboratory::adversarial_review::tests::reviewer_managed_interruption_needs_exact_explicit_resume_and_preserves_unknown_usage ... ok
+test agent::laboratory::adversarial_review::tests::stream_tests::reviewer_execution_start_binds_both_providers_without_changing_evidence_or_usage ... ok
+test agent::laboratory::catalog::tests::catalog_receipt_survives_compaction_boundary_and_invalidates_on_version_change ... ok
+test agent::laboratory::budget::tests::project_budget_intake_then_saved_closure_can_continue_after_absolute_increase ... ok
+test agent::laboratory::budget::tests::chat_budget_cutoff_closes_without_tools_then_preserves_partial_report_and_cannot_resume_spending ... ok
+test agent::laboratory::budget::tests::provider_turns_and_admission_compaction_carry_current_time_as_reserved_state ... ok
+test agent::laboratory::cloud_tools::tests::native_loop_sends_every_scoped_tool_on_the_first_turn_and_keeps_root_usage ... ok
+test agent::laboratory::compaction::compaction_recovery_tests::crash_after_usage_reservation_before_journal_identity_reuses_reservation ... ok

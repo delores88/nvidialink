@@ -1,0 +1,12 @@
+{
+  "base": "rust:1.98.1-slim-trixie@sha256:441452f8033b93f69dce3a3ff5c821c411f0a580723e6343932fc34a1b03ba5d",
+  "exit_code": 0,
+  "finished_at": 1791943418.7924314,
+  "image": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+  "probe": "rustc 1.98.1 (48a229cea 2026-09-01)\ngit version 2.47.3\nv20.19.2\nPython 3.13.5\n2.4.6 12.3.0\n",
+  "probe_sha256": "ab91f5efe034ae8a52206a4c1575f419d3994a5d615b871537f5248247756113",
+  "started_at": 1791943289.8439083,
+  "state": "succeeded",
+  "tag": "sparkdev/cpu:1.98.1-arm64",
+  "registered_cuda_digest": "sha256:7b3d0750495e7e726631b46a369b1d534f0c7bab80ba53eff1d2c125534da9ea"
+}
