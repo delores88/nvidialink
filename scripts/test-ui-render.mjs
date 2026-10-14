@@ -32,7 +32,7 @@ await page.addInitScript(()=>{
 try{
   await page.goto(`http://127.0.0.1:${server.address().port}/`);await page.getByText('Page 1 of 7',{exact:true}).waitFor();
   assert.equal(await page.locator('#jobs tr').count(),6);assert.equal(await page.locator('[data-connection-state]').first().textContent(),'Connected');
-  await page.emulateMedia({reducedMotion:'no-preference'});await page.waitForTimeout(120);assert.ok(await page.locator('#overview-visual canvas').evaluate(el=>el.width)>0);await page.emulateMedia({reducedMotion:'reduce'});await page.waitForTimeout(60);assert.equal(await page.locator('#overview-visual canvas').evaluate(el=>el.width),0);
+  await page.emulateMedia({reducedMotion:'no-preference'});await page.waitForFunction(()=>document.querySelector('#overview-visual').dataset.motion==='live');assert.ok(await page.locator('#overview-visual canvas').evaluate(el=>el.width)>0);await page.emulateMedia({reducedMotion:'reduce'});await page.waitForFunction(()=>document.querySelector('#overview-visual canvas').width===0);
   await page.locator('#next-page').click();assert.equal(await page.locator('#page-position').textContent(),'Page 2 of 7');
   await page.locator('.nav[data-view="connection"]').click();await page.getByText('This laptop is paired. Its saved identity is preserved.').waitFor();assert.equal(await page.locator('#pair-art').isVisible(),false);await page.locator('#ssh-settings').evaluate(el=>el.open=true);
   await page.locator('#ssh-form button[type=submit]').click();await page.getByText('Connection saved. Choose Test connection when ready; Spark services were not restarted.').waitFor();
@@ -47,6 +47,28 @@ try{
   await page.locator('#open-updates').click();await page.locator('#updates-dialog').waitFor();await page.locator('[data-update-action=check]').click();await page.locator('[data-update-action=authorize]:visible').waitFor();await page.locator('[data-update-action=authorize]').click();await page.getByText('FIXTURE',{exact:true}).waitFor();
   assert.equal(await page.locator('[data-update-action=download]').isVisible(),false);await page.locator('[data-update-action=download]:visible').waitFor();await page.locator('[data-update-action=download]').click();await page.locator('[data-update-action=install]:visible').waitFor();assert.equal(await page.evaluate(()=>fixtureCalls.filter(c=>c.name==='update_action'&&c.args.action==='install').length),0);await page.locator('#close-updates').click();
   await mkdir('.local',{recursive:true});
-  for(const width of [1140,850]){await page.setViewportSize({width,height:790});for(const view of ['overview','connection','resources','agents']){await page.locator(`.nav[data-view="${view}"]`).click();await page.waitForTimeout(80);const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(overflow,false,`${view} overflows at ${width}px`);}await page.locator('.nav[data-view=connection]').click();await page.screenshot({path:`.local/ui-020-connection-${width}.png`,fullPage:true});}
-  assert.deepEqual(errors,[]);console.log(JSON.stringify({ok:true,scope:'isolated browser fixture, not native acceptance',viewports:[1140,850],checks:['pagination','saved SSH does not bootstrap/connect','disconnect/connect','mode persistence','resource edit/readback','agent instructions and state override','drawer update approval actions','no horizontal overflow','no renderer exceptions']}));
+  const resourceFooters=[];
+  for(const width of [1140,850]){
+    await page.setViewportSize({width,height:790});
+    for(const view of ['overview','connection','resources','agents']){
+      await page.locator(`.nav[data-view="${view}"]`).click();await page.waitForTimeout(80);
+      const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(overflow,false,`${view} overflows at ${width}px`);
+      if(view==='resources'){
+        const footer=await page.locator('#resources-form .form-footer').evaluate(el=>{
+          const rect=node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height}};
+          const text=el.querySelector('#resource-hardware');
+          return {container:rect(el),text:rect(text),button:rect(el.querySelector('#save-resources')),lineHeight:parseFloat(getComputedStyle(text).lineHeight)};
+        });
+        assert.ok(footer.text.width>=180,`Resources hardware text is compressed at ${width}px: ${JSON.stringify(footer)}`);
+        assert.ok(footer.text.height<=footer.lineHeight*3,`Resources hardware text needs more than three lines at ${width}px`);
+        const separated=footer.text.right<=footer.button.left||footer.button.right<=footer.text.left||footer.text.bottom<=footer.button.top||footer.button.bottom<=footer.text.top;
+        assert.ok(separated,`Resources hardware text overlaps Save at ${width}px`);
+        assert.ok(footer.button.left>=footer.container.left&&footer.button.right<=footer.container.right+1,`Resources Save escapes its footer at ${width}px`);
+        resourceFooters.push({viewport:width,textWidth:footer.text.width,textHeight:footer.text.height,buttonWidth:footer.button.width});
+        await page.screenshot({path:`.local/ui-020-resources-${width}.png`,fullPage:true});
+      }
+    }
+    await page.locator('.nav[data-view=connection]').click();await page.screenshot({path:`.local/ui-020-connection-${width}.png`,fullPage:true});
+  }
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({ok:true,scope:'isolated browser fixture, not native acceptance',viewports:[1140,850],resourceFooters,checks:['pagination','saved SSH does not bootstrap/connect','disconnect/connect','mode persistence','resource edit/readback','agent instructions and state override','drawer update approval actions','resource footer readable text and non-overlapping Save','no horizontal overflow','no renderer exceptions']}));
 }finally{await browser.close();await new Promise(done=>server.close(done));}
