@@ -1,5 +1,5 @@
 [Unit]
-Description=Spark Dev Bridge authenticated device bridge
+Description=DGXBridge authenticated device bridge
 After=default.target
 
 [Service]

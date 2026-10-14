@@ -1,5 +1,5 @@
 [Unit]
-Description=Spark Dev Bridge authenticated device link
+Description=DGXBridge authenticated device link
 After=network-online.target
 Wants=network-online.target
 

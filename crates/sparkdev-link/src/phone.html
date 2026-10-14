@@ -1,4 +1,109 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Link Spark Dev Bridge</title>
-<style nonce="NONCE_PLACEHOLDER">:root{color-scheme:dark}body{font:18px system-ui;background:#101624;color:#edf3fc;max-width:460px;margin:10vh auto;padding:24px}h1{font-size:30px}p{line-height:1.5;color:#c6d2e7}input,button{box-sizing:border-box;font:inherit;border-radius:12px;padding:16px;width:100%;margin:8px 0}input{border:1px solid #7586a3;background:#1a2539;color:white;letter-spacing:.3em;text-align:center}button{border:0;background:#b5ef70;color:#17280b;cursor:pointer}button.deny{background:#26324a;color:white}small{color:#b3bfd4}</style>
-<h1>Link your computer</h1><p>Enter the six-digit code shown in Spark Dev Bridge on your laptop. Approve only a connection you started.</p><input id="code" aria-label="Six-digit approval code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off"><button id="approve">Approve link</button><button class="deny" id="deny">Deny</button><p id="result" role="status"></p><small>Your phone approves this connection. It does not receive access to your Spark.</small>
-<script nonce="NONCE_PLACEHOLDER">(()=>{'use strict';const token=location.hash.slice(1);history.replaceState(null,'',location.pathname);const result=document.getElementById('result');async function decide(choice){const code=document.getElementById('code').value;if(choice==='approve'&&!/^[0-9]{6}$/.test(code)){result.textContent='Enter the six digits shown on your laptop.';return;}try{const r=await fetch(location.pathname+'/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,choice,verification_code:code}),cache:'no-store',credentials:'omit'});if(!r.ok)throw new Error();const data=await r.json();document.getElementById('approve').disabled=true;document.getElementById('deny').disabled=true;document.getElementById('code').value='';result.textContent=data.outcome==='approved'?'Approved. Return to your laptop to confirm the link.':'Connection denied.';}catch(_){result.textContent='Approval failed. Check the laptop code or create a fresh QR code.';}}document.getElementById('approve').onclick=()=>decide('approve');document.getElementById('deny').onclick=()=>decide('deny');if(!token){result.textContent='This link is incomplete. Scan a fresh QR code from your laptop.';document.getElementById('approve').disabled=true;}})();</script></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Link DGXBridge</title>
+<style nonce="NONCE_PLACEHOLDER">
+:root{color-scheme:dark}
+body{font:18px system-ui;background:#101624;color:#edf3fc;max-width:460px;margin:10vh auto;padding:24px}
+h1{font-size:30px}
+p{line-height:1.5;color:#c6d2e7}
+input,button{box-sizing:border-box;font:inherit;border-radius:12px;padding:16px;width:100%;margin:8px 0}
+input{border:1px solid #7586a3;background:#1a2539;color:white;letter-spacing:.3em;text-align:center}
+button{border:0;background:#b5ef70;color:#17280b;cursor:pointer}
+button.deny{background:#26324a;color:white}
+button:disabled{cursor:default;opacity:.55}
+small{color:#b3bfd4}
+[hidden]{display:none!important}
+.confirmation{margin:28px 0;text-align:center}
+.confirmation svg{width:84px;height:84px;fill:none;stroke:#b5ef70;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;overflow:visible}
+.confirmation .ring{transform:rotate(-90deg);transform-origin:40px 40px;stroke-dasharray:1;stroke-dashoffset:1;animation:draw .6s ease .05s forwards}
+.confirmation .check{stroke-dasharray:1;stroke-dashoffset:1;animation:draw .36s ease .58s forwards}
+.confirmation h2{font-size:26px;margin:18px 0 8px}
+.confirmation.denied svg{stroke:#b3bfd4}
+@keyframes draw{to{stroke-dashoffset:0}}
+@media(prefers-reduced-motion:reduce){.confirmation .ring,.confirmation .check{animation:none;stroke-dashoffset:0}}
+</style>
+</head>
+<body>
+<h1>Link your computer</h1>
+<p id="intro">Enter the six-digit code shown in DGXBridge on your laptop. Approve only a connection you started.</p>
+<div id="actions">
+<input id="code" aria-label="Six-digit approval code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" enterkeyhint="done" spellcheck="false">
+<button id="approve" type="button">Approve link</button>
+<button class="deny" id="deny" type="button">Deny</button>
+</div>
+<section id="confirmation" class="confirmation" role="status" aria-live="polite" hidden>
+<!-- Checkmark geometry and drawing motion adapted from the owner's PhaseForge connector; see PROVENANCE-LINK.md. -->
+<svg viewBox="0 0 80 80" aria-hidden="true" focusable="false">
+<circle class="ring" cx="40" cy="40" r="36" pathLength="1"/>
+<path id="check" class="check" d="M24.5 41.5l10.5 10.5 20.5-23" pathLength="1"/>
+</svg>
+<h2 id="confirmation-title"></h2>
+<p id="confirmation-detail"></p>
+</section>
+<p id="result" role="status" aria-live="polite"></p>
+<small>Your phone approves this connection. It does not receive access to your Spark.</small>
+<script nonce="NONCE_PLACEHOLDER">
+(()=>{'use strict';
+let token=location.hash.slice(1);
+try{history.replaceState(null,'',location.pathname);}catch(_){}
+const result=document.getElementById('result');
+const code=document.getElementById('code');
+const approve=document.getElementById('approve');
+const deny=document.getElementById('deny');
+let busy=false,finished=false;
+function lock(on){approve.disabled=on;deny.disabled=on;code.disabled=on;}
+function complete(outcome){
+  finished=true;token='';code.value='';lock(true);
+  document.getElementById('actions').hidden=true;
+  document.getElementById('intro').hidden=true;
+  const panel=document.getElementById('confirmation');
+  const accepted=outcome==='approved';
+  document.getElementById('confirmation-title').textContent=accepted?'Link approved':'Link denied';
+  document.getElementById('confirmation-detail').textContent=accepted
+    ?'Your laptop is finishing the connection. Check DGXBridge to confirm it is linked.'
+    :'This connection was denied. You can close this page.';
+  if(!accepted){panel.classList.add('denied');document.getElementById('check').setAttribute('d','M27 40h26');}
+  result.textContent='';panel.hidden=false;
+}
+async function decide(choice){
+  if(busy||finished)return;
+  const verification=code.value;
+  if(choice==='approve'&&!/^[0-9]{6}$/.test(verification)){
+    result.textContent='Enter the six digits shown on your laptop.';return;
+  }
+  busy=true;lock(true);result.textContent=choice==='approve'?'Approving link…':'Denying link…';
+  const controller=typeof AbortController==='function'?new AbortController():null;
+  let timer;
+  try{
+    const request=(async()=>{
+      const response=await fetch(location.pathname+'/decision',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token,choice,verification_code:choice==='approve'?verification:undefined}),
+        cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:controller?controller.signal:undefined
+      });
+      const data=await response.json();
+      if(response.status!==200||data.ok!==true||data.outcome!==(choice==='approve'?'approved':'denied'))throw new Error('Unconfirmed decision');
+      return data.outcome;
+    })();
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{if(controller)controller.abort();reject(new Error('Decision timeout'));},15000);});
+    complete(await Promise.race([request,timeout]));
+  }catch(_){
+    result.textContent='Couldn’t confirm the result. Check DGXBridge on your laptop. If it is not linked, check the six-digit code or create a fresh QR code; this link may have expired or been used.';
+  }finally{
+    clearTimeout(timer);busy=false;if(!finished)lock(false);
+  }
+}
+approve.onclick=()=>decide('approve');
+deny.onclick=()=>decide('deny');
+code.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();decide('approve');}});
+if(!/^[A-Za-z0-9_-]{22}$/.test(token)){
+  finished=true;token='';result.textContent='This link is incomplete. Scan a fresh QR code from your laptop.';lock(true);
+}
+})();
+</script>
+</body>
+</html>

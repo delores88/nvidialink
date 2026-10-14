@@ -1,0 +1,24 @@
+{
+  "source": "Spark link service audit",
+  "events": [
+    {
+      "event": "ticket_created",
+      "at_unix": 1791946216,
+      "at_utc": "2026-10-14T02:50:16+00:00"
+    },
+    {
+      "event": "phone_approved",
+      "at_unix": 1791946270,
+      "at_utc": "2026-10-14T02:51:10+00:00"
+    },
+    {
+      "event": "device_approved",
+      "at_unix": 1791946270,
+      "at_utc": "2026-10-14T02:51:10+00:00"
+    }
+  ],
+  "ui_update_service_started_at_unix": 1791947536,
+  "service_active": true,
+  "scope": "Accepted pairing recorded before DGXBridge phone confirmation UI deployment. This does not verify the new phone success animation or identify the physical approver.",
+  "sensitive_fields_exported": false
+}
