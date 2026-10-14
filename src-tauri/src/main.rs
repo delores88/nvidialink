@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #[cfg(windows)]
 mod windows_taskbar;
+mod updates;
+mod update_verify;
+mod update_helper;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -152,7 +155,7 @@ async fn cli(app: tauri::AppHandle, args: Vec<String>) -> Result<Value, String> 
             "Finish or cancel the current pairing before changing the SSH connection.".into(),
         );
     }
-    let allowed = ["setup", "status", "doctor", "logs", "cancel", "wait"];
+    let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect"];
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
         || args.len() > 24
@@ -169,7 +172,7 @@ async fn cli(app: tauri::AppHandle, args: Vec<String>) -> Result<Value, String> 
 async fn link(app: tauri::AppHandle, op: String) -> Result<Value, String> {
     let state = app.state::<PairState>().inner().clone();
     match op.as_str() {
-        "status" => launch(app, "sparkdev-link", vec![op], None, 15).await,
+        "status" => launch(app, "sparkdev-link", vec!["pairing-info".into()], None, 15).await,
         "pair-status" => Ok(state
             .last
             .lock()
@@ -191,7 +194,14 @@ async fn link(app: tauri::AppHandle, op: String) -> Result<Value, String> {
             Ok(json!({"ok":true,"state":"cancelled"}))
         }
         "pair-start" => {
+            let config = sparkdev::state::config().map_err(|e| e.message)?;
+            if !config.connection_enabled || !config.allows_lan() {
+                return Err("Enable the connection and choose LAN only or Both before pairing over SSH.".into());
+            }
             let _lifecycle = state.lifecycle.lock().await;
+            if updates::action(&app, "status").await?["busy"] == true {
+                return Err("Finish the current update operation before starting phone pairing.".into());
+            }
             if state.running.swap(true, Ordering::SeqCst) {
                 return Ok(state
                     .last
@@ -349,20 +359,92 @@ async fn pair_session(
 
 #[tauri::command]
 fn preferences(app: tauri::AppHandle) -> Value {
-    let config = sparkdev::state::config().ok();
-    let cli = binary(&app, "sparkdev")
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned());
-    json!({"config":config,"cli_path":cli})
+    let config = sparkdev::state::config();
+    let cli = binary(&app, "sparkdev").ok();
+    let root = sparkdev::state::root().ok();
+    // Packaged agent processes can redirect AppData file I/O even when a
+    // known-folder API returns the ordinary path. Offer a loopback path only
+    // when this owner can read it and its bytes match this installed instance.
+    let agent_cli = cli.as_ref().and_then(|p| verified_loopback_path(p, None))
+        .or_else(|| cli.clone());
+    let agent_root = root.as_ref().and_then(|p| verified_loopback_path(p, Some("config.json")))
+        .or_else(|| root.clone());
+    let connection = config.as_ref().ok().map(|c| c.connection_info());
+    let laptop = config.as_ref().ok().map(|c| c.laptop_info());
+    let error = config.as_ref().err().map(|e| json!({"message":e.message}));
+    json!({"ok":config.is_ok(),"config":config.ok(),"cli_path":cli,"state_root":root,
+        "agent_cli_path":agent_cli,"agent_state_root":agent_root,
+        "connection":connection,"laptop":laptop,"state":sparkdev::state::diagnostics(),
+        "app_version":env!("CARGO_PKG_VERSION"),"error":error})
+}
+
+fn verified_loopback_path(path: &std::path::Path, child: Option<&str>) -> Option<PathBuf> {
+    if !cfg!(windows) { return None; }
+    let text = path.to_str()?;
+    let bytes = text.as_bytes();
+    if bytes.len() < 4 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':'
+        || !matches!(bytes[2], b'\\' | b'/') { return None; }
+    let candidate = PathBuf::from(format!("\\\\localhost\\{}$\\{}", bytes[0] as char,
+        text[3..].replace('/', "\\")));
+    let (original_file, candidate_file) = if let Some(name) = child {
+        (path.join(name), candidate.join(name))
+    } else { (path.to_owned(), candidate.clone()) };
+    let source = std::fs::read(original_file).ok()?;
+    let physical = std::fs::read(candidate_file).ok()?;
+    if source == physical { Some(candidate) } else { None }
+}
+
+#[tauri::command]
+async fn connection(app: tauri::AppHandle, mode: Option<String>, enabled: Option<bool>, laptop_jobs: Option<usize>) -> Result<Value, String> {
+    if (mode.is_some() || enabled.is_some()) && app.state::<PairState>().running.load(Ordering::SeqCst) {
+        return Err("Finish or cancel phone pairing before changing the connection.".into());
+    }
+    let mut args = vec!["--json".into(), "--client".into(), "human".into(), "connection".into()];
+    if let Some(mode) = mode { args.extend(["--mode".into(), mode]); }
+    if let Some(jobs) = laptop_jobs { args.extend(["--laptop-jobs".into(), jobs.to_string()]); }
+    let saved = launch(app.clone(), "sparkdev", args, None, 15).await?;
+    if saved["ok"] != true { return Ok(saved); }
+    if let Some(enabled) = enabled {
+        return cli(app, vec![if enabled { "connect" } else { "disconnect" }.into()]).await;
+    }
+    Ok(saved)
+}
+
+#[tauri::command]
+async fn resources(app: tauri::AppHandle, policy: Option<Value>) -> Result<Value, String> {
+    let mut args = vec!["--json".into(), "--client".into(), "human".into(), "resources".into()];
+    if policy.is_some() { args.push("--stdin".into()); }
+    launch(app, "sparkdev", args, policy, 40).await
+}
+
+#[tauri::command]
+async fn update_action(app: tauri::AppHandle, window: tauri::Window, action: String) -> Result<Value, String> {
+    if window.label() != "main" { return Err("Updates are available only from the main DGXBridge window.".into()); }
+    if action == "install" {
+        let state = app.state::<PairState>().inner().clone();
+        let _lifecycle = state.lifecycle.lock().await;
+        if state.running.load(Ordering::SeqCst) {
+            return Err("Finish or cancel phone pairing before installing an update.".into());
+        }
+        // The updater sets busy before returning. Pair-start checks it under
+        // the same lifecycle lock, closing the check/start race during staging.
+        return updates::action(&app, &action).await;
+    }
+    updates::action(&app, &action).await
 }
 
 #[tauri::command]
 async fn bootstrap(app: tauri::AppHandle, remote_access: bool) -> Result<Value, String> {
-    if app.state::<PairState>().running.load(Ordering::SeqCst) {
+    let state = app.state::<PairState>().inner().clone();
+    let _lifecycle = state.lifecycle.lock().await;
+    if state.running.load(Ordering::SeqCst) {
         return Err(
             "Finish or cancel the current pairing before installing or changing the connection."
                 .into(),
         );
+    }
+    if updates::action(&app, "status").await?["busy"] == true {
+        return Err("Finish the current update operation before installing Spark services.".into());
     }
     let resources = app
         .path()
@@ -398,6 +480,7 @@ async fn bootstrap(app: tauri::AppHandle, remote_access: bool) -> Result<Value, 
 }
 
 fn main() {
+    if update_helper::run_if_requested() { return; }
     let context = tauri::generate_context!();
     #[cfg(windows)]
     windows_taskbar::set_app_id(&context.config().identifier)
@@ -405,7 +488,9 @@ fn main() {
 
     tauri::Builder::default()
         .manage(PairState::default())
+        .manage(updates::UpdateState::default())
         .setup(|app| {
+            update_helper::confirm_launch();
             #[cfg(windows)]
             {
                 let window = app
@@ -415,7 +500,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap])
+        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, connection, resources, update_action])
         .run(context)
         .expect("DGXBridge could not start");
 }
