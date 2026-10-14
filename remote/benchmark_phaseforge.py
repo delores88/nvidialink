@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--cli", required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--phases", nargs="+", choices=("cold", "no_change", "one_file_change", "scratch_corrected"), default=["cold", "no_change", "one_file_change"])
     args = parser.parse_args()
     source = args.source.resolve()
     allowed = Path(__file__).resolve().parent.parent / ".local/phaseforge-benchmark"
@@ -43,7 +44,7 @@ def main():
     changed = source / "backend/src/main.rs"
     original = changed.read_bytes()
     try:
-        for phase in ("cold", "no_change", "one_file_change"):
+        for phase in args.phases:
             if phase == "one_file_change":
                 changed.write_bytes(original + b"\n// Spark Dev Bridge isolated benchmark: one-file rebuild probe.\n")
             started = time.time()
@@ -91,7 +92,7 @@ def main():
             if not record["test_summaries"] and status["exit_code"] != 0:
                 receipt["blocked"] = "Compilation or setup failed before tests; further timing runs would only repeat the blocker"
                 break
-        receipt["completed"] = len(receipt["phases"]) == 3
+        receipt["completed"] = len(receipt["phases"]) == len(args.phases)
     finally:
         changed.write_bytes(original)
         receipt["finished_at"] = time.time()

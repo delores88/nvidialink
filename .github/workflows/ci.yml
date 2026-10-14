@@ -1,0 +1,24 @@
+name: Bridge checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  core:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cargo test --workspace --locked
+      - run: python -m unittest discover -s remote -p "test_*.py" -v
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: git diff --exit-code

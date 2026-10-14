@@ -1,0 +1,11 @@
+# Privacy and local state
+
+Spark Dev Bridge uploads selected source files and exact job arguments to the owner's Spark. It stores content-addressed source snapshots, per-project dependency/build caches, request receipts, combined process output and a job audit trail. The desktop/CLI retain configuration, job receipts, log chunks and pending cancellations in the owner's application state directory. There is no telemetry or embedded model API.
+
+The SSH private key remains with OpenSSH. The app stores its path, not its contents. A separately generated link device identity is encrypted for the Windows user using DPAPI; Linux state is owner-readable only. Pairing tickets, QR tokens and six-digit approval codes exist only during the approval workflow and must not appear in screenshots, release evidence or logs.
+
+Jobs normally have no network. Explicit dependency preparation uses a domain-limited proxy for public package downloads. Optional encrypted iroh relay traffic exposes connection metadata to relay operators; it does not give them the device keys or plaintext job content. The public relay option must be selected by the owner. No private owner VM is bundled or presumed to exist.
+
+Source, caches and logs persist until the owner removes the bridge's own state. This preview has no automatic retention cleanup. Uninstalling the Windows application does not delete retained jobs, local pairing identity, Spark services or Spark state. Never clean PhaseForge, Ollama or another application's files when removing this utility. Do not submit secrets in source, argv or program output: the sync filter rejects recognizable credential patterns but cannot recognize every secret format.
+
+The local runner launches native owner processes and is not a sandbox. Spark jobs use restricted Docker containers; a user with access to the Docker daemon already has powerful host privileges independently of this app. Device pairing and SSH enforce owner access, while client names such as claude and codex are accounting labels, not separate security principals.

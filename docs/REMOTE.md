@@ -165,3 +165,12 @@ is in `phaseforge-scratch-corrected.json`. The latter reports 1969 passed, 18 fa
 read-only ARM64 diagnosis and Windows-only failure. This is a complete test run,
 not a passing upstream suite. The initial upload receipt describes a resumed
 73.5 MB transfer; it must not be described as a fresh whole-tree upload timing.
+
+The final Linux ARM64 CLI was built with embedded dependency metadata, passed all
+23 CLI/MCP tests in the pinned Git-equipped runtime, and exercised real executable
+`devices`, `plan`, MCP initialization, the eight-tool listing and MCP planning.
+`remote/receipts/linux-arm64-cli-final.json` records the job, source hashes, binary
+hash, exact-argument and no-plan-state-change checks. Its adjacent dependency JSON
+contains the 45 packages actually embedded in the ELF binary. This container had
+no owner credentials, so its device output correctly reports an unconfigured remote
+route; authenticated Windows LAN and Linux package checks remain distinct evidence.
