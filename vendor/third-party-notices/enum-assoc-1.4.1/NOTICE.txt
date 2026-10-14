@@ -1,0 +1,4 @@
+enum-assoc 1.4.1
+Author declared by upstream: Griffin O'Neill
+
+The exact published crate declares MIT OR Apache-2.0. This distribution selects the Apache-2.0 alternative. No license-text file exists in that crate archive or its recorded upstream commit. The complete Apache License 2.0 text supplied here is downloaded from the Apache Software Foundation; it is a canonical-license supplement, not a file claimed to exist in the enum-assoc repository. UPSTREAM-CARGO.toml retains the package declaration. No copyright year is invented.

@@ -1,0 +1,306 @@
+{
+  "schema": 1,
+  "packages": [
+    {
+      "name": "alloc-stdlib-0.3.0",
+      "license": "BSD-3-Clause",
+      "repo": "https://github.com/dropbox/rust-alloc-no-stdlib",
+      "sha": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012",
+      "path": "alloc-stdlib",
+      "files": [
+        {
+          "path": "alloc-stdlib-0.3.0/LICENSE",
+          "upstream_path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE",
+          "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "bitcoin_hashes-0.13.1",
+      "license": "CC0-1.0",
+      "repo": "https://github.com/rust-bitcoin/rust-bitcoin",
+      "sha": "74b576e776cad55830b4e87da2742f317763406b",
+      "path": "hashes",
+      "files": [
+        {
+          "path": "bitcoin_hashes-0.13.1/LICENSE",
+          "upstream_path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/rust-bitcoin/rust-bitcoin/74b576e776cad55830b4e87da2742f317763406b/LICENSE",
+          "sha256": "7179683e8000e6bdc9bbc60d85edf0a4ac8e76f951857f54fcb775d5886f1309",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "defmt-parser-1.0.0",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/knurling-rs/defmt",
+      "sha": "4a8cdb44891ed57b8ff5a023b6bec7137c48708f",
+      "path": "parser",
+      "files": [
+        {
+          "path": "defmt-parser-1.0.0/LICENSE-MIT",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT",
+          "sha256": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50",
+          "basis": "exact-upstream-commit"
+        },
+        {
+          "path": "defmt-parser-1.0.0/LICENSE-APACHE",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-APACHE",
+          "sha256": "8173d5c29b4f956d532781d2b86e4e30f83e6b7878dce18c919451d6ba707c90",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "enum-assoc-1.4.1",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/Eolu/enum-assoc",
+      "sha": "351b306939b150601451df752a183b077b0de85a",
+      "path": "",
+      "selected_license": "Apache-2.0",
+      "files": [
+        {
+          "path": "enum-assoc-1.4.1/LICENSE-APACHE-2.0.txt",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "basis": "canonical-license-text; matching upstream license declaration at recorded commit"
+        },
+        {
+          "path": "enum-assoc-1.4.1/UPSTREAM-CARGO.toml",
+          "url": "https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml",
+          "sha256": "ac76a8e989ded142df50e3b796c8926e90c7e0f42d2428ff9ef62a359d38f582",
+          "basis": "declaration from exact crate archive"
+        },
+        {
+          "path": "enum-assoc-1.4.1/NOTICE.txt",
+          "sha256": "9d4e7418e681ffcaadd2d6d3f99a89e4023ed9253a6364b00430655bce61a032",
+          "basis": "distribution attribution and source availability notice"
+        }
+      ]
+    },
+    {
+      "name": "iroh-base-1.3.0",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/n0-computer/iroh",
+      "sha": "0072d7d84b233f9e7185eb676f049beaf557ac03",
+      "path": "iroh-base",
+      "files": [
+        {
+          "path": "iroh-base-1.3.0/LICENSE-MIT",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/n0-computer/iroh/0072d7d84b233f9e7185eb676f049beaf557ac03/LICENSE-MIT",
+          "sha256": "f169adb8124d3b005416d8485d00777c9a7bdd9099982c52a4493f9732e6d050",
+          "basis": "exact-upstream-commit"
+        },
+        {
+          "path": "iroh-base-1.3.0/LICENSE-APACHE",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/n0-computer/iroh/0072d7d84b233f9e7185eb676f049beaf557ac03/LICENSE-APACHE",
+          "sha256": "903131e2786f073a942fbf8fae122d9e576e4dad758c6da7f9f2ba58fd8611ab",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "iroh-dns-1.3.0",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/n0-computer/iroh",
+      "sha": "17c0612f80f78f5288e97b818b1360ae6ea0a51a",
+      "path": "iroh-dns",
+      "files": [
+        {
+          "path": "iroh-dns-1.3.0/LICENSE-MIT",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/n0-computer/iroh/17c0612f80f78f5288e97b818b1360ae6ea0a51a/LICENSE-MIT",
+          "sha256": "f169adb8124d3b005416d8485d00777c9a7bdd9099982c52a4493f9732e6d050",
+          "basis": "exact-upstream-commit"
+        },
+        {
+          "path": "iroh-dns-1.3.0/LICENSE-APACHE",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/n0-computer/iroh/17c0612f80f78f5288e97b818b1360ae6ea0a51a/LICENSE-APACHE",
+          "sha256": "903131e2786f073a942fbf8fae122d9e576e4dad758c6da7f9f2ba58fd8611ab",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "iroh-metrics-derive-1.0.1",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/n0-computer/iroh-metrics",
+      "sha": "a9afb7cd49bb3804fffefec61647993851f9b8c8",
+      "path": "iroh-metrics-derive",
+      "files": [
+        {
+          "path": "iroh-metrics-derive-1.0.1/LICENSE-MIT",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/n0-computer/iroh-metrics/a9afb7cd49bb3804fffefec61647993851f9b8c8/LICENSE-MIT",
+          "sha256": "339060c99d5c80c2742cae417f765980afe6b0149a78f959bbf2a79f19ab3af5",
+          "basis": "exact-upstream-commit"
+        },
+        {
+          "path": "iroh-metrics-derive-1.0.1/LICENSE-APACHE",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/n0-computer/iroh-metrics/a9afb7cd49bb3804fffefec61647993851f9b8c8/LICENSE-APACHE",
+          "sha256": "7953ad8cebf4e01199521a5faa221ef59bec5cee0a9856b179590613a8560cbc",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "n0-error-macros-1.0.1",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/n0-computer/n0-error",
+      "sha": "596f4113918712d545cbb25b7fa12c7153706f54",
+      "path": "n0-error-macros",
+      "files": [
+        {
+          "path": "n0-error-macros-1.0.1/LICENSE-MIT",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/n0-computer/n0-error/596f4113918712d545cbb25b7fa12c7153706f54/LICENSE-MIT",
+          "sha256": "339060c99d5c80c2742cae417f765980afe6b0149a78f959bbf2a79f19ab3af5",
+          "basis": "exact-upstream-commit"
+        },
+        {
+          "path": "n0-error-macros-1.0.1/LICENSE-APACHE",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/n0-computer/n0-error/596f4113918712d545cbb25b7fa12c7153706f54/LICENSE-APACHE",
+          "sha256": "7953ad8cebf4e01199521a5faa221ef59bec5cee0a9856b179590613a8560cbc",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "netwatch-0.19.3",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/n0-computer/net-tools",
+      "sha": "0030e57fc70981895bb86212ff0f059cc41c8a4e",
+      "path": "netwatch",
+      "files": [
+        {
+          "path": "netwatch-0.19.3/LICENSE-MIT",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/n0-computer/net-tools/0030e57fc70981895bb86212ff0f059cc41c8a4e/LICENSE-MIT",
+          "sha256": "33616ec4c88b6e00de66e6c06f1a55d80bb32a9d7939f3aa83d28e673a1adcae",
+          "basis": "exact-upstream-commit"
+        },
+        {
+          "path": "netwatch-0.19.3/LICENSE-APACHE",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/n0-computer/net-tools/0030e57fc70981895bb86212ff0f059cc41c8a4e/LICENSE-APACHE",
+          "sha256": "7986218ec4ea89de3511a843ae27fea2584a525036c220ff7b26589179f07888",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "portmapper-0.19.3",
+      "license": "MIT OR Apache-2.0",
+      "repo": "https://github.com/n0-computer/net-tools",
+      "sha": "0030e57fc70981895bb86212ff0f059cc41c8a4e",
+      "path": "portmapper",
+      "files": [
+        {
+          "path": "portmapper-0.19.3/LICENSE-MIT",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://raw.githubusercontent.com/n0-computer/net-tools/0030e57fc70981895bb86212ff0f059cc41c8a4e/LICENSE-MIT",
+          "sha256": "33616ec4c88b6e00de66e6c06f1a55d80bb32a9d7939f3aa83d28e673a1adcae",
+          "basis": "exact-upstream-commit"
+        },
+        {
+          "path": "portmapper-0.19.3/LICENSE-APACHE",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://raw.githubusercontent.com/n0-computer/net-tools/0030e57fc70981895bb86212ff0f059cc41c8a4e/LICENSE-APACHE",
+          "sha256": "7986218ec4ea89de3511a843ae27fea2584a525036c220ff7b26589179f07888",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "selectors-0.38.0",
+      "license": "MPL-2.0",
+      "repo": "https://github.com/servo/stylo",
+      "sha": "572ecba2d1600e7c3d490586692a209faf703baa",
+      "path": "selectors",
+      "selected_license": "MPL-2.0",
+      "files": [
+        {
+          "path": "selectors-0.38.0/LICENSE-MPL-2.0.txt",
+          "url": "https://www.mozilla.org/media/MPL/2.0/index.txt",
+          "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+          "basis": "canonical-license-text; matching upstream license declaration at recorded commit"
+        },
+        {
+          "path": "selectors-0.38.0/UPSTREAM-CARGO.toml",
+          "url": "https://github.com/servo/stylo/blob/572ecba2d1600e7c3d490586692a209faf703baa/selectors/Cargo.toml",
+          "sha256": "26a19ba53c3dfff3f572e04f72ed224dca7b03a76a8e0593fc48b458ec6ab535",
+          "basis": "declaration from exact crate archive"
+        },
+        {
+          "path": "selectors-0.38.0/UPSTREAM-lib.rs",
+          "url": "https://github.com/servo/stylo/blob/572ecba2d1600e7c3d490586692a209faf703baa/selectors/lib.rs",
+          "sha256": "d54c6e13e9e952dac17d209171df8657e3cae93beaddace4906150cdec8d02e9",
+          "basis": "MPL declaration retained from exact crate archive"
+        },
+        {
+          "path": "selectors-0.38.0/NOTICE.txt",
+          "sha256": "6e958d4a376ff739e63b71bc7e7502f7359bf9bc9c0a4866898d01deabeca68b",
+          "basis": "distribution attribution and source availability notice"
+        }
+      ]
+    },
+    {
+      "name": "webview2-com-0.39.1",
+      "license": "MIT",
+      "repo": "https://github.com/wravery/webview2-rs",
+      "sha": "edc2caf886175ccaebe86078c9cfe1ae2a187328",
+      "path": "crates/webview2-com",
+      "files": [
+        {
+          "path": "webview2-com-0.39.1/LICENSE",
+          "upstream_path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+          "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "webview2-com-macros-0.8.1",
+      "license": "MIT",
+      "repo": "https://github.com/wravery/webview2-rs",
+      "sha": "dffa41a8a46d3f5565eefbff2de57d38d399f158",
+      "path": "crates/callback-macros",
+      "files": [
+        {
+          "path": "webview2-com-macros-0.8.1/LICENSE",
+          "upstream_path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE",
+          "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    },
+    {
+      "name": "webview2-com-sys-0.39.1",
+      "license": "MIT",
+      "repo": "https://github.com/wravery/webview2-rs",
+      "sha": "edc2caf886175ccaebe86078c9cfe1ae2a187328",
+      "path": "crates/bindings",
+      "files": [
+        {
+          "path": "webview2-com-sys-0.39.1/LICENSE",
+          "upstream_path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+          "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+          "basis": "exact-upstream-commit"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+selectors 0.38.0 source availability
+
+This unmodified third-party crate is governed by MPL-2.0. The complete corresponding source is available without charge from:
+https://static.crates.io/crates/selectors/selectors-0.38.0.crate
+SHA-256: 8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d
+
+Exact upstream source:
+https://github.com/servo/stylo/tree/572ecba2d1600e7c3d490586692a209faf703baa/selectors
+
+No selectors source modifications are made by Spark Dev Bridge. The crate source headers identify Mozilla Public License 2.0; the full canonical license text supplied here comes from Mozilla because the published crate and recorded upstream repository omit a root MPL text. Spark Dev Bridge's MIT license does not replace this third-party license.
