@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,agentPrompt,agentConfiguration} from '../ui/model.mjs';
+import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration} from '../ui/model.mjs';
 import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
 import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
@@ -42,6 +42,31 @@ test('resource editor rejects impossible budgets and missing fields before calli
   assert.throws(()=>resourcePolicy(form({...valid,headroom_gb:0})),/positive whole/);
   assert.throws(()=>resourcePolicy(form({...valid,cpu_total:2.5})),/whole/);
   assert.throws(()=>resourcePolicy(new Map()),/whole/);
+  assert.throws(()=>resourcePolicy(form(valid),{cpu_count:12,memory_gb:119}),/12 CPU cores/);
+  assert.throws(()=>resourcePolicy(form({...valid,headroom_gb:60}),{cpu_count:20,memory_gb:119}),/plus headroom/);
+});
+test('Builds first has the reviewed Spark budget and presets scale down within observed hardware',()=>{
+  assert.deepEqual(resourcePreset('builds-first',{cpu_count:20,memory_gb:119}),{cpu_per_job:16,memory_gb_per_job:32,cpu_total:18,memory_gb_total:80,client_jobs:4,client_cpu:16,headroom_gb:32});
+  for(const hardware of [{cpu_count:20,memory_gb:119},{cpu_count:1,memory_gb:2},{cpu_count:4,memory_gb:16},{cpu_count:8,memory_gb:32},{cpu_count:128,memory_gb:256}]){
+    for(const preset of RESOURCE_PRESETS){const policy=resourcePreset(preset.id,hardware);assert.deepEqual(resourcePolicy(form(policy),hardware),policy);assert.ok(policy.cpu_total<=hardware.cpu_count);assert.ok(policy.memory_gb_total+policy.headroom_gb<=hardware.memory_gb);}
+  }
+  assert.throws(()=>resourcePreset('balanced',null),/Read the Spark hardware/);
+  assert.throws(()=>resourcePreset('invented',{cpu_count:20,memory_gb:119}),/known resource preset/);
+});
+test('resource draft equality uses policy fields rather than response metadata',()=>{
+  assert.equal(sameResourcePolicy({...valid,other:'ignored'},Object.fromEntries(form(valid))),true);
+  assert.equal(sameResourcePolicy(valid,{...valid,cpu_per_job:3}),false);
+  assert.equal(sameResourcePolicy(valid,null),false);
+});
+test('agent path selection keeps Claude on verified ordinary paths and Codex on verified UNC paths',()=>{
+  const plain={cli_path:'C:/Owner/DGXBridge/bin/sparkdev.exe',state_root:'C:/Owner/SparkDevBridge'},unc={cli_path:String.raw`\\localhost\C$\Owner\DGXBridge\bin\sparkdev.exe`,state_root:String.raw`\\localhost\C$\Owner\SparkDevBridge`};
+  const preferences={...plain,agent_cli_path:unc.cli_path,agent_state_root:unc.state_root,agent_paths:{claude:plain,codex:unc}};
+  assert.deepEqual(agentPaths('claude',preferences),{path:plain.cli_path,stateRoot:plain.state_root});
+  assert.deepEqual(agentPaths('codex',preferences),{path:unc.cli_path,stateRoot:unc.state_root});
+  delete preferences.agent_paths;
+  assert.deepEqual(agentPaths('claude',preferences),{path:plain.cli_path,stateRoot:plain.state_root});
+  assert.deepEqual(agentPaths('codex',preferences),{path:unc.cli_path,stateRoot:unc.state_root});
+  assert.equal(agentPaths('claude',{cli_path:'unsafe\nreference'}).path,'sparkdev');
 });
 test('copied prompt selects safe references and keeps caller and state identity explicit',()=>{
   const config={ssh_alias:'my-spark',hosts:['192.0.2.10'],identity_file:'C:/keys/spark',user:'owner',port:22,connection_mode:'both',private_key:'DO_NOT_COPY_KEY',verification_code:'DO_NOT_COPY_CODE',ticket:{token:'DO_NOT_COPY_TOKEN'},password:'DO_NOT_COPY_PASSWORD'};

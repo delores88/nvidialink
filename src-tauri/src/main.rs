@@ -4,6 +4,7 @@ mod windows_taskbar;
 mod updates;
 mod update_verify;
 mod update_helper;
+mod setup_bundle;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -369,13 +370,37 @@ fn preferences(app: tauri::AppHandle) -> Value {
         .or_else(|| cli.clone());
     let agent_root = root.as_ref().and_then(|p| verified_loopback_path(p, Some("config.json")))
         .or_else(|| root.clone());
+    let ordinary_cli = cli.as_ref().and_then(|p| verified_ordinary_path(p, None))
+        .or_else(|| cli.clone());
+    let ordinary_root = root.as_ref().and_then(|p| verified_ordinary_path(p, Some("config.json")))
+        .or_else(|| root.clone());
     let connection = config.as_ref().ok().map(|c| c.connection_info());
     let laptop = config.as_ref().ok().map(|c| c.laptop_info());
     let error = config.as_ref().err().map(|e| json!({"message":e.message}));
-    json!({"ok":config.is_ok(),"config":config.ok(),"cli_path":cli,"state_root":root,
+    json!({"ok":config.is_ok(),"config":config.ok(),"cli_path":ordinary_cli,"state_root":ordinary_root,
         "agent_cli_path":agent_cli,"agent_state_root":agent_root,
+        "agent_paths":{"claude":{"cli_path":ordinary_cli,"state_root":ordinary_root},
+            "codex":{"cli_path":agent_cli,"state_root":agent_root}},
         "connection":connection,"laptop":laptop,"state":sparkdev::state::diagnostics(),
         "app_version":env!("CARGO_PKG_VERSION"),"error":error})
+}
+
+fn verified_ordinary_path(path: &std::path::Path, child: Option<&str>) -> Option<PathBuf> {
+    if !cfg!(windows) { return Some(path.to_owned()); }
+    verified_path_bytes(path, ordinary_candidate(path)?, child)
+}
+
+fn ordinary_candidate(path: &std::path::Path) -> Option<PathBuf> {
+    let candidate = loopback_candidate(path)?;
+    let text = candidate.to_str()?;
+    if let Some(rest) = text.strip_prefix(r"\\localhost\") {
+        let (share, tail) = rest.split_once('\\')?;
+        let bytes = share.as_bytes();
+        if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b'$' {
+            return Some(PathBuf::from(format!("{}:\\{}", bytes[0] as char, tail)));
+        }
+    }
+    Some(candidate)
 }
 
 fn verified_loopback_path(path: &std::path::Path, child: Option<&str>) -> Option<PathBuf> {
@@ -427,7 +452,7 @@ fn verified_path_bytes(path: &std::path::Path, candidate: PathBuf, child: Option
 
 #[cfg(test)]
 mod agent_path_tests {
-    use super::{loopback_candidate, verified_path_bytes};
+    use super::{loopback_candidate, ordinary_candidate, verified_path_bytes};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -453,6 +478,20 @@ mod agent_path_tests {
             r"\\?\Volume{example}\sparkdev.exe", r"\\?\GLOBALROOT\Device\sparkdev", r"\\server"] {
             assert!(loopback_candidate(Path::new(source)).is_none(), "{source}");
         }
+    }
+
+    #[test]
+    fn ordinary_agent_paths_remove_only_known_windows_wrappers() {
+        let expected = PathBuf::from(r"C:\Users\Example\DGXBridge\bin\sparkdev.exe");
+        for source in [r"C:\Users\Example\DGXBridge\bin\sparkdev.exe",
+            r"\\?\C:\Users\Example\DGXBridge\bin\sparkdev.exe",
+            r"\\localhost\C$\Users\Example\DGXBridge\bin\sparkdev.exe"] {
+            assert_eq!(ordinary_candidate(Path::new(source)), Some(expected.clone()));
+        }
+        assert_eq!(ordinary_candidate(Path::new(r"\\?\UNC\server\share\sparkdev.exe")),
+            Some(PathBuf::from(r"\\server\share\sparkdev.exe")));
+        assert!(ordinary_candidate(Path::new(r"\\.\pipe\sparkdev")).is_none());
+        assert!(ordinary_candidate(Path::new(r"C:sparkdev.exe")).is_none());
     }
 
     #[test]
@@ -529,12 +568,10 @@ async fn bootstrap(app: tauri::AppHandle, remote_access: bool) -> Result<Value, 
         .path()
         .resource_dir()
         .map_err(|_| "Application resources unavailable")?;
-    let bundle_bytes = std::fs::read(resources.join("sparkdev-bundle.json"))
-        .map_err(|_| "The remote setup bundle is missing. Reinstall the app.")?;
-    let script = std::fs::read(resources.join("bootstrap.py"))
-        .map_err(|_| "The remote installer is missing.")?;
-    let mut bundle: Value =
-        serde_json::from_slice(&bundle_bytes).map_err(|_| "The setup bundle is invalid")?;
+    let mut bundle = setup_bundle::load(&resources)?;
+    let script = STANDARD.decode(bundle["files"]["bootstrap.py"]["data"].as_str()
+        .ok_or("The validated remote installer is missing.")?)
+        .map_err(|_| "The validated remote installer is invalid.")?;
     bundle["relay_mode"] = json!(if remote_access {
         "n0_public"
     } else {

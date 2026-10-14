@@ -33,7 +33,26 @@ export function jobPage(jobs, requested, pageSize=6) {
   const start = page*pageSize;
   return {page,pages,start,total:jobs.length,rows:jobs.slice(start,start+pageSize)};
 }
-export function resourcePolicy(form) {
+export const RESOURCE_PRESETS = Object.freeze([
+  {id:'ollama-first',name:'Ollama first',description:'Keep more room for local models.',cpu_per_job:4,memory_gb_per_job:8,cpu_total:8,memory_gb_total:32,client_jobs:1,client_cpu:4,headroom_gb:64,cpuFraction:.4,memoryFraction:.6},
+  {id:'balanced',name:'Balanced',description:'Share your Spark with everyday builds.',cpu_per_job:8,memory_gb_per_job:16,cpu_total:16,memory_gb_total:64,client_jobs:2,client_cpu:8,headroom_gb:32,cpuFraction:.8,memoryFraction:.3},
+  {id:'builds-first',name:'Builds first',description:'More room for larger builds.',cpu_per_job:16,memory_gb_per_job:32,cpu_total:18,memory_gb_total:80,client_jobs:4,client_cpu:16,headroom_gb:32,cpuFraction:.9,memoryFraction:.3},
+]);
+export function resourcePreset(id,hardware) {
+  const preset=RESOURCE_PRESETS.find(item=>item.id===id);
+  const cores=hardware?.cpu_count,memory=hardware?.memory_gb;
+  if(!preset)throw new Error('Choose a known resource preset.');
+  if(!Number.isSafeInteger(cores)||cores<1||!Number.isSafeInteger(memory)||memory<2)throw new Error('Read the Spark hardware before choosing a preset.');
+  const cpu_total=Math.max(1,Math.min(preset.cpu_total,Math.floor(cores*preset.cpuFraction)));
+  const client_cpu=Math.min(preset.client_cpu,cpu_total);
+  const headroom_gb=Math.min(preset.headroom_gb,Math.max(1,Math.floor(memory*preset.memoryFraction)));
+  const memory_gb_total=Math.min(preset.memory_gb_total,memory-headroom_gb);
+  return {cpu_per_job:Math.min(preset.cpu_per_job,client_cpu),memory_gb_per_job:Math.min(preset.memory_gb_per_job,memory_gb_total),cpu_total,memory_gb_total,client_jobs:Math.min(preset.client_jobs,client_cpu),client_cpu,headroom_gb};
+}
+export function sameResourcePolicy(a,b) {
+  return !!a&&!!b&&RESOURCE_FIELDS.every(([key])=>Number(a[key])===Number(b[key]));
+}
+export function resourcePolicy(form,hardware=null) {
   const policy={};
   for(const [key,label] of RESOURCE_FIELDS) {
     const raw=form.get(key);const value=Number(raw);
@@ -43,9 +62,18 @@ export function resourcePolicy(form) {
   if(policy.cpu_per_job>policy.client_cpu || policy.client_cpu>policy.cpu_total) throw new Error('CPU per job must fit within the agent CPU budget and total CPU budget.');
   if(policy.memory_gb_per_job>policy.memory_gb_total) throw new Error('Memory per job must fit within the total memory budget.');
   if(policy.client_jobs>64) throw new Error('Concurrent jobs per agent must be between 1 and 64.');
+  if(Number.isSafeInteger(hardware?.cpu_count)&&policy.cpu_total>hardware.cpu_count) throw new Error(`Total CPU budget must fit within the Spark’s ${hardware.cpu_count} CPU cores.`);
+  if(Number.isSafeInteger(hardware?.memory_gb)&&policy.memory_gb_total+policy.headroom_gb>hardware.memory_gb) throw new Error(`Total memory budget plus headroom must fit within the Spark’s ${hardware.memory_gb} GiB of memory.`);
   return policy;
 }
 const cleanReference = value => typeof value==='string' && !/[\r\n\u0000]/.test(value) ? value : '';
+export function agentPaths(agent,preferences={}) {
+  const selected=preferences.agent_paths?.[agent];
+  return {
+    path:cleanReference(selected?.cli_path)||cleanReference(agent==='codex'?preferences.agent_cli_path:preferences.cli_path)||cleanReference(preferences.cli_path)||'sparkdev',
+    stateRoot:cleanReference(selected?.state_root)||cleanReference(agent==='codex'?preferences.agent_state_root:preferences.state_root)||cleanReference(preferences.state_root),
+  };
+}
 export function agentConfiguration(agent, path, stateRoot='') {
   // JSON/TOML string escaping preserves native UNC/verbatim Windows paths.
   // Replacing their separators would turn \\?\C:\ into unusable //?/C:/.
