@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "version": "0.2.1",
+  "source_commit": "8a10182a6baea7daa93b71efa51bb84782dca3c5",
+  "recorded_at": "2026-10-14T15:34:07.217625+00:00",
+  "caller": "Actual Codex session",
+  "preparation": {
+    "job": "2f04cd7b419b4de4b0ef428b7f8ea978",
+    "state": "succeeded",
+    "exit_code": 0,
+    "worker": {
+      "cpu": 0.75,
+      "memory_bytes": 939524096,
+      "memory_swap_bytes": 939524096,
+      "network": "sparkdev-fetch-2f04cd7b419b4de4b0ef428b7f8ea978",
+      "cargo_build_jobs": "1"
+    },
+    "proxy": {
+      "cpu": 0.25,
+      "memory_bytes": 134217728,
+      "memory_swap_bytes": 134217728,
+      "network": "bridge",
+      "cargo_build_jobs": null
+    },
+    "combined_cpu": 1,
+    "combined_memory_gib": 1,
+    "project_override_restored": true,
+    "global_policy_preserved": true,
+    "link_service_unchanged": true,
+    "scope": "Dependency-free lockfile preparation; no compile or download benchmark"
+  },
+  "arm64_build": {
+    "job": "f227ca3b423c451caf9cd33ea25fe571",
+    "exit_code": 0,
+    "cpu": 4,
+    "memory_gib": 8,
+    "runtime_digest": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+    "elapsed_seconds": 29,
+    "cli_version": "0.2.1",
+    "artifacts": [
+      {
+        "file": "dist/linux-arm64/sparkdev",
+        "sha256": "d5c53ce2279895b5b673a585c547dbf34ca9f3a7d4eb1e71f49802f329a8bb47",
+        "bytes": 3805496
+      },
+      {
+        "file": "dist/linux-arm64/sparkdev-link",
+        "sha256": "acc2655b782e4934d7e982489dcea0de607c04f6c28e353480733fb2358e22a3",
+        "bytes": 22208976
+      }
+    ],
+    "checks": [
+      "Offline locked auditable build",
+      "CLI devices and exact-argv plan",
+      "Synthetic MCP initialize/list/plan; not a real external Claude session"
+    ]
+  },
+  "limitations": [
+    "No phone-hotspot, sleep or owner-VM verification",
+    "Native Windows CPU and memory caps are not enforced",
+    "Marketplace admission and later-version updater install are separate checks"
+  ]
+}
