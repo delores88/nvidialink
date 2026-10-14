@@ -42,3 +42,19 @@ Commands run/sync/status/logs/cancel/doctor plus wait/setup/pair. Global --json,
 Build source and tests first, then isolated physical Spark jobs and resilience tests, then installer/native inspection. Windows UI, PowerShell/cmd/Git Bash argv and Codex process/network permissions require local evidence. Full PhaseForge backend benchmarking uses a read-only source snapshot at the pinned commit, copied into this product's own workspace/cache, never the original working directory. Laptop baseline is run only through the shared build gate. Actual Claude Code and Codex concurrent invocations require receipts identifying the real callers; client labels alone are insufficient. Phone approval, hotspot and sleep tests require real user/device participation if tool control cannot provide them.
 
 Coordinate with `Rebuild DeloresAI marketplace` for exact current manifest and scanning requirements. Listing must be non-featured. Do not publish placeholder artifacts or call an ingested artifact accepted before scanner/catalog/download evidence exists.
+
+## Owner addendum: both computers and native agent tools
+
+`run --where auto|laptop|spark` adds a durable laptop worker. Auto selects laptop for Windows targets/MSVC, NSIS, Windows-only build/test markers; Linux-capable jobs select Spark. Explicit placement is recorded. Local cargo goes through the existing unchanged buildlock. Scheduling independent jobs across machines does not split a compile or share target artifacts across OS/architecture.
+
+The shared board (`status --all`) combines local and remote jobs and exposes client, placement, claim and cache state. A project/worktree claim prevents simultaneous builds of the same tree. Both runners persist job identity before launch; ambiguous launch is reconciled, never blindly repeated. Disconnected local work must disclose board availability and cannot steal a remote claim.
+
+Result cache keys include tree content hash, exact argv and immutable runtime identity; include platform and any other output-affecting settings. Only fully succeeded jobs are eligible. `--no-cache` forces execution. Cache hits return the original complete logs/exit code with `cache_hit` and `cached_from`; no mutable toolchain may masquerade as a digest-pinned cache entry.
+
+`sparkdev mcp` is a newline-delimited JSON-RPC stdio MCP server exposing run, wait, logs, status and cancel. It delegates to the same CLI core, binds the configured client identity, always detaches run and caps waits. Stdout contains protocol messages only. Ship `.mcp.json` and Codex TOML setup examples without secrets. Acceptance needs actual tool calls by real Claude Code and Codex sessions, not a simulated MCP client or a client label.
+
+Verified relay clarification from PhaseForge release agent: the shipped option is explicit n0 public iroh relays, not a deployed owner VM. `relay.deloresai.com` is future/not deployed. Custom relay support remains configurable; private-VM/hotspot acceptance remains open until a real deployment/network is available.
+
+## Product separation and license
+
+Owner direction: cross-agent questions, delegation and reviews belong to a separate CodaClauda utility, not this implementation. Both may use Spark Dev Bridge CLI/MCP job contracts. PhaseForge remains featured; both utilities are non-featured. Both utilities have public repositories/listings and MIT first-party source. Ben's explicit license direction applies to his reused first-party code in these projects, with attribution and provenance; third-party licenses are preserved. No PhaseForge files or licensing are changed.

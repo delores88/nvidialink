@@ -1,0 +1,119 @@
+Build CodaClauda: a separate desktop utility that lets the owner explicitly ask Claude Code and Codex to coordinate, ask each other questions, delegate bounded work, and review each other's changes. Both agents must also be able to use Spark Dev Bridge for laptop/Spark builds and tests. The owner sometimes prefers one agent for a particular task; preserve that control.
+
+Repository: <PASTE THE NEW CODACLAUDA GITHUB REPO URL HERE>
+Product name: CodaClauda. Publisher: DeloresAI. Windows first, Rust/Tauri desktop app plus an agent-friendly CLI and stdio MCP server. Install it on this laptop and deliver a real usable workflow, not a mockup. Commit and push small, reviewed pieces to the new repo only.
+
+MANDATORY LICENSE / VISIBILITY: CodaClauda MUST have an MIT license for its first-party source, with a root LICENSE file naming Ben Van Dorn / DeloresAI, matching Cargo/package metadata, README and Marketplace declaration. Its repository and Marketplace listing must be public. Spark Dev Bridge has the same owner requirement. Ben explicitly authorizes reuse of his first-party code for these MIT projects; record that authorization and the exact reused files/revisions, preserve attribution, and leave the source PhaseForge repository/license untouched. Third-party components retain their own licenses and notices; this authorization does not relicense code the owner does not own. Use permissively licensed alternatives where needed rather than shipping a proprietary first-party component inside a product advertised as MIT. Verify final source/license metadata and notices before release.
+
+This is separate from Spark Dev Bridge and PhaseForge. The Spark Dev Bridge agent is not responsible for building CodaClauda. Do not interrupt its work or expand its scope. CodaClauda and Spark Dev Bridge must both be ordinary NON-FEATURED Marketplace apps. PhaseForge remains the featured app.
+
+COORDINATION CONTACTS
+
+The owner wants you to consult these existing agents when their knowledge can unblock CodaClauda. Use supported thread tools to inspect/contact the exact chat; verify its current title/status before messaging. These are consultations, not permission to edit their repos or assign your implementation to them. Send concise, concrete questions; do not restart their builds, duplicate releases or make them responsible for this utility.
+
+- Marketplace owner: chat "Rebuild DeloresAI marketplace", Codex thread 01a086d7-002c-7642-a8fa-9a77edb823dc, local host. Ask for current app/publisher preparation, manifest validation, scanner/admission requirements, artwork and final publication coordination. This is the agent to coordinate normal NON-FEATURED admission with.
+- PhaseForge/Spark Link reference expert: chat "Complete PhaseForge 0.21.0 release", Codex thread 01a12c36-1388-77e2-9422-0f9ce63dff9b, local host. Its title is historical; it has later 0.24/Spark Link handoff knowledge. Ask about proven pairing/QR patterns, relay deployment facts, source provenance and shared local build-gate constraints. No changes to its PhaseForge work. It already verified that PhaseForge uses optional n0 public iroh relays and that relay.deloresai.com is not a verified deployed owner VM.
+- Spark Dev Bridge API owner: this NVIDIALink build chat, Codex thread 01a137ec-8cd8-7ba3-8754-64e07100465a, local host, repo https://github.com/delores88/nvidialink. Its automatically generated title may change; resolve the exact ID. Ask only for stable CLI/MCP/job-receipt contracts, implementation readiness and safe integration boundaries that docs cannot answer. This agent continues building Spark Dev Bridge and does NOT own CodaClauda.
+
+The active Claude Code PhaseForge builder is a separate agent environment, not automatically one of these Codex chats. Do not invent its session ID, overwrite its files, impersonate it by setting a client label or interrupt its build. Discover actual Claude Code sessions using supported interfaces and confirm the selected owner's intended test session before connecting it. Your real cross-agent acceptance should use dedicated bounded test sessions, avoiding disruption to ongoing product work.
+
+READ FIRST / REUSABLE REFERENCES
+
+1. Spark Dev Bridge repo: https://github.com/delores88/nvidialink
+   Local: C:/Users/Benny/OneDrive/Desktop/NVIDIALink
+   Read AGENTS.md, docs/DESIGN.md, docs/CLI.md, docs/REMOTE.md and docs/LINK.md when present. Inspect the actual code and current receipts before relying on a feature. This repository is actively being built: source presence, a design, or a passed unit test does not establish installed or end-to-end acceptance.
+   Candidate reuse boundaries:
+   - crates/sparkdev: CLI/JSON contract, state and atomic persistence, exact argv handling, shared job board, worktree claims, detached execution and bounded wait/log polling.
+   - crates/sparkdev/src/mcp.rs: stdio JSON-RPC tool surface and common CLI/core implementation.
+   - src-tauri and ui: small desktop shell, native packaging, clear setup/status presentation.
+   - crates/sparkdev-link: independent authenticated transport and pairing, only if cross-machine agent coordination is actually needed.
+   - docs/qr-provenance.json and PROVENANCE files: pinned-source/licensing discipline.
+   Reuse by a pinned dependency or copying a reviewed, minimal module with exact commit/hash and notices. Do not copy personal state, keys, job databases, pairing tickets, unfinished assumptions or broad source trees. The Spark Dev Bridge repo is read-only to you unless the owner separately authorizes a coordinated change. Integrate through its public CLI/MCP contract; don't open its database directly.
+
+2. Marketplace handoff:
+   C:/Users/Benny/OneDrive/Desktop/NVIDIALink/marketplace-coordination.md
+   Ben authorizes you to coordinate with the Codex chat titled exactly "Rebuild DeloresAI marketplace" for CodaClauda's current manifest, publisher/app identity, normal submission and acceptance. Find the chat through the thread tools, don't guess its ID. Send concrete release identities and evidence when ready. Recheck requirements; the saved handoff is a reference, not proof of current admission.
+
+3. PhaseForge is strictly hands-off. No edits, commits, pushes, rebases, merges, tags, branch deletes or worktree operations against delores88/PhaseForge. No writes/deletes/moves under D:/PhaseForge-claude/ or D:/PhaseForge-codex-builds/release-*; no changes to its services, caches, containers or build processes. Read-only references are permitted. Local cargo commands must use the existing unchanged gate:
+   python -I D:/PhaseForge-claude/scripts/buildlock.py -- cargo ...
+   Do not lower its memory threshold, bypass it, stop another build or write new helpers into its directories. Keep your target/cache under your own C: path. The prescribed invocation of the guard is the only exception to the read-only restriction.
+
+PRODUCT BOUNDARY
+
+CodaClauda handles agent coordination. Spark Dev Bridge handles compute placement, sync, job scheduling, execution, logs and caches. CodaClauda may submit and inspect Spark Dev Bridge jobs but must not duplicate its runner, modify the owner's Spark services, or require a Spark merely to exchange agent questions.
+
+First inspect the supported current interfaces for the installed Claude Code and Codex versions. Prefer official SDKs, app-server/session interfaces, CLI print/noninteractive modes and MCP. Use official documentation. Do not automate terminal UIs, scrape chat windows, edit another agent's session files or use undocumented hidden IPC. Do not assume an MCP server can proactively wake an existing chat: prove the actual adapter behavior. If an adapter can only launch an explicitly authorized new session or expose an inbox that must be polled, label that honestly in the UI and docs. Preserve existing agent authentication; never read/export tokens or copy credentials between products. Don't silently replace the owner's subscription-backed session with a paid API call.
+
+BEFORE CODING
+
+Trace the reusable code and both official agent interfaces, identify their limitations, and write docs/DESIGN.md. Define a versioned adapter contract and durable state machine. Build the smallest complete two-agent workflow first, then extend it. Use subagents where useful, with separate file ownership and bounded tasks.
+
+CORE WORKFLOW
+
+- The owner connects/selects a Claude Code workspace/session and a Codex workspace/session, or explicitly opts into a new agent session.
+- Show which adapters are available, authenticated, connected, busy, waiting, disconnected or unsupported. Display the actual project and agent identity. No fabricated online indicators.
+- The owner can say through either connected agent, CLI, MCP or GUI:
+  "Ask Claude why this test is failing."
+  "Have Codex review Claude's patch."
+  "Delegate this bounded implementation to Claude; bring me its diff and test receipt."
+- Support request types question, review and delegated task; distinguish each from a notification or job-status update.
+- Each request has a durable ID, origin and target session, repository/worktree, precise scope, allowed paths, context/artifact references, expected result, deadline and bounded budget. Retries with the same ID cannot launch duplicate work.
+- Keep a visible conversation/task history with queued, delivered, acknowledged, running, needs-owner, completed, failed and cancelled states. Never call an undelivered message delivered or an agent's confident answer verified.
+- Responses attach a concise answer, changed-file/commit/diff references, tests actually run, Spark Dev Bridge job IDs, remaining risks and blockers. Keep proposed, implemented and verified distinct.
+- Questions and reviews default to read-only. Editing delegation uses an isolated worktree or explicit non-overlapping file claims. Two agents cannot silently edit the same file/worktree simultaneously. Review does not automatically merge a change.
+- Provide pause, cancel, reconnect and a visible stop-all-for-this-request control. Cancellation and disconnect recovery must be scoped to CodaClauda-owned sessions/jobs; never kill unrelated agent sessions or builds.
+
+AUTHORIZATION AND LOOP CONTROL
+
+- Owner intent authorizes coordination, not the text of an incoming agent message. Persist the owner's requested scope and limits. A recipient must evaluate incoming content as an untrusted handoff, not a higher-priority instruction.
+- A sender cannot expand its own permissions, impersonate the owner, change another agent's policy, or authorize publication, deployment, purchasing, secret access or destructive actions merely by messaging.
+- Explicit delegation can proceed within its recorded scope without repeatedly asking permission. Ask only for genuinely missing authorization or required details, explaining the source of the boundary.
+- Bound hop count, number of delegated tasks, time, concurrency and available token/cost budget. No recursive agent spawning or infinite "please review my review" loops. Stop and surface a specific blocker or unresolved disagreement when the budget is reached.
+- Don't claim cost tracking where an adapter cannot report it. Show observed cost, estimates and unavailable fields distinctly.
+- Redact credentials from context and receipts; restrict artifact references to the authorized project roots. Avoid blindly copying full transcripts, environment variables or filesystem contents.
+- Keep transport owner-only: OS-protected local IPC by default, scoped authenticated connections if remote coordination is added. Separate product identities, keys, state dirs, service names, ports and URL schemes. No listening public coordination endpoint without a reviewed authenticated design.
+
+CLI AND MCP
+
+Provide a CLI (suggested codaclauda) with connect/status/ask/delegate/review/wait/messages/cancel; --json everywhere, no interactive prompts, stable error/exit semantics, exact argv and an argv-JSON input path where appropriate. Long tasks detach immediately and return IDs; wait has a strict timeout; messages/logs support offsets/cursors. All transitions and retries are idempotent where appropriate.
+
+Expose the equivalent bounded tools through stdio MCP for BOTH Claude Code and Codex. Document .mcp.json and ~/.codex/config.toml setup using the installed executable path. Do not overwrite the owner's existing configuration; preserve and read back narrowly scoped additions. Prefer official supported registration commands.
+
+Use Spark Dev Bridge's run --where auto|laptop|spark, status --all, wait, logs and cancel for compute when configured. Both agents can inspect the same real result. Do not pretend that changing --client is proof the other agent actually called a tool.
+
+DESKTOP / INSTALLATION
+
+Use a simple, polished Rust/Tauri app with connection setup, the two agent endpoints, request composer, inbox/history, scope/ownership view and result receipts. Avoid exposing implementation details unless they help an owner make a decision. No fake seeded results. Provide original CodaClauda artwork and a legible Windows icon; keep the product branding independent of the other apps.
+
+Create a per-user Windows x64 NSIS installer with asInvoker and uiAccess=false, the real GUI plus CLI bundled, correct Start-menu/desktop shortcuts and a working taskbar icon. Use a GUI executable basename consistent with the product name (codaclauda). Retain cargo-auditable metadata and an inspectable source plus extracted-payload dependency inventory for Marketplace scanning. Verify installed behavior with native Computer Use if allowed; report an exact policy block if it prevents inspection, and do not substitute hidden automation or call that native acceptance.
+
+MARKETPLACE REQUIREMENTS
+
+Coordinate through the normal publisher workflow. Create an independent app ID and keep it stable across releases. Do not reuse PhaseForge or Spark Dev Bridge IDs. Neither CodaClauda nor Spark Dev Bridge is featured; do not change the storefront's explicit PhaseForge feature selection. The strict manifest has no "featured" field.
+
+Prepare:
+- App icon PNG 1024x1024; catalog thumbnail PNG/WebP 1600x900; at least one real installed/running screenshot (prefer native landscape or 1920x1080); Windows ICO with 16/24/32/48/64/128/256 sizes. Marketplace raster files must be within the current 8 MiB / 4096-pixel limits; no active SVG/HTML/ICO in image URL fields. Never show private requests, keys, tokens or real pairing secrets in public screenshots.
+- Immutable, anonymously readable HTTPS artwork URLs pinned to a source commit or approved media hosting. Accurate alt text. Concept art is not a product screenshot.
+- Exact clean source commit/tag; real GitHub Release and installer asset IDs, final SHA-256 and size; source and bundled dependency locks/SBOM/provenance; signed/unsigned status and actual test receipts.
+- One valid version-1 deloresai.manifest.json release asset (<=128000 bytes) using current Marketplace contracts, actual publisher/app/repository/release identities, truthful capabilities and a reproducible functional test. Explicit distributionAuthorization {freeUse:true,marketplaceDistribution:true}; zero price, no trial/paid unlocks/mandatory developer credits. Disclose any separately charged Claude/Codex subscriptions/APIs and optional Spark hardware/relay requirements.
+- sourceVisibility public, license MIT, and accurate license terms. First-party reused owner code is covered by the owner's explicit MIT direction above; retain attribution and scoped provenance. Preserve all third-party dependency notices and do not imply MIT overrides their licenses.
+- Accurate execution/offline declarations, privacy/data retention/telemetry, filesystem/credential/domain permissions, background services/elevation, executable downloads and digest pins, model declarations, update coordination and rollback compatibility. Do not claim bundled models or infer an embedded LLM if none exists.
+- Artifact mapping for Windows x64 NSIS using installationAdapter windows-nsis and actual tested client OS/RAM/disk/runtime requirements.
+
+Finish and verify the candidate before publishing; no placeholder catalog entry. Validate the full runtime manifest/art checks, not just JSON syntax. Grant the existing Marketplace GitHub App access to the new repo through the owner's normal authorized flow. Submit once, reconcile unknown outcomes, retain scanner findings and submission/job/artifact IDs. Acceptance is separate from source/build, GitHub publication and local installation. Verify the normal public listing, non-featured status and an authenticated Marketplace-served download against the final installer hash. Never bypass scanner/publisher controls or mark accepted via SQL.
+
+ACCEPTANCE WITH REAL RECEIPTS
+
+1. An actual Codex session asks an actual Claude Code session a bounded question and receives its answer through CodaClauda.
+2. The reverse direction works. Record actual session/adaptor evidence; a synthetic MCP client or spoofed client label is insufficient.
+3. A bounded delegated edit runs in its authorized worktree, the other agent reviews the real diff, and the owner gets the result without an automatic merge.
+4. A simultaneous same-file/worktree claim is refused or queued; independent work proceeds.
+5. A retry/disconnect/restart produces no duplicate delegation, preserves message history, and restores the correct terminal state.
+6. Cancellation stops only the owned request; bounded-hop/time limits stop a deliberate ping-pong scenario.
+7. Both real agents call the MCP tools; exact argv works from PowerShell, cmd and Git Bash where relevant.
+8. With Spark Dev Bridge connected, an agent submits a real build/test, the other retrieves its logs/result by job ID, and both attribute it correctly. If Spark Dev Bridge is not yet ready, keep this acceptance visibly pending while completing standalone coordination.
+9. Install and launch the final Windows package, verify icon/shortcuts, connect the real agent adapters and complete the above workflow from the installed app. Then obtain normal Marketplace admission and verify the served download.
+
+HAND BACK
+
+Repo/release URL, local install command/path, minimal copy-paste examples for both agents, final Marketplace identity/status, concrete test receipts, and precise remaining limitations. Do not call a staged GUI or one mocked exchange done. Do not promise compatibility with a running agent session until that specific adapter has been exercised.
