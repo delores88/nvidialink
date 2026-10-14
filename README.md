@@ -6,6 +6,8 @@ A Windows desktop app and agent CLI for running Linux builds, tests and compute 
 
 ## Connect your Spark
 
+Download the [Windows beta installer](https://github.com/delores88/nvidialink/releases/download/v0.1.0-beta.1/DGXBridge_0.1.0-beta.1_x64-setup.exe). The [GitHub release](https://github.com/delores88/nvidialink/releases/tag/v0.1.0-beta.1) includes checksums, notices, dependency inventories and a Linux ARM64 CLI. For a silent current-user installation, run the downloaded installer with `/S`. The installer is unsigned; review the release notes and verify its hash before running it.
+
 1. Start with a working OpenSSH alias and a host key verified against the Spark. Install Docker for your existing user on the Spark; the bridge never uses sudo.
 2. Open **Connect a Spark** in the desktop app, enter the alias and optional LAN/known-host overrides, and choose **Connect & install bridge**. This installs separate user services and builds the bridge's pinned CPU runtime under `~/sparkdev`.
 3. Choose **Create pairing code**. Scan it with a phone on the same LAN, enter the displayed six digits and approve. Tickets expire; private keys and approval codes are never saved in project files.

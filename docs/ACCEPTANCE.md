@@ -95,13 +95,16 @@ fair end-to-end comparison. [Interrupted baseline receipt](../evidence/phaseforg
 - Physical network interruption during transfer and execution, and actual laptop
   sleep while a job runs. A restarted controller and interrupted CLI are different
   failure modes.
-- A release-specific Marketplace manifest,
-  actual installed screenshots, payload vulnerability scan, admission and
-  authenticated download verification. The installed native Marketplace is
-  signed in. The publisher identity was checked against its public catalog, and
-  the public nvidialink repository was added to the existing read-only GitHub App
-  installation without changing its permissions. Native repository-list refresh
-  and submission validation remain pending.
+- Marketplace payload vulnerability scan, submission, admission and authenticated
+  Marketplace download verification. The GitHub beta and exact generated manifest
+  are published; anonymous installer/manifest downloads match their hashes.
+  Actual installed screenshots and artwork passed local validation against the
+  deployed Marketplace contract. The installed native Marketplace is signed in,
+  but Computer Use could not restore its minimized window and owner assistance
+  was requested. The publisher identity was checked against the public catalog,
+  and nvidialink was added to the existing read-only GitHub App installation.
+  [Published release receipt](../evidence/dgxbridge-public-beta.json),
+  [manifest validation](../evidence/dgxbridge-manifest-validation.json).
   Browser and native login state are separate. No featured listing is requested.
 
 ## Current functional limits

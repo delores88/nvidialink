@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-14T03:34:02.358997+00:00",
+  "release_url": "https://github.com/delores88/nvidialink/releases/tag/v0.1.0-beta.1",
+  "release_id": 412311933,
+  "tag": "v0.1.0-beta.1",
+  "source_commit": "9ba8a4175c4959363b272ba1ed0eaeceb83febf7",
+  "prerelease": true,
+  "draft": false,
+  "verified_assets": [
+    {
+      "name": "DGXBridge_0.1.0-beta.1_x64-setup.exe",
+      "asset_id": 639095872,
+      "bytes": 12787698,
+      "sha256": "b52b0f8c8abb8c79cd79572bb8cea788799d26528a29fcad0b5b7dd7eb40dd02",
+      "url": "https://github.com/delores88/nvidialink/releases/download/v0.1.0-beta.1/DGXBridge_0.1.0-beta.1_x64-setup.exe",
+      "anonymous_download_verified": true
+    },
+    {
+      "name": "deloresai.manifest.json",
+      "asset_id": 639100491,
+      "bytes": 12559,
+      "sha256": "3a3626d1110c344c3cb3b3020483371a31cb6d9db3de63231de4999c23ac05a7",
+      "url": "https://github.com/delores88/nvidialink/releases/download/v0.1.0-beta.1/deloresai.manifest.json",
+      "anonymous_download_verified": true
+    }
+  ],
+  "marketplace": {
+    "submitted": false,
+    "admitted": false,
+    "reason": "Signed-in native publisher window restoration is awaiting owner assistance."
+  }
+}

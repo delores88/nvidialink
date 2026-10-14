@@ -17,6 +17,8 @@ The template is intentionally invalid. It is not an example manifest and must no
 
 Python 3.11+, Pillow, Git, GitHub CLI, Node and an existing Marketplace source checkout with its installed `tsx` dependency are required. The checkout is read-only: the generator imports its actual `manifestSchema` and `publicationArtworkIssues` without installing dependencies or editing any files there.
 
+For this beta, the deployed contract is in `C:/Users/Benny/.codex/worktrees/publisher-release-retry/DeloresAI` at `fd2b8e3eec74b575d4cdced181bbd85955093f1f`; its current `6fc5e97b49f33f5a7e14e7e1cd7e970cc933ab26` adds documentation only. The older Desktop/DeloresAI checkout is not the deployed reference. The release-specific validation receipt records the actual contract hashes, including support for the optional feature notices.
+
 ```powershell
 python scripts/prepare-manifest.py --input .local/release-input.json --marketplace-checkout C:/src/DeloresAI --output dist/release/deloresai.manifest.json
 ```
