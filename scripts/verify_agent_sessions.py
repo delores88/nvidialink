@@ -39,8 +39,52 @@ def tool_calls(items, client):
         else:
             item = event.get("item", {})
             if event.get("type") == "item.completed" and item.get("type") == "mcp_tool_call" and item.get("server") == "sparkdev":
-                out.append({"tool": "mcp__sparkdev__" + item.get("tool", ""), "arguments": item.get("arguments", {}), "status": item.get("status")})
+                call = {"tool": "mcp__sparkdev__" + item.get("tool", ""), "arguments": item.get("arguments", {}), "status": item.get("status")}
+                error = item.get("error")
+                message = error.get("message", "") if isinstance(error, dict) else ""
+                if "approval" in message.lower() and "never" in message.lower():
+                    call["error_category"] = "approval_required_under_never"
+                elif error:
+                    call["error_category"] = "tool_call_failed_private_diagnostic_retained"
+                out.append(call)
     return out
+
+
+def cleanup_fixture_jobs(cli, projects, observed_jobs):
+    """Cancel only this fresh run's active Spark fixtures; never hide its failure."""
+    cleanup = {"board_refreshed": False, "jobs": [], "errors": []}
+    deadline = time.monotonic() + 45
+    candidates = {entry["job"]: entry for entry in observed_jobs.values() if isinstance(entry, dict) and isinstance(entry.get("job"), str)}
+    owners = {project["id"]: client for client, project in projects.items()}
+    try:
+        board = cli("status", "--all", timeout=15)
+        if board.get("ok") is not True or not isinstance(board.get("jobs"), list):
+            raise ValueError("Invalid board response")
+        candidates.update({entry["job"]: entry for entry in board["jobs"] if isinstance(entry, dict) and isinstance(entry.get("job"), str)})
+        cleanup["board_refreshed"] = True
+    except Exception as exc:
+        cleanup["errors"].append({"operation": "status", "error_type": type(exc).__name__, "message": "Board refresh failed; only previously observed fixture jobs can be cleaned up."})
+    for job, entry in candidates.items():
+        if (owners.get(entry.get("project")) != entry.get("client") or entry.get("project") not in owners
+                or entry.get("where", entry.get("placement")) != "spark"
+                or entry.get("state") not in ("queued", "starting", "running")
+                or len(job) != 32 or any(c not in "0123456789abcdef" for c in job)):
+            continue
+        record = {"job": job, "client": entry["client"], "observed_state": entry["state"]}
+        cleanup["jobs"].append(record)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            record["error"] = "Cleanup time limit reached; cancellation remains unconfirmed."
+            continue
+        try:
+            result = cli("cancel", job, timeout=min(15, remaining))
+            if result.get("ok") is not True:
+                raise ValueError("Cancellation not acknowledged")
+            record["acknowledgement"] = {key: result[key] for key in ("state", "cancel_requested", "delivery") if key in result}
+        except Exception as exc:
+            record["error_type"] = type(exc).__name__
+            record["error"] = "Cancellation failed or timed out; this fixture job may still be active."
+    return cleanup
 
 
 def main():
@@ -56,13 +100,13 @@ def main():
     run_id = str(uuid.uuid4())
     work = root / "acceptance" / ("agents-" + run_id)
     work.mkdir(parents=True)
-    receipt = {"schema": 1, "status": "running", "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(), "actual_agent_sessions": {}, "both_jobs_observed_running": False, "limitations": ["LAN SSH acceptance only; no hotspot or sleep claim"]}
+    receipt = {"schema": 1, "status": "running", "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(), "actual_agent_sessions": {}, "both_jobs_observed_running": False, "mcp_acceptance": {"status": "pending"}, "sandbox_acceptance": {"status": "pending"}, "limitations": ["LAN SSH acceptance only; no hotspot or sleep claim"]}
     output = Path(args.output)
     def save():
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-    def cli(*words):
-        result = subprocess.run([binary, "--json", "--client", "human", *map(str, words)], capture_output=True, text=True, timeout=90)
+    def cli(*words, timeout=90):
+        result = subprocess.run([binary, "--json", "--client", "human", *map(str, words)], capture_output=True, text=True, timeout=timeout)
         if result.returncode:
             raise RuntimeError("Acceptance observation failed: " + result.stdout[-500:])
         return json.loads(result.stdout)
@@ -78,7 +122,7 @@ def main():
     prompts = {}
     for client in projects:
         prompts[client] = (
-            "Perform this bounded Spark Dev Bridge acceptance, then stop. Do not inspect files, change settings, use other servers, or delegate. "
+            "Perform this bounded DGXBridge acceptance, then stop. Do not inspect files, change settings, use other servers, or delegate. "
             "The fixture already exists. Using only the sparkdev MCP tools, first call devices to inspect the shared machines. Then call plan with "
             + json.dumps({"dir": str(projects[client]["path"]), "argv": ["python3", "probe.py"], "where": "spark", "runtime": "python"})
             + ". It must report spark placement with no claim or submission. Then call run exactly once with "
@@ -98,7 +142,14 @@ def main():
         "claude": [args.claude, "--print", "--verbose", "--output-format", "stream-json", "--no-session-persistence", "--session-id", str(uuid.uuid4()), "--strict-mcp-config", "--mcp-config", str(config), "--tools", "", "--allowedTools", ",".join(tools), "--permission-prompts", "none", "--max-budget-usd", "2.00", "--disable-slash-commands", "--no-chrome", prompts["claude"]],
         "codex": [args.codex, "exec", "--ephemeral", "--json", "--color", "never", "--skip-git-repo-check", "--sandbox", "workspace-write", "--add-dir", str(root), "-c", 'approval_policy="never"', "-c", "sandbox_workspace_write.network_access=true", "-c", "mcp_servers.sparkdev.command=" + json.dumps(binary.replace("\\", "/")), "-c", 'mcp_servers.sparkdev.args=["--client","codex","mcp"]', "-c", "mcp_servers.sparkdev.tool_timeout_sec=90", "-C", str(projects["codex"]["path"]), prompts["codex"]],
     }
-    procs, handles = {}, []
+    # The owner authorized these fixture operations. Approval is scoped to this
+    # fresh invocation and server; it does not alter sandboxing or saved trust.
+    # The installed Codex CLI validates these documented per-tool keys.
+    scoped_approvals = ["-c", 'mcp_servers.sparkdev.enabled_tools=["devices","plan","run","wait","logs"]']
+    for name in ("run", "wait", "logs"):
+        scoped_approvals.extend(["-c", "mcp_servers.sparkdev.tools." + name + '.approval_mode="approve"'])
+    commands["codex"][-1:-1] = scoped_approvals
+    procs, handles, jobs = {}, [], {}
     try:
         cli("doctor")
         for client, command in commands.items():
@@ -110,7 +161,6 @@ def main():
             print("Started fresh " + client + " CLI session", flush=True)
         save()
         deadline = time.monotonic() + min(max(args.deadline, 90), 600)
-        jobs = {}
         while time.monotonic() < deadline:
             board = cli("status", "--all")
             for entry in board.get("jobs", []):
@@ -147,15 +197,20 @@ def main():
             session.update({"process_exit_code": process.returncode, "tool_calls": calls, "trace_sha256": hashlib.sha256((work / (client + ".jsonl")).read_bytes()).hexdigest()})
             if client == "codex":
                 session["process_sandbox"] = "workspace-write; network explicitly permitted; application state writable; approval never"
+                session["mcp_approvals"] = {"scope": "fresh invocation only", "server": "sparkdev", "enabled_tools": ["devices", "plan", "run", "wait", "logs"], "preapproved_tools": ["run", "wait", "logs"], "saved_configuration_changed": False}
+                private_stderr = (work / "codex.stderr").read_text(encoding="utf-8", errors="replace")
+                if "workspace-write sandbox has no writable root capability SIDs" in private_stderr:
+                    session["sandbox_failure"] = "workspace-write sandbox has no writable root capability SIDs"
                 shell_items = [e["item"] for e in trace if e.get("type") == "item.completed" and e.get("item", {}).get("type") == "command_execution"]
                 session["shell_receipts"] = [{"purpose": "installed sparkdev doctor", "exit_code": item.get("exit_code"), "status": item.get("status"), "authenticated_ssh": '"selected":"ssh"' in item.get("aggregated_output", "").replace(" ", "")} for item in shell_items]
                 session["restricted_process_and_network_verified"] = any(item["exit_code"] == 0 and item["authenticated_ssh"] for item in session["shell_receipts"])
+                receipt["sandbox_acceptance"] = {"status": "passed" if session["restricted_process_and_network_verified"] else "failed", "scope": "Codex workspace-write process launch and authenticated SSH", "diagnostic": session.get("sandbox_failure", "No matching successful command-execution receipt" if not session["restricted_process_and_network_verified"] else None)}
         save()
         for client, process in procs.items():
             session = receipt["actual_agent_sessions"][client]
             calls = session["tool_calls"]
             assert process.returncode == 0, client + " session failed (raw trace retained owner-locally)"
-            assert all(any(c["tool"] == "mcp__sparkdev__" + name for c in calls) for name in ("devices", "plan", "run", "wait", "logs")), client + " did not make required actual MCP tool calls"
+            assert all(any(c["tool"] == "mcp__sparkdev__" + name and c.get("status") in (None, "completed") for c in calls) for name in ("devices", "plan", "run", "wait", "logs")), client + " did not complete required actual MCP tool calls"
             assert sum(c["tool"] == "mcp__sparkdev__run" for c in calls) == 1, client + " submitted more than the requested one job"
             assert client in jobs, client + " job missing from board"
             final = cli("wait", jobs[client]["job"], "--timeout", "2")
@@ -165,18 +220,34 @@ def main():
             assert client.upper() + "_MCP_STARTED" in text and client.upper() + "_MCP_FINISHED" in text
             session["job"] = {"job": jobs[client]["job"], "state": final["state"], "exit_code": final["exit_code"], "logs": text, "next_offset": logs["next_offset"]}
         assert receipt["both_jobs_observed_running"], "Actual agent jobs did not overlap"
+        receipt["mcp_acceptance"] = {"status": "passed", "actual_clients": ["claude", "codex"], "both_jobs_observed_running": True, "scope": "Fresh model sessions, required MCP calls, successful Spark jobs and complete fixture markers over LAN SSH"}
+        save()
+        assert receipt["actual_agent_sessions"]["codex"].get("restricted_process_and_network_verified"), "Codex sandbox process/network check did not pass"
+        assert not any(session.get("deadline_exceeded") for session in receipt["actual_agent_sessions"].values()), "Agent session deadline exceeded"
         receipt["status"] = "passed"
     except Exception as exc:
         receipt["status"] = "failed"
         receipt["failure"] = str(exc)
+        if receipt["mcp_acceptance"]["status"] == "pending":
+            receipt["mcp_acceptance"] = {"status": "failed", "diagnostic": "Required actual MCP calls, terminal jobs, logs, or overlap were not all verified"}
+        save()
         raise
     finally:
-        for process in procs.values():
-            if process.poll() is None:
-                if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=20)
-                else:
-                    process.terminate()
+        for client, process in procs.items():
+            try:
+                if process.poll() is None:
+                    if os.name == "nt":
+                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=20)
+                    else:
+                        process.terminate()
+                    process.wait(timeout=20)
+            except Exception as exc:
+                receipt.setdefault("agent_cleanup_errors", []).append({"client": client, "error_type": type(exc).__name__})
+        if receipt["status"] != "passed":
+            receipt["status"] = "failed"
+            receipt.setdefault("failure", "Acceptance interrupted before completing")
+            save()
+            receipt["fixture_cleanup"] = cleanup_fixture_jobs(cli, projects, jobs)
         for handle in handles:
             handle.close()
         save()

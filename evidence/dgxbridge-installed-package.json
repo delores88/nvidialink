@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-14T03:25:43.876382+00:00",
+  "product": "DGXBridge",
+  "version": "0.1.0-beta.1",
+  "status": "installed",
+  "build": {
+    "auditable": true,
+    "production_webview_protocol": true,
+    "compile_seconds": 208,
+    "unchanged_owner_build_gate": true
+  },
+  "installer": {
+    "file": "DGXBridge_0.1.0-beta.1_x64-setup.exe",
+    "bytes": 12787698,
+    "sha256": "b52b0f8c8abb8c79cd79572bb8cea788799d26528a29fcad0b5b7dd7eb40dd02"
+  },
+  "installation": {
+    "exit_code": 0,
+    "scope": "currentUser",
+    "elevation": "asInvoker",
+    "signature": "unsigned beta",
+    "webview_download": "none; preinstalled runtime required",
+    "installed_bytes": 60397334,
+    "disk_requirement_mb": 61,
+    "start_menu_shortcut": "DeloresAI/DGXBridge.lnk",
+    "state_preserved": true
+  },
+  "built_gui": {
+    "file": "dgxbridge.exe",
+    "bytes": 9404416,
+    "sha256": "ded32ce94e1d344bc39c92832881b8d6d0f67493d85e078617b4e82cc7479beb"
+  },
+  "installed_gui": {
+    "file": "dgxbridge.exe",
+    "bytes": 9404416,
+    "sha256": "b0bb5fe46e816dceea0bb3edbadff332250a72c72a40fa61cb4becdaafd404c1"
+  },
+  "nsis_gui_patch": {
+    "changed_bytes": 3,
+    "offset": 7030354,
+    "before": "UNK",
+    "after": "NSS"
+  },
+  "verified_payloads": [
+    {
+      "file": "bin/sparkdev.exe",
+      "bytes": 3149824,
+      "sha256": "21bfcc929b6b82be859b5c0e22e523cd14ac86255fc26bec27c6ae90012c31e7"
+    },
+    {
+      "file": "bin/sparkdev-link.exe",
+      "bytes": 13851648,
+      "sha256": "34130f9180cfe149b2ef7ea18d269d92555ac51d644e3dfac743c7658f47e53e"
+    },
+    {
+      "file": "sparkdev-bundle.json",
+      "bytes": 29698460,
+      "sha256": "b2a270526912d9001cf88b354adec741f0a87ac35b6ce17ad34d258773ea0b22"
+    },
+    {
+      "file": "bootstrap.py",
+      "bytes": 6944,
+      "sha256": "f971e474e78c858ac385e22c9ec8d3442726c11399e5518e1a6a8693542d2b7f"
+    },
+    {
+      "file": "LICENSE",
+      "bytes": 1102,
+      "sha256": "f23d6d300dc7fd993441ed21ba981f9384f8255bcb734ea99c159a0771770b34"
+    }
+  ],
+  "third_party_notices_match": true,
+  "tested_client": {
+    "os": "Windows 11 Pro",
+    "version": "10.0.26200",
+    "physical_memory_gib": 31.42
+  },
+  "installed_doctor": {
+    "ok": true,
+    "client": {
+      "os": "windows",
+      "process_launch": true,
+      "ssh_network": true,
+      "state_writable": true,
+      "version": "0.1.0"
+    },
+    "checks": {
+      "docker": true,
+      "linux": true,
+      "memory_available_gb": 113.5167999267578,
+      "sqlite": true
+    },
+    "scheduler_healthy": true,
+    "transport": "lan_ssh",
+    "authenticated": true
+  },
+  "limits": [
+    "Installed doctor is not phone-hotspot, sleep, Codex restricted sandbox, or Marketplace admission acceptance."
+  ]
+}

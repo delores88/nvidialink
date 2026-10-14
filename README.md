@@ -2,7 +2,7 @@
 
 A Windows desktop app and agent CLI for running Linux builds, tests and compute on your own NVIDIA DGX Spark, while Windows work stays on your laptop. Claude Code, Codex and humans share job status, worktree claims and retained logs. First-party source is MIT licensed; this is an independent DeloresAI utility.
 
-**Development preview:** real Spark execution has been tested, but an accepted Marketplace release, owner phone pairing, hotspot/sleep acceptance and both real agent MCP sessions are not yet established. Consult the receipts in `evidence/` and `remote/receipts/`; source or a successful build does not imply release acceptance.
+**Beta 0.1.0-beta.1:** installed Windows use, LAN SSH, phone-approved pairing and concurrent real Claude Code/Codex MCP jobs have been exercised. Codex's restricted Windows shell check failed on this laptop with missing writable-root capability SIDs; remote hotspot, physical network interruption and sleep acceptance remain unverified. Marketplace admission is recorded separately. Consult [acceptance evidence](docs/ACCEPTANCE.md) and [beta notes](docs/RELEASE-0.1.0-beta.1.md).
 
 ## Connect your Spark
 

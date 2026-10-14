@@ -35,28 +35,28 @@
             ],
             "where": "spark",
             "runtime": "python",
-            "request_id": "real-claude-05cfffbd-72ab-4188-a5d5-31698480ffb8",
+            "request_id": "real-claude-f5a407cd-6a13-410d-a8f4-588157a8ff01",
             "no_cache": true
           }
         },
         {
           "tool": "mcp__sparkdev__wait",
           "arguments": {
-            "job": "70ffd9fee24e47219ac02d3882174465",
+            "job": "340fa17357d2444598ab8fc53b31ff8c",
             "timeout": 60
           }
         },
         {
           "tool": "mcp__sparkdev__logs",
           "arguments": {
-            "job": "70ffd9fee24e47219ac02d3882174465",
+            "job": "340fa17357d2444598ab8fc53b31ff8c",
             "since": 0
           }
         }
       ],
-      "trace_sha256": "7db2de31ea56526d989a8d9d64ab9068721953122ed35370c293568cc1ac8214",
+      "trace_sha256": "67aa49d87e7e8ea1ee8837537c2ffd5044d1fdf0b86e54a26089ff1c9050c013",
       "job": {
-        "job": "70ffd9fee24e47219ac02d3882174465",
+        "job": "340fa17357d2444598ab8fc53b31ff8c",
         "state": "succeeded",
         "exit_code": 0,
         "logs": "CLAUDE_MCP_STARTED\nCLAUDE_MCP_FINISHED\n",
@@ -97,26 +97,86 @@
             ],
             "where": "spark",
             "runtime": "python",
-            "request_id": "real-codex-05cfffbd-72ab-4188-a5d5-31698480ffb8",
+            "request_id": "real-codex-f5a407cd-6a13-410d-a8f4-588157a8ff01",
             "no_cache": true
           },
-          "status": "failed"
+          "status": "completed"
+        },
+        {
+          "tool": "mcp__sparkdev__wait",
+          "arguments": {
+            "job": "38ed8acb19dc43f3880b406c1c939720",
+            "timeout": 60
+          },
+          "status": "completed"
+        },
+        {
+          "tool": "mcp__sparkdev__logs",
+          "arguments": {
+            "job": "38ed8acb19dc43f3880b406c1c939720",
+            "since": 0
+          },
+          "status": "completed"
         }
       ],
-      "trace_sha256": "8b0f2b2e45a0cf9792e0dea4a1d29dc13e13b157f9d5bce91924a1bc265f5a45",
+      "trace_sha256": "6ef5a42290600c55143b59e61254844fef7b304e5313d705b64a82c40ebe0035",
       "process_sandbox": "workspace-write; network explicitly permitted; application state writable; approval never",
+      "mcp_approvals": {
+        "scope": "fresh invocation only",
+        "server": "sparkdev",
+        "enabled_tools": [
+          "devices",
+          "plan",
+          "run",
+          "wait",
+          "logs"
+        ],
+        "preapproved_tools": [
+          "run",
+          "wait",
+          "logs"
+        ],
+        "saved_configuration_changed": false
+      },
+      "sandbox_failure": "workspace-write sandbox has no writable root capability SIDs",
       "shell_receipts": [],
-      "restricted_process_and_network_verified": false
+      "restricted_process_and_network_verified": false,
+      "job": {
+        "job": "38ed8acb19dc43f3880b406c1c939720",
+        "state": "succeeded",
+        "exit_code": 0,
+        "logs": "CODEX_MCP_STARTED\nCODEX_MCP_FINISHED\n",
+        "next_offset": 37
+      }
     }
   },
-  "both_jobs_observed_running": false,
+  "both_jobs_observed_running": true,
+  "mcp_acceptance": {
+    "status": "passed",
+    "actual_clients": [
+      "claude",
+      "codex"
+    ],
+    "both_jobs_observed_running": true,
+    "scope": "Fresh model sessions, required MCP calls, successful Spark jobs and complete fixture markers over LAN SSH"
+  },
+  "sandbox_acceptance": {
+    "status": "failed",
+    "scope": "Codex workspace-write process launch and authenticated SSH",
+    "diagnostic": "workspace-write sandbox has no writable root capability SIDs"
+  },
   "limitations": [
     "LAN SSH acceptance only; no hotspot or sleep claim"
   ],
-  "failure": "codex did not make required actual MCP tool calls",
+  "overlap_observed_unix": 1791948277.1614716,
+  "failure": "Codex sandbox process/network check did not pass",
   "fixture_cleanup": {
     "board_refreshed": true,
     "jobs": [],
     "errors": []
+  },
+  "prior_attempt": {
+    "path": "evidence/real-agent-mcp-first-attempt.json",
+    "sha256": "260bd58282378a40e5ffcd77392d8419f0974cd608100238c19e498b4495a252"
   }
 }

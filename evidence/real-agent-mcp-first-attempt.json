@@ -1,0 +1,122 @@
+{
+  "schema": 1,
+  "status": "failed",
+  "binary_sha256": "21bfcc929b6b82be859b5c0e22e523cd14ac86255fc26bec27c6ae90012c31e7",
+  "actual_agent_sessions": {
+    "claude": {
+      "fresh_process": true,
+      "model_override": false,
+      "session_resume": false,
+      "process_exit_code": 0,
+      "tool_calls": [
+        {
+          "tool": "mcp__sparkdev__devices",
+          "arguments": {}
+        },
+        {
+          "tool": "mcp__sparkdev__plan",
+          "arguments": {
+            "dir": "<owner-local-acceptance>/claude",
+            "argv": [
+              "python3",
+              "probe.py"
+            ],
+            "where": "spark",
+            "runtime": "python"
+          }
+        },
+        {
+          "tool": "mcp__sparkdev__run",
+          "arguments": {
+            "dir": "<owner-local-acceptance>/claude",
+            "argv": [
+              "python3",
+              "probe.py"
+            ],
+            "where": "spark",
+            "runtime": "python",
+            "request_id": "real-claude-05cfffbd-72ab-4188-a5d5-31698480ffb8",
+            "no_cache": true
+          }
+        },
+        {
+          "tool": "mcp__sparkdev__wait",
+          "arguments": {
+            "job": "70ffd9fee24e47219ac02d3882174465",
+            "timeout": 60
+          }
+        },
+        {
+          "tool": "mcp__sparkdev__logs",
+          "arguments": {
+            "job": "70ffd9fee24e47219ac02d3882174465",
+            "since": 0
+          }
+        }
+      ],
+      "trace_sha256": "7db2de31ea56526d989a8d9d64ab9068721953122ed35370c293568cc1ac8214",
+      "job": {
+        "job": "70ffd9fee24e47219ac02d3882174465",
+        "state": "succeeded",
+        "exit_code": 0,
+        "logs": "CLAUDE_MCP_STARTED\nCLAUDE_MCP_FINISHED\n",
+        "next_offset": 39
+      }
+    },
+    "codex": {
+      "fresh_process": true,
+      "model_override": false,
+      "session_resume": false,
+      "process_exit_code": 0,
+      "tool_calls": [
+        {
+          "tool": "mcp__sparkdev__devices",
+          "arguments": {},
+          "status": "completed"
+        },
+        {
+          "tool": "mcp__sparkdev__plan",
+          "arguments": {
+            "dir": "<owner-local-acceptance>/codex",
+            "argv": [
+              "python3",
+              "probe.py"
+            ],
+            "where": "spark",
+            "runtime": "python"
+          },
+          "status": "completed"
+        },
+        {
+          "tool": "mcp__sparkdev__run",
+          "arguments": {
+            "dir": "<owner-local-acceptance>/codex",
+            "argv": [
+              "python3",
+              "probe.py"
+            ],
+            "where": "spark",
+            "runtime": "python",
+            "request_id": "real-codex-05cfffbd-72ab-4188-a5d5-31698480ffb8",
+            "no_cache": true
+          },
+          "status": "failed"
+        }
+      ],
+      "trace_sha256": "8b0f2b2e45a0cf9792e0dea4a1d29dc13e13b157f9d5bce91924a1bc265f5a45",
+      "process_sandbox": "workspace-write; network explicitly permitted; application state writable; approval never",
+      "shell_receipts": [],
+      "restricted_process_and_network_verified": false
+    }
+  },
+  "both_jobs_observed_running": false,
+  "limitations": [
+    "LAN SSH acceptance only; no hotspot or sleep claim"
+  ],
+  "failure": "codex did not make required actual MCP tool calls",
+  "fixture_cleanup": {
+    "board_refreshed": true,
+    "jobs": [],
+    "errors": []
+  }
+}

@@ -27,21 +27,29 @@ Marketplace admission. A successful build does not satisfy every layer.
   that it had no owner connection credentials. This is not proof of an actual
   Claude Code or Codex model calling MCP.
   [Linux CLI receipt](../remote/receipts/linux-arm64-cli-final.json).
-- A real Claude Code session called devices, plan, run, wait and logs using the
-  installed CLI, and its Spark workload succeeded. Codex called devices and plan,
-  but job submission required approval and its restricted Windows shell failed
-  because writable-root capability SIDs were unavailable. The combined test
-  correctly failed; it does not establish concurrent agent acceptance.
+- Fresh Claude Code and Codex sessions each called devices, plan, run, wait and
+  logs using the installed CLI. Their two Spark jobs overlapped, both succeeded
+  with exit 0, and both returned complete fixture logs. Invocation-only approvals
+  were scoped to the authorized MCP tools. The combined harness still correctly
+  failed because the separate Codex restricted Windows shell check reported
+  missing writable-root capability SIDs. No global security setting was changed.
   [Real session receipt](../evidence/real-agent-mcp.json).
 - The Spark recorded phone approval and device approval at 02:51:10 UTC on
   October 14, before the phone confirmation UI update. This records accepted
   pairing, without identifying the physical approver or proving the new animation.
   [Sanitized pairing receipt](../remote/receipts/owner-pairing-before-phone-update.json).
+- The final DGXBridge Windows installer completed without elevation; the installed
+  payload matched the release inputs, allowing only Tauri's documented three-byte
+  NSIS bundle marker change. Installed doctor confirmed authenticated LAN SSH and
+  a healthy scheduler. Native inspection showed successful pairing confirmation,
+  six jobs per page, working next/previous navigation and retained page position.
+  [Package receipt](../evidence/dgxbridge-installed-package.json),
+  [native receipt](../evidence/dgxbridge-native-ui.json).
 
 ## PhaseForge benchmark
 
 An isolated archive of `ac30e04fbf0ddc03ae0144fb06b6350cacdce1fc` was run through
-Spark Dev Bridge with 8 CPUs and 32 GiB. PhaseForge's checkouts and source were
+DGXBridge with 8 CPUs and 32 GiB. PhaseForge's checkouts and source were
 not edited. Dependencies were prepared before the empty target-cache run.
 
 | Phase | Cargo compile time | Entire Spark job | Test totals |
@@ -76,11 +84,12 @@ fair end-to-end comparison. [Interrupted baseline receipt](../evidence/phaseforg
 
 ## Not yet accepted
 
-- Final installed Windows GUI, taskbar icon and native workflow inspection.
+- Direct taskbar inspection; the installed executable/title bar and Start-menu
+  shortcut contain the DGXBridge icon, but no taskbar screenshot was captured.
 - Actual phone inspection of the updated approval confirmation. The prior real
   pairing receipt and synthetic confirmation tests establish separate layers.
-- Actual Claude Code and Codex sessions calling MCP and completing concurrent
-  jobs. Client labels alone do not establish this.
+- Codex restricted Windows shell execution: observed failure on this laptop,
+  distinct from the successful actual MCP workload acceptance above.
 - Phone-hotspot remote execution through an owner VM. No deployed owner relay
   was found; explicit opt-in public relay support is not owner-VM acceptance.
 - Physical network interruption during transfer and execution, and actual laptop

@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "product": "DGXBridge",
+  "version": "0.1.0-beta.1",
+  "environment": "Installed Windows x64 NSIS application, WebView2 production tauri.localhost protocol",
+  "installed_gui_sha256": "b0bb5fe46e816dceea0bb3edbadff332250a72c72a40fa61cb4becdaafd404c1",
+  "checks": {
+    "native_launch": true,
+    "title_bar_brand_and_icon": true,
+    "lan_pinned_ssh_connected": true,
+    "six_jobs_per_page": true,
+    "native_next_and_previous_navigation": true,
+    "page_retained_during_refresh": true,
+    "forty_one_real_jobs_seven_pages": true,
+    "actual_claude_and_codex_jobs_observed_running": true,
+    "actual_claude_and_codex_jobs_observed_succeeded_exit_zero": true,
+    "codex_job_logs_decoded_and_complete": true,
+    "connection_form_actions_separated": true,
+    "desktop_final_pairing_confirmation_observed": true,
+    "prior_name_uninstaller_exit_code": 0,
+    "only_dgxbridge_start_menu_shortcut_remains": true
+  },
+  "screenshots": [
+    "assets/screenshots/dgxbridge-job-board.png",
+    "assets/screenshots/dgxbridge-job-output.png"
+  ],
+  "screenshot_review": "Actual installed app; no project source, credentials, pairing tokens/codes, network address or owner path. Job IDs are nonsecret test receipts. No fixture or visual mock used.",
+  "limitations": [
+    "Taskbar itself was not directly captured; executable/title-bar icon and shortcut were checked.",
+    "Updated phone confirmation animation was not inspected on the physical phone.",
+    "Narrow responsive layout was separately checked in the browser fixture, not resized here in the installed window.",
+    "This is native UI evidence, not Marketplace admission."
+  ]
+}
