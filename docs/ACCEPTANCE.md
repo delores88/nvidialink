@@ -109,7 +109,7 @@ establish direct visual taskbar acceptance; see the
 - Physical network interruption during transfer and execution, and actual laptop
   sleep while a job runs. A restarted controller and interrupted CLI are different
   failure modes.
-- Marketplace admission and authenticated Marketplace download verification.
+- Authenticated Marketplace download verification (admission is now accepted).
   Beta.1 was rejected for two Gitleaks matches in a source-hash receipt. Both
   values were verified against the exact tagged source bytes as SHA-256 checksums,
   not credentials. Malware scanning passed; dependency scanning passed with no
@@ -134,6 +134,17 @@ establish direct visual taskbar acceptance; see the
   heartbeat continues. [Beta.2 submission receipt](../evidence/dgxbridge-beta2-marketplace-submission.json),
   [public artifact receipt](../evidence/dgxbridge-beta2-public.json),
   [final tagged source scan](../evidence/dgxbridge-beta2-final-source-scan.json).
+  Beta.2 was subsequently accepted at 04:57:54 UTC on October 14. Native findings
+  show five passed, zero failed and zero incomplete checks, including zero secret
+  matches and zero infected files. One medium Linux GLib dependency advisory
+  remains. The eligible Windows NSIS artifact's exact source, release/asset IDs,
+  size, SHA-256 and canonical manifest digest match the published release.
+  The acceptance heartbeat is disabled. This establishes Marketplace admission,
+  separately from installed behavior and an authenticated Marketplace download.
+  The Marketplace agent identified a shared client trust-key verification bug
+  that blocks reviewed downloads before transfer; no DGXBridge download was
+  attempted to repeat it, and no trust override was used.
+  [Acceptance receipt](../evidence/dgxbridge-beta2-marketplace-acceptance.json).
 
 ## Current functional limits
 

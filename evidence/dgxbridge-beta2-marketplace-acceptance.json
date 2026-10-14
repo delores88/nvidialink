@@ -1,0 +1,174 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-14T01:01:29.669428-04:00",
+  "marketplace_release_id": "t3I7c9a1Eg3yv9kn1hPoWX6K",
+  "status": "accepted",
+  "native_method": "Signed-in Marketplace Developer tools > Release decisions > View findings, through Windows Computer Use",
+  "native_checks": {
+    "passed": 5,
+    "failed": 0,
+    "incomplete": 0,
+    "malware": {
+      "installer_files": 1,
+      "source_and_payload_files": 1036,
+      "infected": 0
+    },
+    "secrets": {
+      "tool": "gitleaks 8.30.1",
+      "input_files_supplied": 1036,
+      "inspected_count_measured": false,
+      "original_matches": 0
+    },
+    "inventory": {
+      "source_dependencies": 836,
+      "packaged_dependencies": 502
+    },
+    "dependency_advisories": {
+      "critical": 0,
+      "high": 0,
+      "medium": 1,
+      "medium_advisory": "GHSA-wrw7-89jp-8q8g; glib 0.18.5 in the Linux source dependency graph"
+    }
+  },
+  "eligible_artifact": {
+    "id": "OdWRw3H-YbubykO9pQKw9u-a",
+    "appId": "dgxbridge",
+    "version": "0.1.0-beta.2",
+    "channel": "beta",
+    "os": "windows",
+    "architectures": [
+      "x64"
+    ],
+    "format": "nsis",
+    "requirements": {
+      "minimumOs": "10.0.26200",
+      "memoryGb": 32,
+      "diskMb": 61,
+      "gpu": null,
+      "runtimes": [
+        "Microsoft Edge WebView2 Runtime (preinstalled)",
+        "Windows OpenSSH Client (preinstalled)"
+      ],
+      "distributions": []
+    },
+    "installationAdapter": "windows-nsis",
+    "preferred": true,
+    "repositoryId": 1418188832,
+    "releaseId": 412347006,
+    "assetId": 639255033,
+    "sourceCommit": "ccc273fc7e9903367364a7dc6adc6c7a7b380109",
+    "sourceVisibility": "public",
+    "filename": "DGXBridge_0.1.0-beta.2_x64-setup.exe",
+    "url": "https://github.com/delores88/nvidialink/releases/download/v0.1.0-beta.2/DGXBridge_0.1.0-beta.2_x64-setup.exe",
+    "downloadUrl": "/api/v1/artifacts/OdWRw3H-YbubykO9pQKw9u-a/file",
+    "size": 12791459,
+    "sha256": "46c9205a11a2826f5dcee0cc55b02441134e6acf43f49485611352cdaef30dab",
+    "status": "accepted",
+    "revoked": false,
+    "acceptedAt": "2026-10-14T04:57:54.209Z",
+    "expiresAt": "2026-10-21T04:57:54.209Z",
+    "acceptancePolicy": "immutable-release",
+    "policyVersion": "2026-09-10.release.1",
+    "universalValidated": false,
+    "signing": "unsigned-disclosed",
+    "verificationLevel": "release-baseline",
+    "verificationMethod": "automated-static",
+    "publisherId": "idFUpIv8h0zRX8OxpjsAWgQk",
+    "manifestSha256": "3786aee1ca9ac0caa0b32f5080b133ca0d5a2742f3ba3f173e40a48eae11d4a4",
+    "verificationChecks": [
+      {
+        "id": "file.identity",
+        "label": "Installer file identity",
+        "status": "passed",
+        "summary": "The exact GitHub release asset bytes, SHA-256 digest and size were checked."
+      },
+      {
+        "id": "package.identity",
+        "label": "Package and architecture",
+        "status": "passed",
+        "summary": "The nsis package and its x64 application payload were inspected without running the application."
+      },
+      {
+        "id": "publisher.authorization",
+        "label": "Publisher authorization",
+        "status": "passed",
+        "summary": "Current repository access, publisher ownership and free distribution authorization were verified."
+      },
+      {
+        "id": "release.source-binding",
+        "label": "Source and release identity",
+        "status": "passed",
+        "summary": "The GitHub release, declared channel, asset IDs and immutable source commit match this review."
+      },
+      {
+        "id": "malware.scan",
+        "label": "Malware scan",
+        "status": "passed",
+        "summary": "Installer: 1 files scanned; 0 infected files. Source and payload: 1036 files scanned; 0 infected files. Both original scan input groups are mandatory. Counts sum completed tool summaries; zero from an interrupted group means unknown coverage, not an empty input. The report digest frames both raw stdout/stderr pairs in fixed group order. Per-process observations: [{\"inputGroup\":\"installer\",\"status\":\"passed\",\"error\":null,\"execution\":{\"schemaVersion\":1,\"termination\":\"exited\",\"elapsedMs\":95297,\"timeoutMs\":2700000,\"outputLimitBytes\":64000000,\"stdoutBytes\":293,\"stderrBytes\":70,\"exitCode\":0,\"resources\":{\"samples\":95,\"sampledPeakRssBytes\":1211072512,\"sampledCpuMs\":89750}},\"coverageDescription\":\"Exact linked source snapshot and passively extracted installer; no application code executed.\"},{\"inputGroup\":\"source-and-payload\",\"status\":\"passed\",\"error\":null,\"execution\":{\"schemaVersion\":1,\"termination\":\"exited\",\"elapsedMs\":92885,\"timeoutMs\":2699996,\"outputLimitBytes\":64000000,\"stdoutBytes\":298,\"stderrBytes\":70,\"exitCode\":0,\"resources\":{\"samples\":93,\"sampledPeakRssBytes\":1189052416,\"sampledCpuMs\":87930}},\"coverageDescription\":\"Exact linked source snapshot and passively extracted installer; no application code executed.\"}]"
+      },
+      {
+        "id": "artifact.sbom",
+        "label": "Dependency inventory",
+        "status": "passed",
+        "summary": "Inventoried 836 source dependencies and 502 packaged dependencies. Exact linked source snapshot and passively extracted installer; no application code executed."
+      },
+      {
+        "id": "source.dependencies",
+        "label": "Dependency vulnerability assessment",
+        "status": "passed",
+        "summary": "High and critical vulnerabilities block publication. Dependency findings: 0 critical, 0 high, 1 medium, 0 low, 0 unknown, 0 info. High and critical findings block publication; lower severities are advisories. Exact linked source snapshot and passively extracted installer; no application code executed. 1 lower-severity or unrated advisories remain; the publisher receives the detailed findings."
+      },
+      {
+        "id": "source.secrets",
+        "label": "Secret patterns in supported files",
+        "status": "passed",
+        "summary": "Gitleaks checks recognizable credential patterns in supported source/extracted text and passively extracted CPython 3.12 literal constants. Native PE, ELF and Mach-O binaries are skipped. Constants are scanned separately; variable assignments, dynamically assembled values and program behavior are not reconstructed. This is not comprehensive bytecode analysis. 1036 input files were supplied; the inspected-file count is not measured. 0 unreviewed potential embedded credentials remain from 0 original tool matches. Values are never included in reports."
+      },
+      {
+        "id": "artifact.os-signature",
+        "label": "Publisher signing",
+        "status": "not-required",
+        "summary": "Trusted operating-system publisher signing was not established. This release policy permits that disclosed limitation."
+      },
+      {
+        "id": "runtime.lifecycle",
+        "label": "Installation and application behavior",
+        "status": "not-run",
+        "summary": "Native installation, launch, update and uninstall testing has not run in this static review."
+      },
+      {
+        "id": "source.static-analysis",
+        "label": "Comprehensive source analysis",
+        "status": "not-run",
+        "summary": "Dependency and secret scans do not constitute comprehensive source-code or application behavior analysis."
+      },
+      {
+        "id": "artifact.provenance",
+        "label": "Reproducible build provenance",
+        "status": "not-run",
+        "summary": "Source commit identity is checked; reproducing the binary from source is outside this review."
+      }
+    ],
+    "verificationSummary": "Automated static checks inspected release and package identity, malware, dependency inventory, vulnerability advisories and potential secrets in supported files. Secret scanning skips native PE, ELF and Mach-O binaries. High and Critical dependency findings block admission; lower-severity advisories remain visible. Review individual results for actual coverage and expiry. Native lifecycle and full source-code security validation are not established by these checks."
+  },
+  "all_expected_artifact_fields_matched": true,
+  "manifest_file_sha256": "5b30d50edc203af1b8c7b8eee52c48a29d20874f35a9d74e7bf275e04b14144e",
+  "marketplace_canonical_manifest_sha256": "3786aee1ca9ac0caa0b32f5080b133ca0d5a2742f3ba3f173e40a48eae11d4a4",
+  "canonical_manifest_digest_verified": true,
+  "featured_change_requested": false,
+  "heartbeat": {
+    "id": "dgxbridge-release-acceptance",
+    "status": "PAUSED",
+    "reason": "Accepted native decision and eligible artifact identity verified",
+    "disabled_at": "2026-10-14T05:02:08.6285784Z"
+  },
+  "evidence_boundaries": {
+    "installed_beta2": "Verified separately in dgxbridge-beta2-installed-package.json and dgxbridge-beta2-native-ui.json",
+    "github_installer_and_manifest_downloads": "Anonymous bytes verified in dgxbridge-beta2-public.json",
+    "marketplace_authenticated_installer_download": "Not verified. Shared installed Marketplace 0.3.16 client has a reported reviewed-envelope trust-key failure; no DGXBridge download was attempted to repeat the known failure.",
+    "shared_client_defect": "Marketplace agent traced TRUST_KEY_UNAVAILABLE to stream-start verification omitting review authorities. Requires Marketplace client repair/release; no trust override or DGXBridge resubmission performed.",
+    "progress_panel": "NETWORK_UNAVAILABLE persists independently of the accepted findings; Marketplace agent reproduced its backend query qualification defect.",
+    "taskbar_pixels": "Not visually verified; beta2 startup passed process identity and large-icon readback checks.",
+    "static_scan_scope": "Marketplace acceptance does not establish native runtime lifecycle, comprehensive source analysis or reproducible builds."
+  }
+}

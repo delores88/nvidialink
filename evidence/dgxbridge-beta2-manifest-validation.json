@@ -54,6 +54,6 @@
   },
   "publisherIdentity": "Supplied by the release operator; account ownership is checked by the Marketplace submission workflow.",
   "submitted": true,
-  "admissionApproved": false,
+  "admissionApproved": true,
   "marketplaceReleaseId": "t3I7c9a1Eg3yv9kn1hPoWX6K"
 }

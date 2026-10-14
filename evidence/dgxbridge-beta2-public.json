@@ -27,11 +27,14 @@
   ],
   "marketplace": {
     "submitted": true,
-    "admitted": false,
+    "admitted": true,
     "release_id": "t3I7c9a1Eg3yv9kn1hPoWX6K",
-    "native_status": "scanning",
-    "public_status": "queued",
-    "checked_at": "2026-10-14T04:56:08.391463+00:00",
-    "receipt": "dgxbridge-beta2-marketplace-submission.json"
+    "native_status": "accepted",
+    "public_status": "accepted",
+    "checked_at": "2026-10-14T05:01:29.669428+00:00",
+    "receipt": "dgxbridge-beta2-marketplace-submission.json",
+    "artifact_id": "OdWRw3H-YbubykO9pQKw9u-a",
+    "eligible_artifact_identity_verified": true,
+    "acceptance_receipt": "dgxbridge-beta2-marketplace-acceptance.json"
   }
 }
