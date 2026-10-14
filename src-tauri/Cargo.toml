@@ -6,6 +6,10 @@ license = "MIT"
 description = "Spark Dev Bridge desktop connection and job board"
 authors = ["DeloresAI"]
 
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "=2.7.2", features = [] }
 
