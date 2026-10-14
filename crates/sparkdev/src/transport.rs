@@ -194,15 +194,25 @@ impl Transport {
             .arg(remote);
         command
     }
-    fn decode(&self, bytes: &[u8]) -> Result<Value> {
+    fn decode(bytes: &[u8]) -> Result<Value> {
         let value: Value = serde_json::from_slice(bytes)
             .map_err(|_| AppError::new(6, "Remote returned an invalid JSON response"))?;
         if value["ok"] == false {
-            let code = value["code"].as_str().unwrap_or("REMOTE_ERROR");
-            let message = value["message"]
+            let error = value
+                .get("error")
+                .filter(|v| v.is_object())
+                .unwrap_or(&value);
+            let code = error["code"].as_str().unwrap_or("REMOTE_ERROR");
+            let message = error["message"]
                 .as_str()
                 .unwrap_or("Remote operation failed");
             return Err(AppError::new(6, format!("{code}: {message}")));
+        }
+        if value["ok"] != true {
+            return Err(AppError::new(
+                6,
+                "Remote response omitted its protocol success flag",
+            ));
         }
         Ok(value)
     }
@@ -272,7 +282,7 @@ impl Transport {
         let timeout = Duration::from_secs(request["timeout"].as_u64().unwrap_or(0).min(60) + 30);
         if self.selected != "iroh" {
             match self.ssh_raw("python3 ~/sparkdev/controller.py rpc", &input, timeout) {
-                Ok(bytes) => return self.decode(&bytes),
+                Ok(bytes) => return Self::decode(&bytes),
                 Err(e) => {
                     if e.message == "Configured LAN addresses are unreachable"
                         && !self.config.allow_remote
@@ -351,7 +361,7 @@ impl Transport {
             self.reason = "LAN unreachable; paired endpoint transport explicitly enabled".into();
             self.authenticated = true;
             self.record("paired_iroh", true, "authenticated", "Paired endpoint authenticated; adapter does not report whether its network path is direct or relayed", None);
-            return self.decode(&out);
+            return Self::decode(&out);
         }
         Err(AppError::new(4, "Authenticated remote link is busy"))
     }
@@ -383,6 +393,22 @@ mod tests {
         assert_eq!(
             ssh_failure("connection reset by peer"),
             "ssh_command_failed"
+        );
+    }
+    #[test]
+    fn controller_rejections_preserve_nested_and_legacy_details() {
+        for response in [
+            json!({"ok":false,"error":{"code":"project_busy","message":"Worktree is already claimed"}}),
+            json!({"ok":false,"code":"project_busy","message":"Worktree is already claimed"}),
+        ] {
+            let error = Transport::decode(&serde_json::to_vec(&response).unwrap()).unwrap_err();
+            assert_eq!(error.code, 6);
+            assert_eq!(error.message, "project_busy: Worktree is already claimed");
+        }
+        assert!(Transport::decode(b"{}").is_err());
+        assert_eq!(
+            Transport::decode(br#"{"ok":true,"jobs":[]}"#).unwrap()["ok"],
+            true
         );
     }
 }
