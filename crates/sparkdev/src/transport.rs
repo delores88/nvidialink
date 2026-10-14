@@ -121,14 +121,17 @@ pub fn sidecar() -> Result<PathBuf> {
 }
 impl Transport {
     pub fn new() -> Result<Self> {
-        Ok(Self {
-            config: state::config()?,
+        Ok(Self::from_config(state::config()?))
+    }
+    pub fn from_config(config: Config) -> Self {
+        Self {
+            config,
             selected: "unselected".into(),
             reason: "No authenticated request yet".into(),
             host: None,
             authenticated: false,
             attempts: Vec::new(),
-        })
+        }
     }
     fn record(
         &mut self,
@@ -218,6 +221,20 @@ impl Transport {
     }
     pub fn ssh_raw(&mut self, remote: &str, input: &[u8], timeout: Duration) -> Result<Vec<u8>> {
         self.authenticated = false;
+        self.check_enabled()?;
+        if !self.config.allows_lan() {
+            self.record(
+                "lan_ssh",
+                false,
+                "disabled",
+                "Remote-only mode does not permit SSH",
+                None,
+            );
+            return Err(AppError::new(
+                4,
+                "Remote-only mode does not permit SSH; choose LAN-only or Both for initial setup",
+            ));
+        }
         let hosts: Vec<Option<String>> = if let Some(host) = &self.host {
             vec![Some(host.clone())]
         } else if self.config.hosts.is_empty() {
@@ -278,14 +295,15 @@ impl Transport {
     }
     pub fn rpc(&mut self, request: Value) -> Result<Value> {
         self.authenticated = false;
+        self.check_enabled()?;
         let input = serde_json::to_vec(&request)?;
         let timeout = Duration::from_secs(request["timeout"].as_u64().unwrap_or(0).min(60) + 30);
-        if self.selected != "iroh" {
+        if self.config.allows_lan() && (self.selected != "iroh" || !self.config.allows_remote()) {
             match self.ssh_raw("python3 ~/sparkdev/controller.py rpc", &input, timeout) {
                 Ok(bytes) => return Self::decode(&bytes),
                 Err(e) => {
                     if e.message == "Configured LAN addresses are unreachable"
-                        && !self.config.allow_remote
+                        && !self.config.allows_remote()
                     {
                         self.record(
                             "paired_iroh",
@@ -295,14 +313,25 @@ impl Transport {
                             None,
                         );
                     }
-                    if e.code != 4
-                        || e.message != "Configured LAN addresses are unreachable"
-                        || !self.config.allow_remote
-                    {
+                    if !self.can_fallback(&e) {
                         return Err(e);
                     }
                 }
             }
+        } else if !self.config.allows_lan() {
+            self.record(
+                "lan_ssh",
+                false,
+                "disabled",
+                "Remote-only mode skips SSH",
+                None,
+            );
+        }
+        if !self.config.allows_remote() {
+            return Err(AppError::new(
+                4,
+                "LAN-only mode does not permit the paired remote transport",
+            ));
         }
         let payload = serde_json::to_vec(&json!({"request":request}))?;
         for attempt in 0..3 {
@@ -358,7 +387,7 @@ impl Transport {
                 ));
             }
             self.selected = "iroh".into();
-            self.reason = "LAN unreachable; paired endpoint transport explicitly enabled".into();
+            self.reason = if self.config.allows_lan() { "LAN unreachable; paired endpoint transport explicitly enabled" } else { "Remote-only mode; paired endpoint authenticated (direct or relay path is not reported)" }.into();
             self.authenticated = true;
             self.record("paired_iroh", true, "authenticated", "Paired endpoint authenticated; adapter does not report whether its network path is direct or relayed", None);
             return Self::decode(&out);
@@ -366,12 +395,75 @@ impl Transport {
         Err(AppError::new(4, "Authenticated remote link is busy"))
     }
     pub fn info(&self) -> Value {
-        json!({"selected":self.selected,"route":if !self.authenticated {"none"} else if self.selected == "ssh" {"lan_ssh"} else {"paired_iroh"},"authenticated":self.authenticated,"reason":self.reason,"attempted_routes":self.attempts})
+        json!({"selected":self.selected,"route":if !self.authenticated {"none"} else if self.selected == "ssh" {"lan_ssh"} else {"paired_iroh"},"authenticated":self.authenticated,"reason":self.reason,"attempted_routes":self.attempts,"connection":self.config.connection_info()})
+    }
+    fn check_enabled(&mut self) -> Result<()> {
+        if !self.config.connection_enabled {
+            self.selected = "disconnected".into();
+            self.reason =
+                "Disconnected by owner; existing jobs continue and credentials are retained".into();
+            self.record(
+                "none",
+                false,
+                "disconnected",
+                "New requests are disabled by the owner",
+                None,
+            );
+            return Err(AppError::new(
+                4,
+                "Bridge is disconnected; use sparkdev connect to enable new requests",
+            ));
+        }
+        Ok(())
+    }
+    fn can_fallback(&self, error: &AppError) -> bool {
+        self.config.connection_enabled
+            && self.config.allows_remote()
+            && error.code == 4
+            && error.message == "Configured LAN addresses are unreachable"
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn configured(mode: &str, enabled: bool) -> Transport {
+        Transport { config: serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":[],"host_key_alias":"test-pin","connection_mode":mode,"connection_enabled":enabled})).unwrap(), selected:"unselected".into(), reason:"".into(), host:None, authenticated:false, attempts:vec![] }
+    }
+    #[test]
+    fn disconnected_requests_and_remote_only_ssh_never_spawn() {
+        let mut disconnected = configured("both", false);
+        assert_eq!(
+            disconnected
+                .rpc(json!({"v":1,"op":"status"}))
+                .unwrap_err()
+                .code,
+            4
+        );
+        assert_eq!(disconnected.info()["selected"], "disconnected");
+        assert_eq!(
+            disconnected.info()["attempted_routes"][0]["attempted"],
+            false
+        );
+        let mut remote = configured("remote-only", true);
+        assert!(remote.ssh_raw("true", &[], Duration::from_secs(1)).is_err());
+        assert_eq!(remote.info()["attempted_routes"][0]["attempted"], false);
+        assert_eq!(remote.info()["attempted_routes"][0]["route"], "lan_ssh");
+    }
+    #[test]
+    fn fallback_requires_both_mode_and_explicit_unreachability() {
+        let unavailable = AppError::new(4, "Configured LAN addresses are unreachable");
+        assert!(!configured("lan-only", true).can_fallback(&unavailable));
+        assert!(!configured("both", false).can_fallback(&unavailable));
+        let both = configured("both", true);
+        assert!(both.can_fallback(&unavailable));
+        for error in [
+            AppError::new(7, "Host pin mismatch"),
+            AppError::new(4, "SSH command failed"),
+            AppError::new(4, "Transport timeout"),
+        ] {
+            assert!(!both.can_fallback(&error));
+        }
+    }
     #[test]
     fn ssh_authentication_and_service_errors_are_not_network_fallbacks() {
         assert_eq!(

@@ -13,7 +13,28 @@ sparkdev doctor --json
 
 The key path is referenced, never read, copied, or uploaded by DGXBridge. OpenSSH performs authentication in BatchMode with strict known-host verification. Multiple `--host` values are tried on connection refusal, timeout, DNS failure, or unreachable network. Authentication and host-key errors fail closed and prevent remote fallback. `--allow-remote` explicitly permits the separately paired `sparkdev-link` transport after LAN reachability fails. Pair through the desktop QR workflow after SSH bootstrap. No owner-operated relay is assumed.
 
-State defaults to the owner's unredirected Windows LocalAppData known folder plus `SparkDevBridge`, and `~/.local/state/sparkdev` on Linux. DGXBridge retains these existing directory names to preserve configuration and paired-device identity. Windows uses `SHGetKnownFolderPath` with `KF_FLAG_NO_PACKAGE_REDIRECTION`, so packaged Codex and an Explorer-launched app find the same configuration. `SPARKDEV_HOME` overrides it. On first use, a valid prior config in a redirected `LOCALAPPDATA` location is copied only when the new location has no config; the original stays intact. Configuration, immutable request receipts, transfer objects, pending cancellation, job records and logs stay outside the repository. Never point this directory into a source tree. SSH bootstrap separately installs the remote controller under `~/sparkdev`.
+State defaults to Windows LocalAppData plus `SparkDevBridge`, and `~/.local/state/sparkdev` on Linux. `SPARKDEV_HOME` overrides the shared CLI/link state root. Configuration, pairing identity, receipts and logs stay outside the repository. Do not point state at a source tree. SSH bootstrap separately installs the controller under `~/sparkdev`.
+
+Windows packaged applications can redirect AppData file I/O even when the known-folder API returns the normal owner's path. `connection` reports the configured and physically resolved state roots, package context and redirection. Setup refuses a detected redirected folder. Use the desktop's generated agent prompt/MCP snippet to select the verified owner state; do not copy keys or silently create a second configuration. No automatic config-only migration is performed.
+
+## Connection and resource controls
+
+```powershell
+sparkdev --json connection
+sparkdev --json connection --mode lan-only
+sparkdev --json connection --mode remote-only
+sparkdev --json connection --mode both
+sparkdev --json connect
+sparkdev --json disconnect
+sparkdev --json resources
+sparkdev --json resources --file C:/settings/spark-limits.json
+sparkdev --json connection --laptop-jobs 2
+```
+
+LAN-only uses pinned SSH. Remote-only skips SSH and requires existing authenticated pairing; it does not guarantee iroh uses a relay. Both prefers LAN and falls back only after reachability failure. Authentication or host-key rejection never falls back. Connect enables the saved route and probes it; a failed probe leaves the configured choice enabled and returns a failure. Disconnect blocks new requests without revoking pairing or cancelling admitted jobs. Existing laptop workers retain their connection snapshot for lease heartbeats.
+
+`resources` reads physical Spark bounds and effective policy. The JSON file is an object with `cpu_per_job`, `memory_gb_per_job`, `cpu_total`, `memory_gb_total`, `client_jobs`, `client_cpu` and `headroom_gb`. Saving validates relationships and hardware bounds, persists the controller policy, and returns the effective readback. Changes govern new requests/admissions; running jobs retain their original resources. After the first explicit policy save, project overrides are clamped to saved per-job caps. Default laptop concurrency is two and can be changed separately. Laptop native CPU and memory caps are not enforced by this release.
+
 
 ## Submit, poll and reattach
 
@@ -26,7 +47,7 @@ sparkdev --client codex --json status --all
 sparkdev --client codex --json cancel JOB_ID
 ```
 
-Use the returned `next_offset` for subsequent logs calls. Offsets count bytes, and `data` is base64 for lossless retrieval; `text` is a UTF-8 presentation. Every captured chunk is saved locally at its original byte offset. Log queries are repeatable. SSH requests have bounded connection and process timeouts; `wait` accepts 0–60 seconds of server waiting. Network setup adds bounded transport overhead. An attached run passes through the workload exit code; its JSON contains `process_exit_code`. Detached submission, wait and logs return success for a valid operation even if a completed workload failed: inspect `state` and `exit_code`.
+Use the returned `next_offset` for subsequent logs calls. Offsets count bytes, and `data` is base64 for lossless retrieval; `text` is a UTF-8 presentation. Every captured chunk is saved locally at its original byte offset. Log queries are repeatable. SSH requests have bounded connection and process timeouts; `wait` accepts 0â€“60 seconds of server waiting. Network setup adds bounded transport overhead. An attached run passes through the workload exit code; its JSON contains `process_exit_code`. Detached submission, wait and logs return success for a valid operation even if a completed workload failed: inspect `state` and `exit_code`.
 
 Reuse the same `--request-id` after an ambiguous submission disconnect. The immutable request is saved before network submission and cannot be reused for different source, argv, runtime or placement. Without an explicit ID each new invocation is a new request. No-cache controls result reuse, not request identity. Run requests survive laptop disconnection once accepted by the Spark; cancel requests made offline are queued and delivered at the next authenticated command.
 
@@ -48,7 +69,7 @@ Laptop process availability is separate from managed admission. Both runners nee
 
 `--where auto` chooses the laptop for explicit Windows/MSVC targets, PowerShell/cmd scripts, Windows sandbox commands, NSIS tools and Tauri installers. Other work goes to the Spark. Use `--where laptop` or `--where spark` when the command has requirements the classifier cannot infer. The selected machine and reason are included in submission output. Runtime defaults are `rust` for cargo/rustc/rustup, `node` for node/npm/npx and `python` otherwise; `--runtime` selects only an owner-provisioned registry name.
 
-The laptop runner executes native owner processes and is not Docker-sandboxed. It obtains the same worktree lease from the Spark scheduler before starting, so it requires an authenticated scheduler connection. At most two laptop jobs run concurrently. Direct Cargo invocation is wrapped in the configured build gate, with per-project CARGO_TARGET_DIR under application state. On this owner's machine all local Cargo commands must use the prescribed PhaseForge build gate unchanged, and state/build output must stay on C:. Commands that indirectly invoke Cargo must themselves use the owner's build gate; the CLI cannot inspect arbitrary script behavior.
+The laptop runner executes native owner processes and is not Docker-sandboxed. It obtains the same worktree lease from the Spark scheduler before starting, so it requires an authenticated scheduler connection. Laptop concurrency follows the saved owner setting (default two). Direct Cargo invocation is wrapped in the configured build gate, with per-project CARGO_TARGET_DIR under application state. On this owner's machine all local Cargo commands must use the prescribed PhaseForge build gate unchanged, and state/build output must stay on C:. Commands that indirectly invoke Cargo must themselves use the owner's build gate; the CLI cannot inspect arbitrary script behavior.
 
 Laptop workers persist independently of the invoking CLI. On Windows they launch without inheriting the caller's capture pipes, run at lower process priority, send a shared-board heartbeat, and stop their owned process tree on cancellation or a lost lease. An expired laptop lease remains blocking on the scheduler because a sleeping laptop may resume a process. This protects the worktree from a second job; explicit terminal acknowledgement releases it. Final laptop log/board updates interrupted by a disconnect are saved and retried at the next authenticated command. `status --all` returns scheduler jobs plus laptop receipts and indicates unavailable remote state. Jobs for distinct worktrees may run independently on both machines. Laptop successful-result caching is disabled because the native host toolchain has no locked digest. Spark result reuse is scoped to the same worktree and requires matching source, exact argv, pinned runtime, worker and resource policy. Different worktrees keep isolated caches and do not share completed results. `--no-cache` forces a new execution.
 

@@ -12,6 +12,8 @@ fn tools() -> Value {
     let job = json!({"type":"string","minLength":1});
     json!([
       {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access and known capacity; unknown capacity remains unknown. This is an observation, not a reservation.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"connection","description":"Read the owner's saved route preference and enabled/disconnected state. Does not connect, change settings or reveal SSH credentials. Existing admitted jobs retain their connections after disconnect.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
+      {"name":"resources","description":"Read the authenticated Spark scheduler resource policy and detected hardware bounds. Settings apply to new requests and admissions; this tool cannot change them. Laptop native CPU and memory are not capped by Spark settings.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"plan","description":"Preview job placement and validate source and exact argv without uploading files, claiming a worktree or launching a job. Does not verify runtime availability or reserve capacity; use devices for current connectivity.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"}}), &["dir","argv"]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
       {"name":"prepare","description":"Sync a project and submit fixed locked dependency preparation on Spark for Rust, Node or Python. No caller commands accepted. Reconnection also delivers cancellations previously queued by the owner. Retain the detached job ID and poll wait/logs to completion before running an offline workload. Reuse request_id when retrying.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"runtime":{"type":"string","enum":["rust","node","python"]},"request_id":{"type":"string"}}), &["dir","runtime"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
       {"name":"run","description":"Sync a project and submit a detached build/test job. Returns durable job ID; follow with wait/logs. Laptop commands run natively with owner permissions and can change files outside the project. Reuse request_id to retry without duplicate execution.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"},"request_id":{"type":"string"},"no_cache":{"type":"boolean","default":false}}), &["dir","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
@@ -46,7 +48,7 @@ fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> 
         "prepare" => &["dir", "runtime", "request_id"],
         "wait" => &["job", "timeout"],
         "logs" => &["job", "since"],
-        "status" | "devices" => &[],
+        "status" | "devices" | "connection" | "resources" => &[],
         "cancel" => &["job"],
         _ => return Err("Unknown tool".into()),
     };
@@ -119,7 +121,7 @@ fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> 
             }
         }
         "status" => out.push("--all".into()),
-        "devices" => {}
+        "devices" | "connection" | "resources" => {}
         _ => {
             let job = required_string(v, "job")?;
             if job.starts_with('-') {
@@ -353,13 +355,29 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(tools().as_array().unwrap().len(), 8);
+        assert_eq!(tools().as_array().unwrap().len(), 10);
         for tool in tools().as_array().unwrap() {
             let name = tool["name"].as_str().unwrap();
             if ["prepare", "wait", "logs", "status"].contains(&name) {
                 assert_eq!(tool["annotations"]["readOnlyHint"], false);
                 assert_eq!(tool["annotations"]["destructiveHint"], true);
             }
+        }
+    }
+    #[test]
+    fn policy_observation_tools_cannot_mutate_owner_settings() {
+        for name in ["connection", "resources"] {
+            assert!(cli_args(name, &json!({}), "codex").is_ok());
+            assert!(cli_args(name, &json!({"mode":"remote-only"}), "codex").is_err());
+            assert!(cli_args(name, &json!({"limits":{"cpu_total":20}}), "codex").is_err());
+            let tool = tools()
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap()
+                .clone();
+            assert_eq!(tool["annotations"]["readOnlyHint"], true);
         }
     }
 }

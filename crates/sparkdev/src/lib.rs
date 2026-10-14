@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -125,6 +125,20 @@ enum Commands {
         all: bool,
     },
     Devices,
+    Connection {
+        #[arg(long, value_enum)]
+        mode: Option<state::ConnectionMode>,
+        #[arg(long)]
+        laptop_jobs: Option<usize>,
+    },
+    Connect,
+    Disconnect,
+    Resources {
+        #[arg(long)]
+        file: Option<PathBuf>,
+        #[arg(long, conflicts_with = "file")]
+        stdin: bool,
+    },
     Plan {
         dir: PathBuf,
         #[arg(long)]
@@ -191,6 +205,13 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             allow_remote,
             local_build_gate,
         } => {
+            if state::diagnostics()["redirected"] == true {
+                return Err(AppError::new(
+                    3,
+                    "Windows redirected this process's state folder. Configure SSH in the normally installed DGXBridge app, or set SPARKDEV_HOME to the verified owner state location; no configuration was copied or saved.",
+                ));
+            }
+            let previous = state::config().ok();
             let config = state::Config {
                 ssh_alias,
                 hosts,
@@ -199,6 +220,9 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                 user,
                 port,
                 allow_remote,
+                connection_mode: previous.as_ref().and_then(|c| c.connection_mode),
+                connection_enabled: previous.as_ref().is_none_or(|c| c.connection_enabled),
+                laptop_jobs: previous.as_ref().map(|c| c.laptop_jobs).unwrap_or(2),
                 local_build_gate,
             };
             state::validate_config(&config)?;
@@ -219,6 +243,53 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             Ok(out)
         }
         Commands::Devices => devices(),
+        Commands::Connection { mode, laptop_jobs } => {
+            let config = if mode.is_some() || laptop_jobs.is_some() {
+                state::update_config(|config| {
+                    if let Some(mode) = mode {
+                        config.connection_mode = Some(mode);
+                        config.allow_remote = config.allows_remote();
+                    }
+                    if let Some(jobs) = laptop_jobs {
+                        config.laptop_jobs = jobs;
+                    }
+                })?
+            } else {
+                state::config()?
+            };
+            Ok(connection_response(&config))
+        }
+        Commands::Connect => {
+            let config = state::update_config(|config| config.connection_enabled = true)?;
+            let mut result = connection_response(&config);
+            let mut tr = transport::Transport::new()?;
+            match tr.rpc(json!({"v":1,"op":"doctor"})) {
+                Ok(doctor) => {
+                    result["reachable"] = json!(true);
+                    result["doctor"] = doctor;
+                }
+                Err(error) => {
+                    result["ok"] = json!(false);
+                    result["reachable"] = json!(false);
+                    result["error"] = json!({"code":error.code,"message":error.message});
+                    result["process_exit_code"] = json!(error.code);
+                }
+            }
+            result["transport"] = tr.info();
+            Ok(result)
+        }
+        Commands::Disconnect => {
+            let config = state::update_config(|config| config.connection_enabled = false)?;
+            Ok(connection_response(&config))
+        }
+        Commands::Resources { file, stdin } => {
+            let policy = if stdin {
+                Some(read_resource_input(std::io::stdin().lock())?)
+            } else {
+                file.map(|file| state::read_json(&file)).transpose()?
+            };
+            resource_limits(policy)
+        }
         Commands::Plan {
             dir,
             runtime,
@@ -336,7 +407,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                     Ok(v)
                 }
                 Err(e) if all => Ok(
-                    json!({"ok":true,"remote_available":false,"remote_error":{"code":e.code,"message":e.message},"laptop_jobs":local}),
+                    json!({"ok":true,"remote_available":false,"remote_error":{"code":e.code,"message":e.message},"laptop_jobs":local,"transport":tr.info()}),
                 ),
                 Err(e) => Err(e),
             }
@@ -389,8 +460,37 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
         Commands::Mcp => Err(AppError::new(2, "MCP stdio must run as a process")),
     }
 }
+pub fn resource_limits(policy: Option<Value>) -> Result<Value> {
+    let mut request = json!({"v":1,"op":"resources"});
+    if let Some(policy) = policy {
+        request["limits"] = policy;
+    }
+    let mut tr = transport::Transport::new()?;
+    let mut response = tr.rpc(request)?;
+    response["transport"] = tr.info();
+    Ok(response)
+}
+fn read_resource_input(input: impl Read) -> Result<Value> {
+    let mut bytes = Vec::new();
+    input.take(65537).read_to_end(&mut bytes)?;
+    if bytes.len() > 65536 {
+        return Err(AppError::new(2, "Resource policy JSON exceeds 64 KiB"));
+    }
+    let policy: Value = serde_json::from_slice(&bytes)?;
+    if !policy.is_object() {
+        return Err(AppError::new(2, "Resource policy must be a JSON object"));
+    }
+    Ok(policy)
+}
+fn connection_response(config: &state::Config) -> Value {
+    json!({"ok":true,"connection":config.connection_info(),"laptop":config.laptop_info(),"state":state::diagnostics(),"running_jobs_unchanged":true})
+}
 fn devices() -> Result<Value> {
     let mut laptop = json!({"id":"laptop","availability":"available","reachable":true,"os":std::env::consts::OS,"architecture":std::env::consts::ARCH,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"managed_job_limit":2,"free_cpu":null,"free_memory_bytes":null,"capacity_note":"Logical parallelism is process-visible topology, not idle capacity. Native jobs are not container-sandboxed."});
+    if let Ok(config) = state::config() {
+        laptop["managed_job_limit"] = json!(config.laptop_jobs);
+        laptop["resource_controls"] = config.laptop_info();
+    }
     match local::status() {
         Ok(jobs) => laptop["jobs"] = jobs,
         Err(e) => laptop["state_error"] = json!({"code":e.code,"message":e.message}),
@@ -405,6 +505,9 @@ fn devices() -> Result<Value> {
             spark["availability"] = json!("unreachable");
             let result = tr.rpc(json!({"v":1,"op":"status","all":true}));
             spark["transport"] = tr.info();
+            if !tr.config.connection_enabled {
+                spark["availability"] = json!("disconnected");
+            }
             result
         }
         Err(e) => Err(e),
@@ -415,6 +518,7 @@ fn devices() -> Result<Value> {
             spark["availability"] = json!("reachable");
             spark["scheduler"] = status["scheduler"].clone();
             spark["managed_limits"] = status["limits"].clone();
+            spark["hardware"] = status["hardware"].clone();
             spark["runtimes"] = status["runtimes"].clone();
             spark["capacity_note"] = json!(
                 "Scheduler limits and recorded jobs are observations, not free hardware capacity or a reservation."
@@ -736,6 +840,21 @@ mod tests {
     #[test]
     fn command_parser_bounds_wait() {
         assert!(Cli::try_parse_from(["sparkdev", "wait", "abc", "--timeout", "61"]).is_err())
+    }
+    #[test]
+    fn resource_stdin_is_exclusive_bounded_and_object_only() {
+        assert!(Cli::try_parse_from(["sparkdev", "resources", "--stdin"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["sparkdev", "resources", "--stdin", "--file", "policy.json"])
+                .is_err()
+        );
+        assert_eq!(
+            read_resource_input(&b"{\"cpu_total\":16}"[..]).unwrap()["cpu_total"],
+            16
+        );
+        assert!(read_resource_input(&b"[]"[..]).is_err());
+        assert!(read_resource_input(&b"{broken"[..]).is_err());
+        assert!(read_resource_input(&vec![b' '; 65537][..]).is_err());
     }
     #[test]
     fn command_arguments_cannot_start_mcp() {

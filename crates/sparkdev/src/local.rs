@@ -62,13 +62,16 @@ pub fn submit(
         .iter()
         .filter(|j| !terminal(j))
         .count();
-    if running >= 2 {
+    let config = state::config()?;
+    if running >= config.laptop_jobs {
         return Err(AppError::new(
             8,
-            "Laptop concurrency limit reached (2); retry after a job completes",
+            format!(
+                "Laptop concurrency limit reached ({}); retry after a job completes",
+                config.laptop_jobs
+            ),
         ));
     }
-    let config = state::config()?;
     if is_cargo(argv) {
         let gate = config.local_build_gate.as_ref().ok_or_else(|| {
             AppError::new(
@@ -93,7 +96,7 @@ pub fn submit(
     let lease = claim["lease"]
         .as_str()
         .ok_or_else(|| AppError::new(6, "Scheduler omitted laptop lease"))?;
-    let value = json!({"ok":true,"job":id,"state":"queued","placement":"laptop","placement_reason":reason,"project":inv.project,"manifest_id":inv.manifest_id,"root":inv.root,"argv":argv,"client":client,"request_id":request_id,"lease":lease,"created_at":state::now(),"exit_code":null,"cache_hit":false,"cache_reason":"Native toolchain identity is not locked; laptop result reuse is disabled"});
+    let value = json!({"ok":true,"job":id,"state":"queued","placement":"laptop","placement_reason":reason,"project":inv.project,"manifest_id":inv.manifest_id,"root":inv.root,"argv":argv,"client":client,"request_id":request_id,"lease":lease,"created_at":state::now(),"exit_code":null,"cache_hit":false,"cache_reason":"Native toolchain identity is not locked; laptop result reuse is disabled","connection_config":tr.config});
     update(&id, &value)?;
     if spawn_worker(&id).is_err() {
         let _ = tr.rpc(json!({"v":1,"op":"release","lease":lease}));
@@ -166,11 +169,20 @@ fn spawn_worker(job: &str) -> Result<()> {
 }
 fn public(mut value: Value) -> Result<Value> {
     if let Some(map) = value.as_object_mut() {
-        for key in ["lease", "root", "argv"] {
+        for key in ["lease", "root", "argv", "connection_config"] {
             map.remove(key);
         }
     }
     Ok(value)
+}
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+    #[test]
+    fn worker_connection_snapshot_is_not_exposed_in_public_receipts() {
+        let value = public(json!({"job":"laptop-fixture","lease":"private-lease","root":"private-worktree","argv":["private-command"],"connection_config":{"ssh_alias":"private-host","connection_enabled":true}})).unwrap();
+        assert_eq!(value, json!({"job":"laptop-fixture"}));
+    }
 }
 pub fn status() -> Result<Value> {
     let root = state::root()?.join("jobs");
@@ -259,7 +271,14 @@ fn worker_inner(job: &str) -> Result<()> {
     if value["state"] != "queued" {
         return Ok(());
     }
-    let config = state::config()?;
+    // The accepted lease owns this transport snapshot. A later owner disconnect
+    // prevents new submissions without killing an admitted native workload.
+    let config: state::Config = if let Some(snapshot) = value.get("connection_config") {
+        serde_json::from_value(snapshot.clone())?
+    } else {
+        state::config()?
+    };
+    state::validate_config(&config)?;
     let root = PathBuf::from(
         value["root"]
             .as_str()
@@ -276,7 +295,7 @@ fn worker_inner(job: &str) -> Result<()> {
             "Laptop source changed after submission; refusing stale job",
         ));
     }
-    let mut tr = transport::Transport::new()?;
+    let mut tr = transport::Transport::from_config(config.clone());
     tr.rpc(json!({"v":1,"op":"heartbeat","lease":lease,"state":"running","ttl":60}))?;
     let mut command = if is_cargo(&argv) {
         let mut command = Command::new("python");

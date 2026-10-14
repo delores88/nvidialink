@@ -33,6 +33,7 @@ MAX_LOG = 256 * CHUNK
 CPUS = 4
 MEMORY_GB = 8
 HEADROOM_GB = 32
+RESOURCE_FIELDS = ("cpu_per_job", "memory_gb_per_job", "cpu_total", "memory_gb_total", "client_jobs", "client_cpu", "headroom_gb")
 CLIENTS = ("claude", "codex", "human")
 ACTIVE = ("queued", "starting", "running")
 TERMINAL = ("succeeded", "failed", "cancelled")
@@ -138,6 +139,33 @@ def available_gb():
     return 0  # Admission must fail closed on an unsupported host.
 
 
+def hardware_capacity():
+    memory = 0
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                memory = int(line.split()[1]) // 1024**2
+    except (OSError, ValueError):
+        pass
+    return {"cpu_count": os.cpu_count() or 0, "memory_gb": memory}
+
+
+def validate_resources(value, hardware):
+    fields(value, RESOURCE_FIELDS)
+    cpus = integer(hardware["cpu_count"], 1, 65536)
+    memory = integer(hardware["memory_gb"], 2, 1048576)
+    for name in ("cpu_per_job", "cpu_total", "client_cpu"):
+        integer(value[name], 1, cpus)
+    for name in ("memory_gb_per_job", "memory_gb_total", "headroom_gb"):
+        integer(value[name], 1, memory)
+    integer(value["client_jobs"], 1, 64)
+    if not value["cpu_per_job"] <= value["client_cpu"] <= value["cpu_total"]:
+        reject("invalid_resource_policy", "Per-job CPU must not exceed client CPU, and client CPU must not exceed total CPU")
+    if value["memory_gb_per_job"] > value["memory_gb_total"] or value["memory_gb_total"] + value["headroom_gb"] > memory:
+        reject("invalid_resource_policy", "Per-job memory must fit total memory; total memory plus headroom must fit detected hardware")
+    return dict(value)
+
+
 class Docker:
     def call(self, args, timeout=30):
         result = subprocess.run(["docker", *args], capture_output=True, timeout=timeout, check=False)
@@ -165,7 +193,7 @@ class Docker:
 
 
 class Controller:
-    def __init__(self, root=None, docker=None, memory_probe=None):
+    def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None):
         self.root = Path(root or os.environ.get("SPARKDEV_STATE", Path.home() / "sparkdev/state")).absolute()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.root.is_symlink():
@@ -207,8 +235,38 @@ class Controller:
             self.db.execute("ALTER TABLE jobs ADD COLUMN proxy_cleaned INTEGER NOT NULL DEFAULT 0")
         if "scratch_mb" not in columns:
             self.db.execute("ALTER TABLE jobs ADD COLUMN scratch_mb INTEGER NOT NULL DEFAULT 512")
+        if "headroom_gb" not in columns:
+            self.db.execute("ALTER TABLE jobs ADD COLUMN headroom_gb INTEGER NOT NULL DEFAULT 32")
         self.docker = docker or Docker()
         self.memory_probe = memory_probe or available_gb
+        self.hardware_probe = hardware_probe or hardware_capacity
+
+    def resource_policy(self):
+        hardware = self.hardware_probe()
+        cpus = integer(hardware["cpu_count"], 1, 65536)
+        memory = integer(hardware["memory_gb"], 2, 1048576)
+        stored = self.db.execute("SELECT value FROM settings WHERE key='resource_policy'").fetchone()
+        if stored:
+            limits = validate_resources(json.loads(stored[0]), hardware)
+        else:
+            headroom = min(HEADROOM_GB, max(1, memory // 2))
+            total_memory = min(64, memory - headroom)
+            total_cpu = min(16, cpus)
+            limits = validate_resources({"cpu_per_job": min(CPUS, total_cpu), "memory_gb_per_job": min(MEMORY_GB, total_memory),
+                                         "cpu_total": total_cpu, "memory_gb_total": total_memory, "client_jobs": 2,
+                                         "client_cpu": min(8, total_cpu), "headroom_gb": headroom}, hardware)
+        return {"limits": limits, "hardware": hardware, "policy_saved": bool(stored),
+                "applies_to": "new_jobs_and_admissions", "running_jobs_unchanged": True,
+                "legacy_project_overrides": "clamped_to_per_job_caps" if stored else "preserved"}
+
+    def resources(self, request):
+        fields(request, ("v", "op"), ("limits",))
+        if "limits" in request:
+            limits = validate_resources(request["limits"], self.hardware_probe())
+            with self.transaction():
+                self.db.execute("INSERT OR REPLACE INTO settings VALUES('resource_policy',?)", (canonical(limits).decode(),))
+                self.audit("resource_policy_updated", limits=limits)
+        return self.resource_policy()
 
     @contextlib.contextmanager
     def transaction(self):
@@ -393,7 +451,7 @@ class Controller:
                 "where": "spark", "state": row["state"], "exit_code": row["exit_code"],
                 "created_at": row["created"], "started_at": row["started"], "finished_at": row["finished"],
                 "cancel_requested": bool(row["cancel"]), "cache_hit": row["cached_from"] is not None,
-                "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"], "scratch_mb": row["scratch_mb"]}
+                "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"], "scratch_mb": row["scratch_mb"], "headroom_gb": row["headroom_gb"]}
 
     def claim_conflict(self, project):
         remote = self.db.execute("SELECT id FROM jobs WHERE project=? AND state IN ('queued','starting','running')", (project,)).fetchone()
@@ -432,7 +490,9 @@ class Controller:
             if self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= MAX_JOBS:
                 reject("capacity", "Retained job capacity reached; owner must archive receipts")
             worker = Path(__file__).with_name("worker.py").read_bytes()
-            cpu, memory, scratch_mb = CPUS, MEMORY_GB, 512
+            owner_policy = self.resource_policy()
+            limits = owner_policy["limits"]
+            cpu, memory, scratch_mb = limits["cpu_per_job"], limits["memory_gb_per_job"], 512
             profile = self.root.parent / "limits.json"
             if profile.exists() and request["op"] != "prepare":
                 if profile.is_symlink() or (os.name == "posix" and (profile.stat().st_uid != os.getuid() or profile.stat().st_mode & 0o022)):
@@ -441,12 +501,18 @@ class Controller:
                 fields(policy, ("v", "projects"))
                 if policy["v"] != 1 or not isinstance(policy["projects"], dict):
                     reject("invalid_request", "Invalid owner resource policy")
-                limits = policy["projects"].get(project)
-                if limits:
-                    fields(limits, ("cpu", "memory_gb"), ("scratch_mb",))
-                    cpu = integer(limits["cpu"], 1, 8)
-                    memory = integer(limits["memory_gb"], 1, 32)
-                    scratch_mb = integer(limits.get("scratch_mb", 512), 128, min(4096, memory * 512))
+                project_limits = policy["projects"].get(project)
+                if project_limits:
+                    fields(project_limits, ("cpu", "memory_gb"), ("scratch_mb",))
+                    cpu = integer(project_limits["cpu"], 1, owner_policy["hardware"]["cpu_count"])
+                    memory = integer(project_limits["memory_gb"], 1, owner_policy["hardware"]["memory_gb"])
+                    scratch_mb = integer(project_limits.get("scratch_mb", 512), 128, min(4096, memory * 512))
+                    if owner_policy["policy_saved"]:
+                        cpu, memory = min(cpu, limits["cpu_per_job"]), min(memory, limits["memory_gb_per_job"])
+                        scratch_mb = min(scratch_mb, memory * 512)
+            overhead_cpu, overhead_memory = (0.25, 0.125) if request["op"] == "prepare" else (0, 0)
+            if cpu + overhead_cpu > limits["client_cpu"] or cpu + overhead_cpu > limits["cpu_total"] or memory + overhead_memory > limits["memory_gb_total"]:
+                reject("resource_policy_exceeded", "Job and preparation proxy must fit owner total and client caps; adjust resources before submitting")
             cache_key = sha(canonical({"project": project, "manifest": manifest_id, "argv": args,
                                       "runtime": runtime, "worker": sha(worker), "policy": 1,
                                       "cpu": cpu, "memory": memory, "scratch_mb": scratch_mb}))
@@ -469,7 +535,7 @@ class Controller:
                              cache_key, cached[0] if cached else None))
             if request["op"] == "prepare":
                 self.db.execute("UPDATE jobs SET proxy_image=? WHERE id=?", (registry["python"]["image"], job))
-            self.db.execute("UPDATE jobs SET cpu=?,memory=?,scratch_mb=? WHERE id=?", (cpu, memory, scratch_mb, job))
+            self.db.execute("UPDATE jobs SET cpu=?,memory=?,scratch_mb=?,headroom_gb=? WHERE id=?", (cpu, memory, scratch_mb, limits["headroom_gb"], job))
             self.audit("job_cached" if cached else "job_queued", job, client, cache_key=cache_key, cached_from=cached[0] if cached else None)
         return self.job_status(self.get_job(job))
 
@@ -617,7 +683,11 @@ class Controller:
         fields(request, ("v", "op"), ("all",))
         if "all" in request and type(request["all"]) is not bool:
             reject("invalid_request", "all must be boolean")
+        policy = self.resource_policy()
         jobs = [self.job_status(r) for r in self.db.execute("SELECT * FROM jobs ORDER BY created DESC LIMIT 200")]
+        for job in jobs:
+            if job["state"] == "queued" and policy["policy_saved"] and (job["cpu"] > policy["limits"]["cpu_per_job"] or job["memory_gb"] > policy["limits"]["memory_gb_per_job"]):
+                job["admission_blocked"] = "Saved per-job caps are below this existing job's immutable allocation; raise caps or cancel and resubmit"
         for row in self.db.execute("SELECT * FROM leases ORDER BY created DESC LIMIT 200"):
             jobs.append({"job": row["job"] or row["id"], "project": row["project"], "client": row["client"], "where": "laptop",
                          "state": "lease_lost" if row["state"] == "running" and row["expires"] < time.time() else row["state"],
@@ -625,8 +695,7 @@ class Controller:
         last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()
         return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(self.registry()),
                 "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": bool(last and time.time() - float(last[0]) < 15)},
-                "limits": {"cpu_per_job": CPUS, "memory_gb_per_job": MEMORY_GB, "cpu_total": 16, "memory_gb_total": 64,
-                           "client_jobs": 2, "client_cpu": 8, "headroom_gb": HEADROOM_GB}, "dependency_preparation": "isolated_allowlist_proxy"}
+                **policy, "dependency_preparation": "isolated_allowlist_proxy"}
 
     def doctor(self, request):
         fields(request, ("v", "op"))
@@ -645,7 +714,7 @@ class Controller:
             if not isinstance(request, dict) or type(request.get("v")) is not int or request["v"] != 1:
                 reject("version_unsupported", "Protocol version 1 is required")
             op = request.get("op")
-            if op not in {"put", "put_many", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release"}:
+            if op not in {"put", "put_many", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources"}:
                 reject("unknown_operation", "Unsupported operation")
             return {"ok": True, **getattr(self, op)(request)}
         except Rejected as error:
@@ -789,7 +858,7 @@ class Controller:
                     reject("docker_unavailable", "Created container cannot be inspected")
             self.container_matches(info, row)
             state = info["State"]["Status"]
-            if row["cancel"] or (row["runtime"] == "cuda" and self.memory_probe() < HEADROOM_GB):
+            if row["cancel"] or (row["runtime"] == "cuda" and self.memory_probe() < row["headroom_gb"]):
                 if state in ("running", "restarting", "paused"):
                     self.docker.call(["stop", "--time", "5", name], timeout=15)
                 self.finish(row, "cancelled" if row["cancel"] else "failed", 130 if row["cancel"] else 137,
@@ -816,6 +885,8 @@ class Controller:
         for row in self.db.execute("SELECT * FROM jobs WHERE state IN ('succeeded','failed','cancelled') AND proxy_image IS NOT NULL AND proxy_cleaned=0").fetchall():
             self.cleanup_proxy(row)
         with self.transaction():
+            policy = self.resource_policy()
+            limits = policy["limits"]
             self.db.execute("INSERT OR REPLACE INTO settings VALUES('scheduler_heartbeat',?)", (str(time.time()),))
             active = self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running')").fetchall()
             cpu = lambda r: r["cpu"] + (0.25 if r["proxy_image"] else 0)
@@ -828,9 +899,11 @@ class Controller:
                 row = self.db.execute("SELECT * FROM jobs WHERE client=? AND state='queued' AND cancel=0 ORDER BY created LIMIT 1", (client,)).fetchone()
                 if not row:
                     continue
-                if len(mine) >= 2 or sum(cpu(r) for r in mine) + cpu(row) > 8:
+                if len(mine) >= limits["client_jobs"] or sum(cpu(r) for r in mine) + cpu(row) > limits["client_cpu"]:
                     continue
-                if used_cpu + cpu(row) > 16 or used_mem + memory(row) > 64 or self.memory_probe() - used_mem - memory(row) < HEADROOM_GB:
+                if policy["policy_saved"] and (row["cpu"] > limits["cpu_per_job"] or row["memory"] > limits["memory_gb_per_job"]):
+                    continue
+                if used_cpu + cpu(row) > limits["cpu_total"] or used_mem + memory(row) > limits["memory_gb_total"] or self.memory_probe() - used_mem - memory(row) < limits["headroom_gb"]:
                     continue
                 self.db.execute("UPDATE jobs SET state='starting' WHERE id=?", (row["id"],))
                 self.db.execute("INSERT OR REPLACE INTO settings VALUES('last_client',?)", (client,))

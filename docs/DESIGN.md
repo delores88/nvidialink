@@ -58,3 +58,31 @@ Verified relay clarification from PhaseForge release agent: the shipped option i
 ## Product separation and license
 
 Owner direction: cross-agent questions, delegation and reviews belong to a separate CodaClauda utility, not this implementation. Both may use DGXBridge CLI/MCP job contracts. PhaseForge remains featured; both utilities are non-featured. Both utilities have public repositories/listings and MIT first-party source. Ben's explicit license direction applies to his reused first-party code in these projects, with attribution and provenance; third-party licenses are preserved. No PhaseForge files or licensing are changed.
+
+## 0.2.0 owner-requested desktop release (2026-10-14)
+
+This supersedes the beta's Marketplace-only/manual-update restriction. The owner requests one new release with an integrated Marketplace updater, configurable compute limits, connection modes and controls, PhaseForge connection visuals, and copyable agent prompts. The first installation must be run by ordinary Windows Explorer, outside Codex package virtualization. Preserve the existing owner configuration, pairing identity, logs and projects. Do not overwrite earlier releases or alter PhaseForge.
+
+### Connection lifecycle
+
+Persist `connection_mode` as `lan-only`, `remote-only`, or `both`, and `connection_enabled`. Migrate absent fields from the old `allow_remote` flag and connected default. LAN-only uses strict pinned SSH; Remote-only skips SSH and requires the existing authenticated paired transport; Both tries LAN first and falls back only on reachability failure, never host-key/authentication rejection. A paired route does not establish whether traffic is direct or relayed. Report observed routing and unavailability honestly.
+
+Connect enables the saved route and checks it. Disconnect prevents new requests and admissions without deleting credentials/pairing or cancelling jobs. Already admitted independent jobs continue; an existing laptop worker retains its admitted transport snapshot for lease heartbeats. Fresh CLI/MCP processes honor the saved disconnected state. Configuration remains editable while disconnected; SSH bootstrap is a separate deliberate operation, not a prerequisite to every Connect click.
+
+### Resource controls
+
+The resource pane exposes Spark per-job cores/memory, total CPU/memory, memory headroom, and per-client job/CPU quotas. The authenticated controller owns and persists the effective policy; clients read it back after saving. Detect physical CPU/memory bounds and validate all relationships. Defaults are starting values, not hidden immutable caps. Updated policy controls new requests/admissions; never kill running jobs to enforce a lower cap. Existing job resource snapshots remain inspectable. Disclose legacy project overrides and make explicitly saved per-job caps authoritative for subsequent jobs.
+
+Laptop controls must reflect actual enforcement. Native Windows process trees require Job Object CPU/memory limits and controlled process launch; do not present a working memory/core cap when only scheduling or compiler parallelism is limited. Keep the unchanged local Cargo build gate. Separate laptop quotas from Docker/Spark policy and document platform limitations where enforcement is unavailable.
+
+### Desktop and agent instructions
+
+Reuse the actual PhaseForge `SparkLinkVisuals` topology and `sparkLinkParticles` renderer, separately from its QR animation, pinned with provenance. Show laptop, Spark, route, connected/disconnected/connecting/error states with accessible reduced-motion and hidden/offscreen handling. Retain job pagination. Group connection mode, saved SSH references, pairing, and independent bootstrap clearly; provide resource and update panes without a compressed layout.
+
+Generate separate Claude Code and Codex copyable prompts and MCP snippets using the installed executable path, saved nonsecret alias/address/known-host alias/user/key-file reference, selected mode, current observed route and effective limits. Never include key contents, credentials, pairing tickets/codes or auth tokens. Label unknown/unavailable observations rather than inventing network facts. Include the stable request-ID, detach/wait/logs workflow and actual client label. The updater belongs in the navigation drawer, matching PhaseForge. Share the reviewed updater contract and implementation with ClaudaCoda, with separate product identities and release ownership; both utilities remain nonfeatured.
+
+### Marketplace updater
+
+Trace PhaseForge's shipped discovery, owner approval, download/revalidation and installer handoff. Adapt the current Marketplace native-update authorization contract (`docs/NATIVE-UPDATE-AUTHORIZATION.md`, schema 7) for Tauri rather than copying Electron cookie/session behavior blindly. Use the app's exact accepted stable artifact and S256 proof; browser owner approval; proof-bound poll/download/revalidate; distinct trusted acquisition and review authority maps; exact app/platform/version/source/hash/size/preservation checks. Fail closed on stale/revoked/untrusted/mismatched metadata and never substitute public GitHub downloads for an authorized update. Installation is an explicit user action and preserves app state. No secrets in receipts or frontend diagnostics.
+
+The updater's eligible channel requires a stable release, so target version 0.2.0, preserving honest feature/verification limitations. Verify source tests, real Spark policy/routing, installed Windows controls and the actual updater authorization/download lifecycle separately. Marketplace admission and a displayed update button are not update-installation acceptance. Publish immutable artifacts, submit the manifest through the normal flow, then install the first updater-capable version from normal Explorer and verify the physical owner install and shortcuts.

@@ -50,6 +50,7 @@ async fn run() -> Result<()> {
         ),
         "pair" | "pair-start" => client::pair(input()?).await,
         "rpc" => output(client::rpc(input()?).await?),
+        "pairing-info" => output(client::pairing_info()?),
         "status" | "pair-status" => output(client::status().await?),
         _ => anyhow::bail!("usage: sparkdev-link serve|owner-ticket|identity|pair|rpc|status"),
     }

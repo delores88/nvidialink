@@ -67,11 +67,12 @@ images are only pulled/built during explicit owner provisioning, never job submi
 | `sync` | `project,manifest` | `manifest_id,files,bytes,project` |
 | `run` | `project,manifest_id,argv,runtime,client,request_id,no_cache?` | job receipt |
 | `prepare` | `project,manifest_id,runtime,client,request_id` | dependency job receipt |
-| `wait` | `job,timeout?` (0–60 seconds) | current job receipt |
+| `wait` | `job,timeout?` (0â€“60 seconds) | current job receipt |
 | `logs` | `job,since,limit?` (1 MiB maximum) | base64 `data`, display `text`, `next_offset`, receipt |
 | `cancel` | `job` | durable cancellation receipt |
 | `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, limits, runtimes |
 | `doctor` | none | status plus SQLite, Docker, Linux and memory checks |
+| `resources` | `limits?` (complete owner policy) | effective policy, hardware bounds, persistence and application timing |
 | `claim` | `project,client,request_id,job?,ttl?` | laptop `lease,job,expires_at` |
 | `heartbeat` | `lease,job?,ttl?,state?,exit_code?,data?,since?` | renewed lease and next log offset |
 | `release` | `lease` | terminal laptop claim |
@@ -99,9 +100,9 @@ time-dependent commands should use this bypass. No artifact export is inferred.
 
 ## Isolation, fairness and dependency access
 
-Default jobs use 4 CPUs and 8 GiB, with at most 16 CPUs / 64 GiB admitted total,
+Initial default jobs use 4 CPUs and 8 GiB, with at most 16 CPUs / 64 GiB admitted total,
 two jobs / eight CPUs per client, and at least 32 GiB reserved memory headroom.
-Admission conservatively includes all reserved job memory. Preparation proxy overhead
+These defaults are hardware-bounded. The authenticated `resources` operation saves a complete validated policy in controller SQLite. It exposes per-job CPU/memory, total CPU/memory, per-client jobs/CPU and headroom. New requests and admissions use it; running jobs retain their recorded allocations and GPU headroom. Admission conservatively includes all reserved job memory. Preparation proxy overhead
 also counts against quotas. The scheduler rotates FIFO admission between `claude`,
 `codex`, and `human`; these labels are attribution, not proof which agent ran a job.
 Each worktree has one active execution claim. Stale laptop claims remain blocking
@@ -110,12 +111,11 @@ prove that a workload stopped exactly when a lease expired.
 
 An owner-local, protected `~/sparkdev/limits.json` can grant a named worktree up to
 8 CPUs / 32 GiB without changing defaults or global/client quotas. Its schema is
-`{"v":1,"projects":{"PROJECT_SHA256":{"cpu":8,"memory_gb":32,"scratch_mb":4096}}}`. Callers cannot
-change it through RPC. The admission record, cache key, Docker limits and thread
+`{"v":1,"projects":{"PROJECT_SHA256":{"cpu":8,"memory_gb":32,"scratch_mb":4096}}}`. That legacy file is not edited by RPC. Once the owner saves the new resource policy, its per-job caps also clamp these legacy grants. The admission record, cache key, Docker limits and thread
 environment all use the same resolved grant. Dependency preparation keeps its
 conservative default limits. Owner configuration must never be committed.
 Optional `scratch_mb` changes the job's `/tmp` tmpfs from its 512 MiB default;
-the grant must be 128–4096 MiB and no more than half the job memory limit. Tmpfs
+the grant must be 128â€“4096 MiB and no more than half the job memory limit. Tmpfs
 usage counts against that same memory limit. The resolved scratch limit is recorded
 with the job, included in cache identity, and cannot be changed for existing jobs.
 

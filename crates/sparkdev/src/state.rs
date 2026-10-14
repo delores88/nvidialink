@@ -7,6 +7,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionMode {
+    LanOnly,
+    RemoteOnly,
+    Both,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub ssh_alias: String,
@@ -21,7 +29,58 @@ pub struct Config {
     #[serde(default)]
     pub allow_remote: bool,
     #[serde(default)]
+    pub connection_mode: Option<ConnectionMode>,
+    #[serde(default = "default_enabled")]
+    pub connection_enabled: bool,
+    #[serde(default = "default_laptop_jobs")]
+    pub laptop_jobs: usize,
+    #[serde(default)]
     pub local_build_gate: Option<PathBuf>,
+}
+fn default_enabled() -> bool {
+    true
+}
+fn default_laptop_jobs() -> usize {
+    2
+}
+impl Config {
+    pub fn mode(&self) -> ConnectionMode {
+        self.connection_mode.unwrap_or(if self.allow_remote {
+            ConnectionMode::Both
+        } else {
+            ConnectionMode::LanOnly
+        })
+    }
+    pub fn allows_lan(&self) -> bool {
+        self.mode() != ConnectionMode::RemoteOnly
+    }
+    pub fn allows_remote(&self) -> bool {
+        self.mode() != ConnectionMode::LanOnly
+    }
+    pub fn connection_info(&self) -> Value {
+        serde_json::json!({"mode":self.mode(),"enabled":self.connection_enabled,"remote_allowed":self.allows_remote()})
+    }
+    pub fn laptop_info(&self) -> Value {
+        serde_json::json!({"concurrency_limit":self.laptop_jobs,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"cpu_memory_caps_enforced":false})
+    }
+}
+
+/// Serialize config updates under one owner-local lock so route changes cannot
+/// overwrite SSH edits made by another CLI or desktop process.
+pub fn update_config(change: impl FnOnce(&mut Config)) -> Result<Config> {
+    let directory = root()?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(directory.join("config.lock"))?;
+    fs2::FileExt::lock_exclusive(&lock)?;
+    let mut result = config()?;
+    change(&mut result);
+    validate_config(&result)?;
+    atomic_json(&directory.join("config.json"), &result)?;
+    Ok(result)
 }
 fn default_port() -> u16 {
     22
@@ -38,20 +97,6 @@ pub fn root() -> Result<PathBuf> {
         .join(".local/state/sparkdev")
     };
     fs::create_dir_all(&path)?;
-    #[cfg(windows)]
-    if std::env::var_os("SPARKDEV_HOME").is_none() && !path.join("config.json").exists() {
-        if let Some(previous) = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .map(|p| p.join("SparkDevBridge/config.json"))
-        {
-            if previous != path.join("config.json") && previous.is_file() {
-                let bytes = fs::read(previous)?;
-                let config: Config = serde_json::from_slice(&bytes)?;
-                validate_config(&config)?;
-                atomic_json(&path.join("config.json"), &config)?;
-            }
-        }
-    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -66,7 +111,8 @@ fn windows_local_data() -> Result<PathBuf> {
         UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
     };
     let mut raw = std::ptr::null_mut();
-    // KF_FLAG_NO_PACKAGE_REDIRECTION keeps state identical in packaged Codex and Explorer.
+    // This asks for the owner folder's logical path. Packaged callers can still
+    // have their filesystem I/O redirected; diagnostics reports the actual path.
     let hr = unsafe {
         SHGetKnownFolderPath(
             &FOLDERID_LocalAppData,
@@ -106,7 +152,90 @@ pub fn config() -> Result<Config> {
     validate_config(&result)?;
     Ok(result)
 }
+pub fn diagnostics() -> Value {
+    let configured = match root() {
+        Ok(path) => path,
+        Err(_) => {
+            return serde_json::json!({"configured_state_root":null,"resolved_state_root":null,"packaged_context":null,"redirected":null});
+        }
+    };
+    let (resolved, packaged) = physical_context(&configured);
+    let normalize = |path: &Path| {
+        let text = path.to_string_lossy().replace('/', "\\");
+        let text = text
+            .strip_prefix("\\\\?\\UNC\\")
+            .map(|s| format!("\\\\{s}"))
+            .unwrap_or_else(|| text.strip_prefix("\\\\?\\").unwrap_or(&text).to_owned());
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text
+        }
+    };
+    let redirected = resolved
+        .as_ref()
+        .map(|path| normalize(path) != normalize(&configured));
+    serde_json::json!({"configured_state_root":configured,"resolved_state_root":resolved,"packaged_context":packaged,"redirected":redirected})
+}
+#[cfg(windows)]
+fn physical_context(path: &Path) -> (Option<PathBuf>, Option<bool>) {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFinalPathNameByHandleW(
+            handle: *mut std::ffi::c_void,
+            buffer: *mut u16,
+            size: u32,
+            flags: u32,
+        ) -> u32;
+        fn GetCurrentPackageFullName(length: *mut u32, name: *mut u16) -> i32;
+    }
+    let mut length = 0u32;
+    let package_result = unsafe { GetCurrentPackageFullName(&mut length, std::ptr::null_mut()) };
+    let packaged = match package_result {
+        15700 => Some(false),
+        0 | 122 => Some(true),
+        _ => None,
+    };
+    let resolved = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(0x02000000)
+        .open(path)
+        .ok()
+        .and_then(|file| {
+            let mut buffer = vec![0u16; 32768];
+            let size = unsafe {
+                GetFinalPathNameByHandleW(
+                    file.as_raw_handle(),
+                    buffer.as_mut_ptr(),
+                    buffer.len() as u32,
+                    0,
+                )
+            } as usize;
+            if size > 0 && size < buffer.len() {
+                Some(PathBuf::from(String::from_utf16_lossy(&buffer[..size])))
+            } else {
+                None
+            }
+        });
+    (resolved, packaged)
+}
+#[cfg(not(windows))]
+fn physical_context(path: &Path) -> (Option<PathBuf>, Option<bool>) {
+    (fs::canonicalize(path).ok(), Some(false))
+}
 pub fn validate_config(config: &Config) -> Result<()> {
+    let maximum = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .max(2)
+        .min(64);
+    if config.laptop_jobs == 0 || config.laptop_jobs > maximum {
+        return Err(AppError::new(
+            2,
+            format!("Laptop concurrency must be between 1 and {maximum}"),
+        ));
+    }
     for value in std::iter::once(&config.ssh_alias)
         .chain(config.hosts.iter())
         .chain(std::iter::once(&config.host_key_alias))
@@ -205,4 +334,37 @@ pub fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn legacy(remote: bool) -> Config {
+        serde_json::from_value(serde_json::json!({"ssh_alias":"spark","hosts":["192.0.2.1"],"host_key_alias":"spark-pin","allow_remote":remote})).unwrap()
+    }
+    #[test]
+    fn legacy_connection_settings_migrate_without_losing_references() {
+        let mut config = legacy(true);
+        assert_eq!(config.mode(), ConnectionMode::Both);
+        assert!(config.connection_enabled);
+        assert_eq!(config.laptop_jobs, 2);
+        assert_eq!(legacy(false).mode(), ConnectionMode::LanOnly);
+        config.connection_mode = Some(ConnectionMode::RemoteOnly);
+        config.connection_enabled = false;
+        let restored: Config =
+            serde_json::from_slice(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(restored.mode(), ConnectionMode::RemoteOnly);
+        assert!(!restored.connection_enabled);
+        assert_eq!(restored.host_key_alias, "spark-pin");
+        assert_eq!(restored.hosts, vec!["192.0.2.1"]);
+    }
+    #[test]
+    fn connection_mode_and_laptop_limits_reject_invalid_configuration() {
+        let mut config = legacy(false);
+        config.laptop_jobs = 0;
+        assert!(validate_config(&config).is_err());
+        config.laptop_jobs = 65;
+        assert!(validate_config(&config).is_err());
+        assert!(serde_json::from_value::<Config>(serde_json::json!({"ssh_alias":"spark","hosts":[],"host_key_alias":"pin","connection_mode":"insecure"})).is_err());
+    }
 }

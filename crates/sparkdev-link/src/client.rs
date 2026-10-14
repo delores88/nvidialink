@@ -11,6 +11,16 @@ use spark_link_proto::{
 };
 use std::time::Duration;
 
+/// Local pairing evidence only: no endpoint, identity creation or network probe.
+pub fn pairing_info() -> Result<Value> {
+    let dir = storage::client_dir()?;
+    if !dir.join("peer.json").exists() {
+        return Ok(json!({"ok":true,"linked":false,"reachable":null,"probed":false}));
+    }
+    let _: Peer = storage::read(&dir, "peer.json")?;
+    Ok(json!({"ok":true,"linked":true,"reachable":null,"probed":false}))
+}
+
 pub async fn status() -> Result<Value> {
     let dir = storage::client_dir()?;
     if !dir.join("peer.json").exists() {

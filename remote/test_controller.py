@@ -57,7 +57,7 @@ class ControllerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "state"
         self.docker = FakeDocker()
-        self.c = Controller(self.root, self.docker, lambda: 120)
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120})
         (self.root.parent / "runtimes.json").write_text(json.dumps({"v": 1, "runtimes": {"python": {"image": IMAGE, "provenance": "test fixture"}}}))
 
     def tearDown(self):
@@ -150,7 +150,7 @@ class ControllerTests(unittest.TestCase):
         self.c.tick()
         self.assertEqual(self.c.get_job(first["job"])["state"], "running")
         self.c.db.close()
-        self.c = Controller(self.root, self.docker, lambda: 120)
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120})
         self.c.tick()
         self.assertEqual(sum(call[0] == "create" for call in self.docker.calls), 1)
         self.assertEqual(sum(call[0] == "start" for call in self.docker.calls), 1)
@@ -240,6 +240,63 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.c.get_job(first["job"])["state"], "queued")
         self.assertFalse(self.docker.calls)
 
+    def test_resource_policy_is_hardware_bounded_and_persists(self):
+        initial = self.rpc("resources")
+        self.assertFalse(initial["policy_saved"])
+        self.assertEqual(initial["limits"]["headroom_gb"], 32)
+        limits = {**initial["limits"], "cpu_per_job": 6, "memory_gb_per_job": 12,
+                  "cpu_total": 18, "memory_gb_total": 80, "client_jobs": 3, "client_cpu": 12, "headroom_gb": 24}
+        saved = self.rpc("resources", limits=limits)
+        self.assertEqual(saved["limits"], limits)
+        self.assertTrue(saved["policy_saved"])
+        self.c.db.close()
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120})
+        self.assertEqual(self.rpc("status")["limits"], limits)
+        for key, value in (("cpu_per_job", 21), ("cpu_per_job", 13), ("client_cpu", 19),
+                           ("cpu_total", 0), ("memory_gb_total", 100), ("memory_gb_per_job", 81),
+                           ("headroom_gb", 0), ("client_jobs", 65), ("client_jobs", True)):
+            bad = self.c.rpc({"v": 1, "op": "resources", "limits": {**limits, key: value}})
+            self.assertFalse(bad["ok"], (key, value))
+            self.assertEqual(self.rpc("resources")["limits"], limits)
+        self.assertFalse(self.c.rpc({"v": 1, "op": "resources", "limits": {**limits, "arbitrary": 1}})["ok"])
+
+    def test_lower_caps_preserve_existing_jobs_and_block_new_admission(self):
+        first, _ = self.run_job()
+        self.c.tick()
+        queued, _ = self.run_job(project=sha(b"queued"), request_id="queued")
+        limits = self.rpc("resources")["limits"]
+        limits.update(cpu_per_job=2, cpu_total=2, client_cpu=2, memory_gb_per_job=4,
+                      memory_gb_total=16, headroom_gb=40, client_jobs=1)
+        self.rpc("resources", limits=limits)
+        self.c.tick()
+        self.assertEqual(self.c.get_job(first["job"])["state"], "running")
+        self.assertEqual(self.c.get_job(first["job"])["cpu"], 4)
+        self.assertEqual(self.c.get_job(first["job"])["headroom_gb"], 32)
+        self.assertFalse(any(call[0] == "stop" for call in self.docker.calls))
+        self.assertEqual(self.c.get_job(queued["job"])["state"], "queued")
+        self.assertIn("admission_blocked", next(j for j in self.rpc("status")["jobs"] if j["job"] == queued["job"]))
+        new, _ = self.run_job(project=sha(b"new"), request_id="new")
+        self.assertEqual((new["cpu"], new["memory_gb"], new["headroom_gb"]), (2, 4, 40))
+
+    def test_explicit_policy_clamps_legacy_project_allocations(self):
+        (self.root.parent / "limits.json").write_text(json.dumps({"v": 1, "projects": {PROJECT: {"cpu": 8, "memory_gb": 32, "scratch_mb": 4096}}}))
+        limits = self.rpc("resources")["limits"]
+        self.rpc("resources", limits=limits)
+        job, _ = self.run_job()
+        self.assertEqual((job["cpu"], job["memory_gb"]), (4, 8))
+        self.assertEqual(self.rpc("resources")["legacy_project_overrides"], "clamped_to_per_job_caps")
+
+    def test_small_hardware_defaults_and_preparation_overhead_fail_closed(self):
+        self.c.hardware_probe = lambda: {"cpu_count": 2, "memory_gb": 4}
+        policy = self.rpc("resources")
+        self.assertEqual(policy["limits"]["cpu_total"], 2)
+        self.assertEqual(policy["limits"]["memory_gb_total"] + policy["limits"]["headroom_gb"], 4)
+        mid = self.snapshot()
+        result = self.c.rpc({"v": 1, "op": "prepare", "project": PROJECT, "manifest_id": mid,
+                             "runtime": "python", "client": "codex", "request_id": "small-prepare"})
+        self.assertEqual(result["error"]["code"], "resource_policy_exceeded")
+        self.assertEqual(self.c.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+
     def test_owner_project_limits_are_bounded_and_reflected_in_receipt(self):
         (self.root.parent / "limits.json").write_text(json.dumps({"v": 1, "projects": {PROJECT: {"cpu": 8, "memory_gb": 32, "scratch_mb": 4096}}}))
         first, _ = self.run_job()
@@ -270,6 +327,12 @@ class ControllerTests(unittest.TestCase):
         mid = self.snapshot()
         job = self.rpc("run", project=PROJECT, manifest_id=mid, runtime="cuda", client="codex", request_id="gpu", argv=["python", "main.py"])
         self.c.tick()
+        changed = self.rpc("resources")["limits"]
+        changed["headroom_gb"] = 40
+        self.rpc("resources", limits=changed)
+        self.c.memory_probe = lambda: 36
+        self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["state"], "running")
         self.c.memory_probe = lambda: 31
         self.c.tick()
         row = self.c.get_job(job["job"])
