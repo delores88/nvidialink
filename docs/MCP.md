@@ -1,8 +1,8 @@
 # Native tools for Claude Code and Codex
 
-The installed `sparkdev` CLI is the primary interface. Its `mcp` command exposes devices, plan, prepare, run, wait, logs, status and cancel through the same core over stdio. No TCP listener, token copying or separate model account is required by this server. Each AI product still uses its own existing authentication.
+The installed `sparkdev` CLI is the primary interface. Its `mcp` command exposes connection, resources, devices, plan, prepare, run, wait, logs, status and cancel through the same core over stdio. No TCP listener, token copying or separate model account is required by this server. Each AI product still uses its own existing authentication.
 
-Use the executable path shown by the desktop **Agent setup** screen. On Windows the NSIS install bundles it in the application's `bin` directory. Replace the example below with that exact installed path; do not point production configuration at a development build.
+Use the executable and state paths shown by the desktop **Agent setup** drawer screen. Its copyable prompts and snippets select the verified owner state and explain package redirection. The examples below omit an environment override; add the generated `SPARKDEV_HOME` environment entry when shown. On Windows the NSIS install bundles it in the application's `bin` directory. Replace the example below with that exact installed path; do not point production configuration at a development build.
 
 Claude Code project `.mcp.json`:
 

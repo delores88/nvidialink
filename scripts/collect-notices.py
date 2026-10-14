@@ -1,10 +1,12 @@
 """Collect license texts from the exact Cargo-resolved dependency sources."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'dist/notices'
@@ -13,9 +15,14 @@ SUPPLEMENTS = ROOT / 'vendor/third-party-notices'
 provenance = json.loads((SUPPLEMENTS / 'PROVENANCE.json').read_text(encoding='utf-8'))
 supplements = {item['name']: item for item in provenance['packages']}
 packages = {}
+gate = Path('D:/PhaseForge-claude/scripts/buildlock.py')
+if os.name == 'nt' and not gate.is_file():
+    raise SystemExit('Use the configured local Cargo build gate when collecting Windows dependency metadata.')
+prefix = [sys.executable, '-I', str(gate), '--'] if os.name == 'nt' else []
 for manifest, target in [('Cargo.toml', 'x86_64-pc-windows-msvc'), ('Cargo.toml', 'aarch64-unknown-linux-gnu'), ('src-tauri/Cargo.toml', 'x86_64-pc-windows-msvc')]:
-    result = subprocess.run(['cargo', 'metadata', '--offline', '--locked', '--format-version', '1', '--manifest-path', str(ROOT / manifest), '--filter-platform', target], capture_output=True, check=True)
-    data = json.loads(result.stdout)
+    result = subprocess.run(prefix + ['cargo', 'metadata', '--offline', '--locked', '--format-version', '1', '--manifest-path', str(ROOT / manifest), '--filter-platform', target], capture_output=True, check=True)
+    # The owner's gate writes a bounded status line before Cargo's JSON.
+    data = json.loads(next(line for line in result.stdout.splitlines() if line.startswith(b'{')))
     for package in data['packages']:
         if package.get('source'):
             packages[package['id']] = package

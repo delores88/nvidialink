@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-14T14:23:35.843056+00:00",
+  "version": "0.2.0",
+  "physical_spark_build": {
+    "job": "55bc3f13e3674545b89ffbb0493e76e5",
+    "state": "succeeded",
+    "exit_code": 0,
+    "cpu": 4,
+    "memory_gb": 8,
+    "artifacts": [
+      {
+        "file": "dist/linux-arm64/sparkdev",
+        "sha256": "afe9ee2f966902ec784ce5cb17a2a604e89690536d757c7aca648993e9f371d6",
+        "bytes": 3805224
+      },
+      {
+        "file": "dist/linux-arm64/sparkdev-link",
+        "sha256": "acc2655b782e4934d7e982489dcea0de607c04f6c28e353480733fb2358e22a3",
+        "bytes": 22208976
+      }
+    ],
+    "retrieved_at": 1791987449.7891638
+  },
+  "resource_policy_acceptance": {
+    "kind": "physical_spark_controller_resource_acceptance",
+    "request_id": "codex-020-resources-46fddec42b534f9286fe10f76d98500c",
+    "client": "codex",
+    "transport": "pinned_lan_ssh",
+    "policy": {
+      "cpu_per_job": 4,
+      "memory_gb_per_job": 8,
+      "cpu_total": 8,
+      "memory_gb_total": 16,
+      "client_jobs": 1,
+      "client_cpu": 4,
+      "headroom_gb": 32
+    },
+    "job": "4820a31cbae544be9fde66bd81ab770b",
+    "passed": true,
+    "admission": {
+      "cache_hit": false,
+      "cached_from": null,
+      "cancel_requested": false,
+      "client": "codex",
+      "cpu": 4,
+      "created_at": 1791987618.1351395,
+      "error": null,
+      "exit_code": null,
+      "finished_at": null,
+      "headroom_gb": 32,
+      "job": "4820a31cbae544be9fde66bd81ab770b",
+      "manifest_id": "3ac2d9dafc445bc70eedb10b389949ebd455e58c9c825d05ddda0894f7b383c1",
+      "memory_gb": 8,
+      "ok": true,
+      "project": "f94f1bbfd019d3865c027664d6ff1b9576f771e794c40c7a8f668bef4420e22f",
+      "runtime": "python",
+      "runtime_digest": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+      "scratch_mb": 512,
+      "started_at": null,
+      "state": "queued",
+      "where": "spark"
+    },
+    "final": {
+      "cache_hit": false,
+      "cached_from": null,
+      "cancel_requested": false,
+      "client": "codex",
+      "cpu": 4,
+      "created_at": 1791987618.1351395,
+      "error": null,
+      "exit_code": 0,
+      "finished_at": 1791987619.5341523,
+      "headroom_gb": 32,
+      "job": "4820a31cbae544be9fde66bd81ab770b",
+      "manifest_id": "3ac2d9dafc445bc70eedb10b389949ebd455e58c9c825d05ddda0894f7b383c1",
+      "memory_gb": 8,
+      "ok": true,
+      "project": "f94f1bbfd019d3865c027664d6ff1b9576f771e794c40c7a8f668bef4420e22f",
+      "runtime": "python",
+      "runtime_digest": "sha256:8b3795e98e3fb40b132c22b8a96bb43a96d7b44c9bff5fa031cfb954860e873e",
+      "scratch_mb": 512,
+      "started_at": 1791987618.517503,
+      "state": "succeeded",
+      "where": "spark"
+    },
+    "output": "{\"passed\": true, \"cpu_quota_cores\": 4.0, \"memory_limit_bytes\": 8589934592, \"cargo_build_jobs\": \"4\", \"network_needed\": false}\n",
+    "resource_policy_restored": {
+      "ok": true,
+      "raw_policy_absence_restored": true,
+      "limits": {
+        "cpu_per_job": 4,
+        "memory_gb_per_job": 8,
+        "cpu_total": 16,
+        "memory_gb_total": 64,
+        "client_jobs": 2,
+        "client_cpu": 8,
+        "headroom_gb": 32
+      },
+      "hardware": {
+        "cpu_count": 20,
+        "memory_gb": 119
+      },
+      "policy_saved": false,
+      "applies_to": "new_jobs_and_admissions",
+      "running_jobs_unchanged": true,
+      "legacy_project_overrides": "preserved"
+    }
+  },
+  "scope": "Actual Spark ARM64 release build and Docker resource enforcement through pinned LAN SSH. This is not hotspot, native Windows, or Marketplace acceptance."
+}

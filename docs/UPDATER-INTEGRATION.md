@@ -145,9 +145,8 @@ The source commit will be supplied separately by the release owner.
 | `src-tauri/src/update-review-keys.json` | 85 | `011c1681d43fef3cb7d53d459677236a3f36427b6a107cb93f1235595a980b40` |
 | `docs/UPDATER-PROVENANCE.md` | 4774 | `b01bd0c01850100b22e7bf6fab02e78f0efecfc38653af2f3e3e504dadf266b6` |
 
-The coordinating agent reported 17 desktop tests passing before the final COM
-and lifecycle-glue changes; its final guarded rerun was pending when this
-handoff was written. Tests cover synthetic signatures/bindings/replay,
+All 17 desktop tests passed after the final COM and lifecycle-glue changes,
+through the unchanged owner build gate on 2026-10-14. Tests cover synthetic signatures/bindings/replay,
 proof/expiry handling, a real loopback HTTP transfer, byte tampering, manifest
 privileges/namespaces, paths, NSIS destination and Windows Internet-zone data.
 Synthetic keys are fixtures, never production authority.

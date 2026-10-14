@@ -2,12 +2,12 @@
 
 `scripts/prepare-manifest.py` prepares a release-specific manifest and verification receipt. It does not create a release, upload assets, modify another repository, submit a Marketplace draft or approve admission. Its command line has no validation bypass.
 
-DGXBridge uses `dgxbridge` for both app ID and slug. Its Windows GUI executable is `dgxbridge.exe`, bundle identifier is `com.deloresai.dgxbridge`, and installed application directory is `DGXBridge`. It is a public, free, MIT first-party application with explicit free-use and Marketplace distribution authorization. The release channel is beta; product version, tag and GitHub prerelease state must agree. No `featured` property is emitted. The Marketplace's existing featured-app selection is independent and stays unchanged.
+DGXBridge uses `dgxbridge` for both app ID and slug. Its Windows GUI executable is `dgxbridge.exe`, bundle identifier is `com.deloresai.dgxbridge`, and installed application directory is `DGXBridge`. It is a public, free, MIT first-party application with explicit free-use and Marketplace distribution authorization. Product version, canonical `vVERSION` tag, channel and GitHub prerelease state must agree. Version 0.2.0 uses the stable channel required by the integrated updater; earlier beta releases remain immutable. No `featured` property is emitted. The Marketplace's existing featured-app selection is independent and stays unchanged.
 
 ## Supply actual release inputs
 
 1. Commit the generator, lockfiles, provenance, artwork, source and release documentation before creating the immutable source tag. Produce the final per-user Windows x64 NSIS installer, with GUI, CLI, link sidecar, ARM64 service and notices. Record installer hashes after every resource/signing change. The Windows installer requires preinstalled WebView2 and OpenSSH; its WebView bootstrap mode must remain `skip`.
-2. Obtain the real publisher ID from the signed-in Marketplace publisher workspace. Create the matching GitHub beta release and upload the final NSIS installer. A draft release can be used while assembling its complete assets. Read its real release ID and installer asset ID; never reuse another app's identity or invent numeric IDs.
+2. Obtain the real publisher ID from the signed-in Marketplace publisher workspace. Create the matching GitHub release and upload the final NSIS installer. A draft release can be used while assembling its complete assets. Read its real release ID and installer asset ID; never reuse another app's identity or invent numeric IDs.
 3. Supply a real installed application screenshot without QR tokens, pairing codes, personal addresses, credentials or other private data. Publish it, the icon and thumbnail on approved permanent anonymous HTTPS image URLs. Raw GitHub URLs must contain an immutable 40-character commit, not a branch. This can be an artwork commit distinct from the release source commit. The source release tag must not be moved to add the generated manifest.
 4. Copy `docs/release-input.template.json` to a private working file such as `.local/release-input.json`. Every `null` must be replaced with an observed value. Local file paths are resolved relative to that input file and are used only for verification; they are not copied into the public manifest or verification receipt. Enter tested client OS/memory and measured installed disk requirements rather than the Spark's specifications. Set `screenshotsReviewed` only after inspecting the actual screenshots and confirming their content and redaction.
 
@@ -17,7 +17,7 @@ The template is intentionally invalid. It is not an example manifest and must no
 
 Python 3.11+, Pillow, Git, GitHub CLI, Node and an existing Marketplace source checkout with its installed `tsx` dependency are required. The checkout is read-only: the generator imports its actual `manifestSchema` and `publicationArtworkIssues` without installing dependencies or editing any files there.
 
-For this beta, the deployed contract is in `C:/Users/Benny/.codex/worktrees/publisher-release-retry/DeloresAI` at `fd2b8e3eec74b575d4cdced181bbd85955093f1f`; its current `6fc5e97b49f33f5a7e14e7e1cd7e970cc933ab26` adds documentation only. The older Desktop/DeloresAI checkout is not the deployed reference. The release-specific validation receipt records the actual contract hashes, including support for the optional feature notices.
+The release-specific validation receipt must record the actual current contract hashes, including support for optional feature notices. Use the deployed Marketplace checkout confirmed by its release owner; do not infer deployment from an older desktop checkout. The 0.2.0 integration was reviewed against Marketplace commit `44c861d778e6880afebb34407a86798db39a9ada`, including its schema 7 native-update authorization contract.
 
 ```powershell
 python scripts/prepare-manifest.py --input .local/release-input.json --marketplace-checkout C:/src/DeloresAI --output dist/release/deloresai.manifest.json
@@ -25,7 +25,7 @@ python scripts/prepare-manifest.py --input .local/release-input.json --marketpla
 
 The generator checks:
 
-- Live repository identity, public visibility and MIT declaration; release/asset IDs; beta prerelease state; immutable tag resolution; tagged GUI/package versions and MIT source license.
+- Live repository identity, public visibility and MIT declaration; release/asset IDs; matching channel/prerelease state; immutable tag resolution; tagged GUI/package versions and MIT source license.
 - The exact uploaded installer name, size, GitHub SHA-256 metadata and canonical release download URL against the local installer bytes.
 - Anonymous image retrieval against the reviewed local bytes, raster format, image size/dimensions, approved host and immutable raw URLs. No GitHub credentials are sent to media servers. A byte/hash check does not establish that an image shows a real installed app; that remains the explicit screenshot review step.
 - The runtime OCI digest pins and fixed wheel hashes from the tagged source. Canonical OCI manifest URLs represent the pinned manifest digest, not a tarball digest; Docker verifies each layer. Python wheel URLs are resolved by their exact declared SHA-256 from PyPI.
