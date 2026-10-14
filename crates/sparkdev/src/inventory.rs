@@ -234,7 +234,23 @@ fn walk(root: &Path, dir: &Path, paths: &mut BTreeSet<String>) -> Result<()> {
 pub fn collect(path: &Path) -> Result<Inventory> {
     collect_into(path, &state::root()?.join("cas"))
 }
+/// Validate and hash source without creating state or transfer objects.
+pub fn collect_readonly(path: &Path) -> Result<Inventory> {
+    collect_impl(path, None)
+}
 fn collect_into(path: &Path, cas: &Path) -> Result<Inventory> {
+    collect_impl(path, Some(cas))
+}
+fn require_git_at_repository_boundary(root: &Path, git_top: Option<&Path>) -> Result<()> {
+    if git_top.is_none() && root.ancestors().any(|path| path.join(".git").exists()) {
+        return Err(AppError::new(
+            5,
+            "Git inventory is required at a repository boundary; install Git or resolve its repository error",
+        ));
+    }
+    Ok(())
+}
+fn collect_impl(path: &Path, cas: Option<&Path>) -> Result<Inventory> {
     let root = path.canonicalize()?;
     if !root.is_dir() {
         return Err(AppError::new(2, "Project must be a directory"));
@@ -249,6 +265,7 @@ fn collect_into(path: &Path, cas: &Path) -> Result<Inventory> {
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .and_then(|p| PathBuf::from(p.trim()).canonicalize().ok());
+    require_git_at_repository_boundary(&root, git_top.as_deref())?;
     // An explicitly selected plain directory can live inside a parent's ignored
     // scratch folder. Parent Git rules must not silently turn that source into
     // an empty manifest. A real repository root still honors all its ignores.
@@ -331,9 +348,11 @@ fn collect_into(path: &Path, cas: &Path) -> Result<Inventory> {
         let mut chunks = Vec::new();
         for chunk in bytes.chunks(CHUNK) {
             let sha = hash(chunk);
-            let target = cas.join(&sha);
-            if !target.exists() {
-                state::atomic_bytes(&target, chunk)?
+            if let Some(cas) = cas {
+                let target = cas.join(&sha);
+                if !target.exists() {
+                    state::atomic_bytes(&target, chunk)?
+                }
             }
             chunks.push(Chunk {
                 sha256: sha,
@@ -428,6 +447,32 @@ mod tests {
             first.manifest_id,
             collect_into(root.path(), cas.path()).unwrap().manifest_id
         )
+    }
+    #[test]
+    fn readonly_inventory_matches_upload_manifest_without_creating_objects() {
+        let root = tempfile::tempdir().unwrap();
+        let cas = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("source.py"), b"print('hello')\n").unwrap();
+        let preview = collect_readonly(root.path()).unwrap();
+        assert_eq!(fs::read_dir(cas.path()).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+        let upload = collect_into(root.path(), cas.path()).unwrap();
+        assert_eq!(preview.manifest_id, upload.manifest_id);
+        assert_eq!(fs::read_dir(cas.path()).unwrap().count(), 1);
+    }
+    #[test]
+    fn failed_git_cannot_bypass_repository_ignores() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(".git")).unwrap();
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        assert_eq!(
+            require_git_at_repository_boundary(&child, None)
+                .unwrap_err()
+                .code,
+            5
+        );
+        assert!(require_git_at_repository_boundary(&child, Some(root.path())).is_ok());
     }
     #[test]
     fn rejected_tree_never_becomes_a_manifest() {

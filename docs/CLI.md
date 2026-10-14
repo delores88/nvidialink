@@ -38,6 +38,14 @@ Reuse the same `--request-id` after an ambiguous submission disconnect. The immu
 
 ## Placement and shared board
 
+`sparkdev devices --json` reports the laptop's observed OS, architecture and process-visible logical parallelism, local job receipts, and the authenticated Spark scheduler board, limits and configured runtimes. Unreachable or unconfigured Spark state carries an explicit error. Logical parallelism and scheduler limits do not indicate idle processors or free memory; those values remain unknown. Device inspection does not reserve capacity or deliver queued cancellations.
+
+Spark `availability` is `reachable`, `unreachable` or `unconfigured`. Transport `route` is `lan_ssh`, `paired_iroh` or `none`, with `authenticated` and bounded `attempted_routes` explaining LAN reachability errors, authentication rejection, disabled/unconfigured remote access or adapter failure. The paired route does not claim that iroh used a relay or a direct connection; the adapter does not report that physical path. A completed strict SSH exchange followed by controller failure remains visible as authenticated transport with a controller error. Authentication rejection never triggers fallback.
+
+Laptop process availability is separate from managed admission. Both runners need the shared Spark scheduler: when it is unreachable or unhealthy, `can_submit:false` and `admission.available:"unavailable"` disclose that dependency even though the laptop itself is available. When the scheduler is healthy, `can_submit:null` and `admission.available:"requires_request_check"` mean that runtime, quota, resource and worktree checks are still needed. There is no automatic offline laptop fallback or platform-incompatible rerouting.
+
+`sparkdev plan DIR --where auto --runtime rust -- cargo test --locked` previews the same placement policy used by run. `--argv-json FILE` is also supported. Planning validates the source and exact arguments, computes the manifest without writing transfer objects, and returns `admission_required:true`, `claimed:false`, `uploaded:false` and `submitted:false`. It needs no network or SSH configuration. The result is a preview, not a reservation; run revalidates the tree and runtime against current scheduler admission. Runtime availability is not verified by plan.
+
 `--where auto` chooses the laptop for explicit Windows/MSVC targets, PowerShell/cmd scripts, Windows sandbox commands, NSIS tools and Tauri installers. Other work goes to the Spark. Use `--where laptop` or `--where spark` when the command has requirements the classifier cannot infer. The selected machine and reason are included in submission output. Runtime defaults are `rust` for cargo/rustc/rustup, `node` for node/npm/npx and `python` otherwise; `--runtime` selects only an owner-provisioned registry name.
 
 The laptop runner executes native owner processes and is not Docker-sandboxed. It obtains the same worktree lease from the Spark scheduler before starting, so it requires an authenticated scheduler connection. At most two laptop jobs run concurrently. Direct Cargo invocation is wrapped in the configured build gate, with per-project CARGO_TARGET_DIR under application state. On this owner's machine all local Cargo commands must use the prescribed PhaseForge build gate unchanged, and state/build output must stay on C:. Commands that indirectly invoke Cargo must themselves use the owner's build gate; the CLI cannot inspect arbitrary script behavior.
@@ -58,7 +66,7 @@ Sync checks every included file before network upload. Git inventory includes tr
 
 ## MCP
 
-Start `sparkdev --client codex mcp` or `sparkdev --client claude mcp` as an MCP stdio server. It supports initialization, tools/list, and run/wait/logs/status/cancel through the same core. Run always detaches; wait is bounded. Server launch arguments bind the accounting client, and tool calls cannot override it. JSON-RPC output contains no progress chatter. The transport uses newline-delimited JSON with a 2 MiB message limit. Real agent-session acceptance is separate from these protocol tests.
+Start `sparkdev --client codex mcp` or `sparkdev --client claude mcp` as an MCP stdio server. It supports initialization, tools/list, and devices/plan/prepare/run/wait/logs/status/cancel through the same core. Inspect devices and plan placement before submission; neither reserves capacity. Run and locked dependency preparation detach; wait is bounded. Server launch arguments bind the accounting client, and tool calls cannot override it. JSON-RPC output contains no progress chatter. The transport uses newline-delimited JSON with a 2 MiB message limit. Real agent-session acceptance is separate from these protocol tests.
 
 ## Stable control exit codes
 

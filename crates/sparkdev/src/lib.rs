@@ -124,6 +124,18 @@ enum Commands {
         #[arg(long)]
         all: bool,
     },
+    Devices,
+    Plan {
+        dir: PathBuf,
+        #[arg(long)]
+        runtime: Option<String>,
+        #[arg(long)]
+        argv_json: Option<PathBuf>,
+        #[arg(long, value_enum, default_value = "auto")]
+        r#where: Placement,
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
     Doctor,
     Prepare {
         dir: PathBuf,
@@ -205,6 +217,24 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             let mut out = sync(&inv, &mut tr)?;
             out["transport"] = tr.info();
             Ok(out)
+        }
+        Commands::Devices => devices(),
+        Commands::Plan {
+            dir,
+            runtime,
+            argv_json,
+            r#where,
+            command,
+        } => {
+            let argv = load_argv(command, argv_json)?;
+            // This deliberately has no transport, receipt or admission path.
+            let inv = inventory::collect_readonly(&dir)?;
+            let (chosen, reason) = placement(r#where, &argv, &inv.root)?;
+            let runtime = runtime.unwrap_or_else(|| default_runtime(&argv).into());
+            state::validate_id(&runtime)?;
+            Ok(
+                json!({"ok":true,"placement":if chosen == Placement::Laptop {"laptop"} else {"spark"},"placement_reason":reason,"runtime":runtime,"project":inv.project,"manifest_id":inv.manifest_id,"files":inv.manifest.len(),"bytes":inv.bytes,"argv":argv,"admission_required":true,"claimed":false,"uploaded":false,"submitted":false,"runtime_registry_checked":false,"observation_only":true,"note":"Placement preview only, not a reservation. Run revalidates source and requires current scheduler admission; runtime availability is checked on submission."}),
+            )
         }
         Commands::Prepare {
             dir,
@@ -358,6 +388,61 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
         )),
         Commands::Mcp => Err(AppError::new(2, "MCP stdio must run as a process")),
     }
+}
+fn devices() -> Result<Value> {
+    let mut laptop = json!({"id":"laptop","availability":"available","reachable":true,"os":std::env::consts::OS,"architecture":std::env::consts::ARCH,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"managed_job_limit":2,"free_cpu":null,"free_memory_bytes":null,"capacity_note":"Logical parallelism is process-visible topology, not idle capacity. Native jobs are not container-sandboxed."});
+    match local::status() {
+        Ok(jobs) => laptop["jobs"] = jobs,
+        Err(e) => laptop["state_error"] = json!({"code":e.code,"message":e.message}),
+    }
+    let mut spark = json!({"id":"spark","availability":"unconfigured","reachable":false,"os":null,"architecture":null,"free_cpu":null,"free_memory_bytes":null,"transport":{"selected":"unselected","route":"none","authenticated":false,"attempted_routes":[]}});
+    let mut board = Value::Null;
+    let mut scheduler_reachable = false;
+    let mut scheduler_healthy = false;
+    // Device inspection does not flush deferred cancellation or terminal writes.
+    let observation = match transport::Transport::new() {
+        Ok(mut tr) => {
+            spark["availability"] = json!("unreachable");
+            let result = tr.rpc(json!({"v":1,"op":"status","all":true}));
+            spark["transport"] = tr.info();
+            result
+        }
+        Err(e) => Err(e),
+    };
+    match observation {
+        Ok(status) => {
+            spark["reachable"] = json!(true);
+            spark["availability"] = json!("reachable");
+            spark["scheduler"] = status["scheduler"].clone();
+            spark["managed_limits"] = status["limits"].clone();
+            spark["runtimes"] = status["runtimes"].clone();
+            spark["capacity_note"] = json!(
+                "Scheduler limits and recorded jobs are observations, not free hardware capacity or a reservation."
+            );
+            board = status["jobs"].clone();
+            scheduler_reachable = true;
+            scheduler_healthy = status["scheduler"]["healthy"].as_bool() == Some(true);
+        }
+        Err(e) => {
+            let authenticated = spark["transport"]["authenticated"] == true;
+            spark["error"] = json!({"code":e.code,"message":e.message,"kind":match e.code {7=>"authentication_failed",6 if authenticated=>"authenticated_controller_failed",6=>"protocol_error",3 if spark["availability"] == "unconfigured"=>"configuration_unavailable",3=>"remote_adapter_unconfigured",_=>"transport_unavailable"}});
+        }
+    }
+    let admission = admission_observation(scheduler_reachable, scheduler_healthy);
+    for device in [&mut laptop, &mut spark] {
+        device["can_submit"] = if scheduler_healthy {
+            Value::Null
+        } else {
+            json!(false)
+        };
+        device["admission"] = admission.clone();
+    }
+    Ok(
+        json!({"ok":true,"observed_at":state::now(),"devices":[laptop,spark],"shared_board":board,"observation_only":true,"admission_required":true,"claimed":false}),
+    )
+}
+fn admission_observation(reachable: bool, healthy: bool) -> Value {
+    json!({"scheduler_reachable":reachable,"scheduler_healthy":healthy,"available":if reachable && healthy {"requires_request_check"} else {"unavailable"},"reservation":false,"reason":if !reachable {"Managed admission on both devices requires the Spark scheduler; offline laptop fallback is unavailable"} else if !healthy {"Scheduler status is reachable but its heartbeat is not healthy"} else {"Runtime, client quota, resources and worktree claim must be checked for the submitted request"}})
 }
 fn load_argv(command: Vec<String>, file: Option<PathBuf>) -> Result<Vec<String>> {
     if file.is_some() && !command.is_empty() {
@@ -659,5 +744,84 @@ mod tests {
             mcp_client(&["--client".into(), "codex".into(), "mcp".into()]),
             Some("codex".into())
         )
+    }
+    #[test]
+    fn plan_preserves_argv_and_has_no_submission_or_reservation() {
+        let source = tempfile::tempdir().unwrap();
+        let arguments = tempfile::tempdir().unwrap();
+        fs::write(source.path().join("main.rs"), b"fn main() {}\n").unwrap();
+        let argv = json!([
+            "cargo",
+            "test",
+            "--target",
+            "x86_64-pc-windows-msvc",
+            "two words",
+            ""
+        ]);
+        let argv_file = arguments.path().join("argv.json");
+        fs::write(&argv_file, serde_json::to_vec(&argv).unwrap()).unwrap();
+        let out = execute(vec![
+            "plan".into(),
+            source.path().to_string_lossy().into(),
+            "--argv-json".into(),
+            argv_file.to_string_lossy().into(),
+        ])
+        .unwrap();
+        assert_eq!(out["placement"], "laptop");
+        assert_eq!(out["runtime"], "rust");
+        assert_eq!(out["argv"], argv);
+        assert_eq!(out["admission_required"], true);
+        for key in [
+            "claimed",
+            "uploaded",
+            "submitted",
+            "runtime_registry_checked",
+        ] {
+            assert_eq!(out[key], false);
+        }
+        assert!(out.get("job").is_none());
+        assert!(out.get("request_id").is_none());
+        assert!(out.get("transport").is_none());
+        assert_eq!(fs::read_dir(source.path()).unwrap().count(), 1);
+        let explicit = execute(vec![
+            "plan".into(),
+            source.path().to_string_lossy().into(),
+            "--where".into(),
+            "spark".into(),
+            "--".into(),
+            "cargo".into(),
+            "test".into(),
+        ])
+        .unwrap();
+        assert_eq!(explicit["placement"], "spark");
+    }
+    #[test]
+    fn plan_refuses_secret_source_and_credential_argv() {
+        let source = tempfile::tempdir().unwrap();
+        let base = vec![
+            "plan".into(),
+            source.path().to_string_lossy().into(),
+            "--".into(),
+        ];
+        let mut command = base.clone();
+        command.extend(["python".into(), "--token=example".into()]);
+        assert_eq!(execute(command).unwrap_err().code, 5);
+        fs::write(source.path().join(".env"), b"EXAMPLE=value\n").unwrap();
+        let mut command = base;
+        command.push("python".into());
+        assert_eq!(execute(command).unwrap_err().code, 5);
+    }
+    #[test]
+    fn scheduler_observation_never_claims_reserved_or_free_capacity() {
+        let offline = admission_observation(false, false);
+        assert_eq!(offline["available"], "unavailable");
+        assert_eq!(offline["scheduler_reachable"], false);
+        let online = admission_observation(true, true);
+        assert_eq!(online["available"], "requires_request_check");
+        assert_eq!(online["reservation"], false);
+        assert_eq!(
+            admission_observation(true, false)["available"],
+            "unavailable"
+        );
     }
 }
