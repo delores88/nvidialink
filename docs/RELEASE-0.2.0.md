@@ -10,6 +10,6 @@ The updater verifies signed Marketplace acquisition and automated-review metadat
 
 Validation receipts will record source commit, targeted unit/UI checks, physical Spark job IDs, immutable installer hashes, ordinary Windows installation, Marketplace decision and remaining limitations. Prior releases and receipts are retained. PhaseForge files and services remain unchanged.
 
-Source validation completed: 105 Windows CLI/link/protocol tests, 17 desktop updater tests, 36 Python controller tests, 10 UI model tests and three manifest tests. Synthetic browser checks cover the 1140px and 850px layouts and interaction flow; they do not establish installed Windows behavior.
+Source validation completed: 105 Windows CLI/link/protocol tests, 20 desktop tests (17 updater and three physical-path regressions), 36 Python controller tests, 11 UI model tests and three manifest tests. Synthetic browser checks cover the 1140px and 850px layouts and interaction flow; they do not establish installed Windows behavior.
 
 Physical Spark ARM64 build job `55bc3f13e3674545b89ffbb0493e76e5` succeeded. Resource-policy job `4820a31cbae544be9fde66bd81ab770b` saved/read back owner limits and verified Docker's actual four-core and 8 GiB cgroup limits, then restored the original policy. See `evidence/dgxbridge-020-spark.json`. Only DGXBridge's controller service was updated; the paired link, other services and owner configuration were preserved.

@@ -47,13 +47,15 @@ export function resourcePolicy(form) {
 }
 const cleanReference = value => typeof value==='string' && !/[\r\n\u0000]/.test(value) ? value : '';
 export function agentConfiguration(agent, path, stateRoot='') {
-  const command=cleanReference(path).replaceAll('\\','/') || 'sparkdev';
+  // JSON/TOML string escaping preserves native UNC/verbatim Windows paths.
+  // Replacing their separators would turn \\?\C:\ into unusable //?/C:/.
+  const command=cleanReference(path) || 'sparkdev';
   const root=cleanReference(stateRoot);
   return agent==='claude' ? JSON.stringify({mcpServers:{sparkdev:{type:'stdio',command,args:['--client','claude','mcp'],...(root?{env:{SPARKDEV_HOME:root}}:{})}}},null,2) : `[mcp_servers.sparkdev]\ncommand = ${JSON.stringify(command)}\nargs = ["--client", "codex", "mcp"]\ntool_timeout_sec = 90${root?`\n\n[mcp_servers.sparkdev.env]\nSPARKDEV_HOME = ${JSON.stringify(root)}`:''}`;
 }
 export function agentPrompt({agent,path,stateRoot,config,connection,limits}) {
   const client=agent==='claude'?'claude':'codex';
-  const exe=cleanReference(path).replaceAll('\\','/') || 'sparkdev';
+  const exe=cleanReference(path) || 'sparkdev';
   const references=[];
   for(const [key,label] of [['ssh_alias','SSH alias'],['host_key_alias','Pinned known-host alias'],['user','SSH user'],['identity_file','Private-key file reference'],['local_build_gate','Local Cargo build gate']]) {
     const value=cleanReference(config?.[key]);if(value)references.push(`${label}: ${value}`);

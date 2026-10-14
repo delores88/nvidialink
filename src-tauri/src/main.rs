@@ -380,18 +380,97 @@ fn preferences(app: tauri::AppHandle) -> Value {
 
 fn verified_loopback_path(path: &std::path::Path, child: Option<&str>) -> Option<PathBuf> {
     if !cfg!(windows) { return None; }
+    let candidate = loopback_candidate(path)?;
+    verified_path_bytes(path, candidate, child)
+}
+
+fn loopback_candidate(path: &std::path::Path) -> Option<PathBuf> {
     let text = path.to_str()?;
+    // Tauri/Windows can return verbatim paths. Strip only the known drive/UNC
+    // wrappers when deriving an alias; never turn another device namespace
+    // into a local drive. The alias is offered only after the byte check below.
+    let normalized;
+    let text = if let Some(rest) = text.strip_prefix(r"\\?\") {
+        if rest.get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC\\")) {
+            normalized = format!(r"\\{}", &rest[4..]);
+            normalized.as_str()
+        } else {
+            rest
+        }
+    } else {
+        text
+    };
+    if let Some(rest) = text.strip_prefix(r"\\") {
+        let mut parts = rest.split('\\');
+        let host = parts.next()?;
+        let share = parts.next()?;
+        if host.is_empty() || matches!(host, "?" | ".") || share.is_empty() {
+            return None;
+        }
+        return Some(PathBuf::from(text));
+    }
     let bytes = text.as_bytes();
-    if bytes.len() < 4 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':'
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':'
         || !matches!(bytes[2], b'\\' | b'/') { return None; }
-    let candidate = PathBuf::from(format!("\\\\localhost\\{}$\\{}", bytes[0] as char,
-        text[3..].replace('/', "\\")));
+    Some(PathBuf::from(format!("\\\\localhost\\{}$\\{}", bytes[0] as char,
+        text[3..].replace('/', "\\"))))
+}
+
+fn verified_path_bytes(path: &std::path::Path, candidate: PathBuf, child: Option<&str>) -> Option<PathBuf> {
     let (original_file, candidate_file) = if let Some(name) = child {
         (path.join(name), candidate.join(name))
     } else { (path.to_owned(), candidate.clone()) };
     let source = std::fs::read(original_file).ok()?;
     let physical = std::fs::read(candidate_file).ok()?;
     if source == physical { Some(candidate) } else { None }
+}
+
+#[cfg(test)]
+mod agent_path_tests {
+    use super::{loopback_candidate, verified_path_bytes};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn verbatim_drive_and_unc_paths_have_native_agent_candidates() {
+        let expected = PathBuf::from(r"\\localhost\C$\Users\Example\AppData\Local\DGXBridge\bin\sparkdev.exe");
+        for source in [
+            r"C:\Users\Example\AppData\Local\DGXBridge\bin\sparkdev.exe",
+            r"\\?\C:\Users\Example\AppData\Local\DGXBridge\bin\sparkdev.exe",
+            "C:/Users/Example/AppData/Local/DGXBridge/bin/sparkdev.exe",
+            r"\\?\UNC\localhost\C$\Users\Example\AppData\Local\DGXBridge\bin\sparkdev.exe",
+        ] {
+            assert_eq!(loopback_candidate(Path::new(source)), Some(expected.clone()));
+        }
+        assert_eq!(loopback_candidate(Path::new(r"\\?\UNC\server\share\Tools with spaces\sparkdev.exe")),
+            Some(PathBuf::from(r"\\server\share\Tools with spaces\sparkdev.exe")));
+        assert_eq!(loopback_candidate(Path::new(r"\\server\share\sparkdev.exe")),
+            Some(PathBuf::from(r"\\server\share\sparkdev.exe")));
+    }
+
+    #[test]
+    fn agent_candidates_reject_relative_and_device_namespaces() {
+        for source in [r"C:sparkdev.exe", r"bin\sparkdev.exe", r"\\.\pipe\sparkdev",
+            r"\\?\Volume{example}\sparkdev.exe", r"\\?\GLOBALROOT\Device\sparkdev", r"\\server"] {
+            assert!(loopback_candidate(Path::new(source)).is_none(), "{source}");
+        }
+    }
+
+    #[test]
+    fn agent_alias_requires_readable_identical_physical_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("original");
+        let physical = dir.path().join("physical");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::create_dir(&physical).unwrap();
+        std::fs::write(original.join("config.json"), b"same owner state").unwrap();
+        assert!(verified_path_bytes(&original, physical.clone(), Some("config.json")).is_none());
+        std::fs::write(physical.join("config.json"), b"other owner state").unwrap();
+        assert!(verified_path_bytes(&original, physical.clone(), Some("config.json")).is_none());
+        std::fs::write(physical.join("config.json"), b"same owner state").unwrap();
+        assert_eq!(verified_path_bytes(&original, physical.clone(), Some("config.json")), Some(physical.clone()));
+        assert_eq!(verified_path_bytes(&original.join("config.json"), physical.join("config.json"), None),
+            Some(physical.join("config.json")));
+    }
 }
 
 #[tauri::command]

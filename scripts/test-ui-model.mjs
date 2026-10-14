@@ -53,6 +53,20 @@ test('MCP snippets preserve quoted paths and explicit physical owner-state overr
   const claude=JSON.parse(agentConfiguration('claude',path,root));assert.equal(claude.mcpServers.sparkdev.env.SPARKDEV_HOME,root);assert.deepEqual(claude.mcpServers.sparkdev.args,['--client','claude','mcp']);
   const codex=agentConfiguration('codex',path,root);assert.match(codex,/\[mcp_servers.sparkdev.env\]/);assert.match(codex,/SPARKDEV_HOME = /);
 });
+test('copied MCP commands and prompts preserve native UNC and verbatim path syntax',()=>{
+  const root=String.raw`\\localhost\C$\Users\Example\AppData\Local\SparkDevBridge`;
+  for(const path of [String.raw`C:\Tools with spaces\sparkdev.exe`,String.raw`\\localhost\C$\Tools with spaces\sparkdev.exe`,String.raw`\\?\C:\Tools with spaces\sparkdev.exe`,String.raw`\\?\UNC\server\share\sparkdev.exe`]) {
+    const claude=JSON.parse(agentConfiguration('claude',path,root));
+    assert.equal(claude.mcpServers.sparkdev.command,path);
+    assert.equal(claude.mcpServers.sparkdev.env.SPARKDEV_HOME,root);
+    const codex=agentConfiguration('codex',path,root);
+    const commandLine=codex.split('\n').find(line=>line.startsWith('command = '));
+    assert.equal(JSON.parse(commandLine.slice('command = '.length)),path);
+    const prompt=agentPrompt({agent:'codex',path,stateRoot:root});
+    assert.ok(prompt.includes(`Installed CLI: ${path}\n`));
+    assert.doesNotMatch(prompt,/\/\/\?\//);
+  }
+});
 test('real motion defaults contain no measured traffic, job progress or GPU utilization',()=>{
   const motion=linkMotion({health:'online',path:'lan'});assert.equal(motion.filament.measured,false);assert.equal(motion.packet,null);assert.equal(motion.spark.breathe,null);assert.equal(motion.message,null);assert.equal(motion.animate,true);
   const reduced=linkMotion({health:'online',path:'lan',reduced:true});assert.equal(reduced.animate,false);
