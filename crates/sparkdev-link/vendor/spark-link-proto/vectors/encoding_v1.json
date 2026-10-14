@@ -1,0 +1,31 @@
+{
+  "z32": [
+    {
+      "hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "z32": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    },
+    {
+      "hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "z32": "999999999999999999999999999999999999999999999999999o"
+    },
+    {
+      "hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "z32": "yyyoryarywdyqnyjbefoadeqbhebnrounoktcfaadrpbs8y7daxo"
+    }
+  ],
+  "mdns_node_id_hex": "0505050505050505050505050505050505050505050505050505050505050505",
+  "mdns_tags": [
+    {
+      "unix": 0,
+      "tag": "5c4016d231215edf"
+    },
+    {
+      "unix": 7200,
+      "tag": "cf726aa02373a551"
+    },
+    {
+      "unix": 1900000000,
+      "tag": "d8f6cefaadad9860"
+    }
+  ]
+}

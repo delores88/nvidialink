@@ -1,0 +1,19 @@
+[Unit]
+Description=Spark Dev Bridge authenticated device link
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/sparkdev/bin/sparkdev-link serve
+WorkingDirectory=%h/sparkdev
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+TasksMax=128
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

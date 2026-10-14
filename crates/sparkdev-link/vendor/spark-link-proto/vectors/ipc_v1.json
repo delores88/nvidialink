@@ -1,0 +1,23 @@
+{
+  "label": "spark-link/ipc/v1",
+  "handshake_material_b64": "yMnKy8zNzs_Q0dLT1NXW19jZ2tvc3d7f4OHi4-Tl5uc",
+  "nonce_b64": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+  "cases": [
+    {
+      "endpoint_path": "\\\\.\\pipe\\delores-spark-link-S-1-5-21-1000-00112233445566778899aabbccddeeff",
+      "proof_b64": "E488c0G9ftm7LQLTVK-Hx1Hazo4U7M2zNmbjLH2zKuc"
+    },
+    {
+      "endpoint_path": "/run/user/1000/delores-spark-link/agent.sock",
+      "proof_b64": "-ClDFwlqqCIxR3CQvYz4y57JwGKpgXEMvT19e9_veZ4"
+    }
+  ],
+  "frames": [
+    {
+      "json": "{\"t\":\"hello\",\"v\":1,\"nonce\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\"}"
+    },
+    {
+      "json": "{\"t\":\"req\",\"id\":7,\"op\":\"sparks.list\",\"params\":{}}"
+    }
+  ]
+}

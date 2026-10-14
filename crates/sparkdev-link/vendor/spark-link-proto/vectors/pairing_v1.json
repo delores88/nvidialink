@@ -1,0 +1,30 @@
+{
+  "node_id_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "node_id_z32": "yyyoryarywdyqnyjbefoadeqbhebnrounoktcfaadrpbs8y7daxo",
+  "joiner_id_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "ticket_id_b64": "QEFCQ0RFRkdISUpLTE1OTw",
+  "pairing_material_b64": "UFFSU1RVVldYWVpbXF1eXw",
+  "exporter_hex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+  "n_s_b64": "gIGCg4SFhoeIiYqLjI2Ojw",
+  "expires_at": 1900000123,
+  "k_req_hex": "8f896782dfef0caa12ee16d637ec241bf1642a3dc97263cd20be7a14cad27070",
+  "k_acc_hex": "3a07d7ccc911ae9ddfb255dd4bb9976533a2863977b97398c536ce984cd64793",
+  "transcript_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f00000000713fb37b606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+  "mac_b64": "pihT-cVll_HtNgSw_ymPzXzCLryriVvYVntWHdvf-OY",
+  "body_json": "{\"v\":1,\"example\":\"exact bytes are covered\"}",
+  "mac2_b64": "UDd-cztHzRJ2WxzAUu3JV3OYV6nQY615mK-b3RRSOEs",
+  "sas_words": [
+    "brick",
+    "whisper",
+    "master",
+    "belt"
+  ],
+  "node_fingerprint_words": [
+    "security",
+    "equip",
+    "reveal",
+    "ripple"
+  ],
+  "link_uri": "delores-link://pair/v1?n=yyyoryarywdyqnyjbefoadeqbhebnrounoktcfaadrpbs8y7daxo&r=https%3A%2F%2Fuse1-1.relay.n0.iroh.link.%2F&a=192.168.1.20%3A47821%2C%5Bfe80%3A%3A1%5D%3A47821&t=QEFCQ0RFRkdISUpLTE1OTw&s=UFFSU1RVVldYWVpbXF1eXw&e=1900000123&l=spark+bb3b",
+  "link_https": "https://link.deloresai.com/p/v1#n=yyyoryarywdyqnyjbefoadeqbhebnrounoktcfaadrpbs8y7daxo&r=https%3A%2F%2Fuse1-1.relay.n0.iroh.link.%2F&a=192.168.1.20%3A47821%2C%5Bfe80%3A%3A1%5D%3A47821&t=QEFCQ0RFRkdISUpLTE1OTw&s=UFFSU1RVVldYWVpbXF1eXw&e=1900000123&l=spark+bb3b"
+}

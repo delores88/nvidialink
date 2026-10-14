@@ -1,0 +1,24 @@
+{
+  "ticket_id_b64": "QEFCQ0RFRkdISUpLTE1OTw",
+  "pairing_material_b64": "UFFSU1RVVldYWVpbXF1eXw",
+  "pairing_id_b64": "oKGio6SlpqeoqaqrrK2urw",
+  "info": "spark-link/pair/v1/lan-approve",
+  "approval_proof_b64": "FIxemZiWVY6qRYrvF7AfDw",
+  "urls": [
+    {
+      "lan_ip": "192.168.1.20",
+      "lan_port": 7427,
+      "url": "http://192.168.1.20:7427/pair/oKGio6SlpqeoqaqrrK2urw#FIxemZiWVY6qRYrvF7AfDw"
+    },
+    {
+      "lan_ip": "10.0.0.5",
+      "lan_port": 40123,
+      "url": "http://10.0.0.5:40123/pair/oKGio6SlpqeoqaqrrK2urw#FIxemZiWVY6qRYrvF7AfDw"
+    },
+    {
+      "lan_ip": "fd00::5",
+      "lan_port": 7427,
+      "url": "http://[fd00::5]:7427/pair/oKGio6SlpqeoqaqrrK2urw#FIxemZiWVY6qRYrvF7AfDw"
+    }
+  ]
+}

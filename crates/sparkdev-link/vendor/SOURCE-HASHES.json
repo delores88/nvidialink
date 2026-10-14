@@ -1,0 +1,147 @@
+{
+  "repository": "https://github.com/delores88/PhaseForge",
+  "commit": "ac30e04fbf0ddc03ae0144fb06b6350cacdce1fc",
+  "upstream_path": "native/spark-link/crates/spark-link-proto",
+  "modified_files": [
+    "Cargo.toml"
+  ],
+  "added_files": [
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "authorization": "Copyright owner Ben Van Dorn explicitly granted MIT for these copies on 2026-10-13.",
+  "files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "9ce410b5684cfdf82f19601474829791ddf888a77235ba668756e1deaecc45ec"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "05d79cb35e1d59026ce747454eb3897323cd8504f396e44e3ba5a1825e2f21ac"
+    },
+    {
+      "path": "NOTICE.md",
+      "sha256": "a00d02d363f60a7f3941d61eb91fc0381de5418bc5d1a0c0fa8050bd841243dc"
+    },
+    {
+      "path": "src/api.rs",
+      "sha256": "20b078a892d1191811a79469e2668029ac44c301c7671b3cbce045885e5efb5b"
+    },
+    {
+      "path": "src/audit.rs",
+      "sha256": "5ed77481c9412593c1f3d9dcba253b9419220ecab099590a72b3fd1fbdaac193"
+    },
+    {
+      "path": "src/errors.rs",
+      "sha256": "fadd239d3399902383f2d39c1b7b0d5544e483d23b200e52c5187122d017b633"
+    },
+    {
+      "path": "src/frame.rs",
+      "sha256": "5beb1dcaecfc1cd8e5136bf3bc40aa479e71fdb4b94f285341cda8bcb32c38fe"
+    },
+    {
+      "path": "src/ids.rs",
+      "sha256": "e9ab00a8379cd3b88de92de9ddbce74dee462a3499ce163806181ef1d1093cda"
+    },
+    {
+      "path": "src/ipc.rs",
+      "sha256": "a73bb365d669ceeace13970731220d5734940cd410fbe458ede3df351bb613b9"
+    },
+    {
+      "path": "src/job_contract.rs",
+      "sha256": "73fb40dd935591e333f6dc0edbb8ca06726e618e814b737d21fcced08f69b2f3"
+    },
+    {
+      "path": "src/job_transfer.rs",
+      "sha256": "6cc8f2fe33a06c9545c7ed7a05ed7b7aac261855012454903b84fdb17e5c3fd6"
+    },
+    {
+      "path": "src/jobs.rs",
+      "sha256": "e04a937d09165df51f78bd0ea5e6773de6464475ffa0f240fdf6b58b6160d34b"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "0bfd660863232316d09cbbb9515088394b430282cdc765b0a1bcc635f0fdfa92"
+    },
+    {
+      "path": "src/link.rs",
+      "sha256": "f0c857648ed85998b0a59372ab4fc98e9007334e1fb471899dd4111e529e6756"
+    },
+    {
+      "path": "src/mdns.rs",
+      "sha256": "426823be91a14c6abe47294a16dafdd8b8e2855192d38b55d4c6549bda43b8eb"
+    },
+    {
+      "path": "src/node_cli.rs",
+      "sha256": "3784b50fcb96188f1c736b7a875a02f4bd67f36ab4234eead12a7a966311aeb0"
+    },
+    {
+      "path": "src/owner_link.rs",
+      "sha256": "ac41cad120a2fc84f4c41c1d96b4f6df9de9aa0655cfbd845abdf799a23ef52e"
+    },
+    {
+      "path": "src/pairing.rs",
+      "sha256": "6d9a1300087750d030dc7902b824f5366f514cb0725d40bfe6da620b9378a603"
+    },
+    {
+      "path": "src/paths.rs",
+      "sha256": "24e52a4509f089d057ce2e3acc7d8749b2f439716c257d23e0a53650285983d3"
+    },
+    {
+      "path": "src/relay.rs",
+      "sha256": "835059c0a28c0d1b1ab142316869df99d9a2f9ef123a93ce311fca81c789a1b3"
+    },
+    {
+      "path": "src/release.rs",
+      "sha256": "b788312efb941e130ce50088f7be943850ec9564f41b071f831f1032fb439c2e"
+    },
+    {
+      "path": "src/roles.rs",
+      "sha256": "fb824711e0be8acc1fc8286d486be03f536a0c8a5f2ef18f974c5a811642e086"
+    },
+    {
+      "path": "src/scopes.rs",
+      "sha256": "568182c81996b03fbac7d2a64994b2a8b0243619f836c0469ce1af83a87be7dd"
+    },
+    {
+      "path": "src/secret.rs",
+      "sha256": "618df81fd6ccb57c092d00709cba9c52925717633c36cd5d143df53fce3d3607"
+    },
+    {
+      "path": "src/version.rs",
+      "sha256": "2ce908ef7ce44984b2a28c9fd3b91dfb8fa69b518866300dddccd204bb8efb9e"
+    },
+    {
+      "path": "src/words.rs",
+      "sha256": "602fe979b5a13c4dcbbdf080ea0e1ce1e5a7129f7c82f53336eca791909d9ed8"
+    },
+    {
+      "path": "tests/job_contract.rs",
+      "sha256": "f714e301773831c96e4c73c23952cf637860310e030248db37496d927fa91474"
+    },
+    {
+      "path": "tests/vectors.rs",
+      "sha256": "f1fe384d58bef0fb692c42c032aad0cdede39ba3ba43d6e569b098b8fe256bd6"
+    },
+    {
+      "path": "tests/vectors_a1.rs",
+      "sha256": "24a0c2a1cf96fc64aa9e00adf9931450781d95fd254b5ced1b889bb86ffa47a2"
+    },
+    {
+      "path": "vectors/encoding_v1.json",
+      "sha256": "3b85f933ed1953482299926417d7ff28cc78e7e9005516c8c2ebec0ec7f48bc7"
+    },
+    {
+      "path": "vectors/ipc_v1.json",
+      "sha256": "6292dedc0fc791acf0b1ea03ce38925268485c73d1bc002912c4e47b09f2eed7"
+    },
+    {
+      "path": "vectors/owner_link_a1.json",
+      "sha256": "633986c7c9ee18b5d9c783caf3a77aa93d63aea14ea933012786c948acdeec1e"
+    },
+    {
+      "path": "vectors/pairing_v1.json",
+      "sha256": "5fce6d8ad8c6ea1fbf42ae1b60f316fe16668e2e1e9a1fa25eaa49befa835434"
+    }
+  ]
+}
