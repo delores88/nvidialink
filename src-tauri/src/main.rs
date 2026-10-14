@@ -1,4 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(windows)]
+mod windows_taskbar;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
@@ -80,9 +83,7 @@ fn binary(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {
     if adjacent.is_file() {
         return Ok(adjacent);
     }
-    Err(format!(
-        "Bundled {name} is missing. Reinstall DGXBridge."
-    ))
+    Err(format!("Bundled {name} is missing. Reinstall DGXBridge."))
 }
 
 async fn launch(
@@ -397,9 +398,24 @@ async fn bootstrap(app: tauri::AppHandle, remote_access: bool) -> Result<Value, 
 }
 
 fn main() {
+    let context = tauri::generate_context!();
+    #[cfg(windows)]
+    windows_taskbar::set_app_id(&context.config().identifier)
+        .expect("DGXBridge could not initialize its Windows taskbar identity");
+
     tauri::Builder::default()
         .manage(PairState::default())
+        .setup(|app| {
+            #[cfg(windows)]
+            {
+                let window = app
+                    .get_webview_window("main")
+                    .ok_or_else(|| std::io::Error::other("DGXBridge main window is unavailable"))?;
+                windows_taskbar::set_taskbar_icon(&window)?;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("DGXBridge could not start");
 }
