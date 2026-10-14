@@ -1,0 +1,2 @@
+# Preserve pinned upstream byte hashes on Windows and Linux checkouts.
+* -text
