@@ -95,14 +95,19 @@ fair end-to-end comparison. [Interrupted baseline receipt](../evidence/phaseforg
 - Physical network interruption during transfer and execution, and actual laptop
   sleep while a job runs. A restarted controller and interrupted CLI are different
   failure modes.
-- Marketplace payload vulnerability scan, submission, admission and authenticated
-  Marketplace download verification. The GitHub beta and exact generated manifest
+- Marketplace admission and authenticated Marketplace download verification.
+  Beta.1 was rejected for two Gitleaks matches in a source-hash receipt. Both
+  values were verified against the exact tagged source bytes as SHA-256 checksums,
+  not credentials. Malware scanning passed; dependency scanning passed with no
+  high or critical findings and one medium Linux GLib advisory. The GitHub beta and exact generated manifest
   are published; anonymous installer/manifest downloads match their hashes.
   Actual installed screenshots and artwork passed local validation against the
-  deployed Marketplace contract. The installed native Marketplace is signed in,
-  but Computer Use could not restore its minimized window and owner assistance
-  was requested. The publisher identity was checked against the public catalog,
-  and nvidialink was added to the existing read-only GitHub App installation.
+  deployed Marketplace contract. After the owner foregrounded Marketplace,
+  authenticated native validation, draft save and submission completed. Release
+  `rR8U9MLCyJmHpFHVGF7Fxxel` is rejected; no eligible Marketplace artifact has been
+  confirmed yet. Native progress updates reported `NETWORK_UNAVAILABLE`, but the
+  Release decisions findings and public catalog agree on rejection. The publisher identity
+  and existing read-only GitHub App repository authorization were verified.
   [Published release receipt](../evidence/dgxbridge-public-beta.json),
   [manifest validation](../evidence/dgxbridge-manifest-validation.json).
   Browser and native login state are separate. No featured listing is requested.

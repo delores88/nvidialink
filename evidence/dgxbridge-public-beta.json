@@ -26,8 +26,10 @@
     }
   ],
   "marketplace": {
-    "submitted": false,
+    "submitted": true,
     "admitted": false,
-    "reason": "Signed-in native publisher window restoration is awaiting owner assistance."
+    "release_id": "rR8U9MLCyJmHpFHVGF7Fxxel",
+    "status": "rejected",
+    "reason": "Native Release decisions and public catalog confirm rejection: two Gitleaks generic-api-key matches in remote/receipts/linux-arm64-link-dgxbridge.json. Both values independently match the exact tagged source SHA-256 hashes. Malware and dependency gates passed; beta.2 correction is being prepared."
   }
 }
