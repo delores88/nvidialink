@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/delores88/PhaseForge",
+  "revision": "944bfcceef5f7969b384d0334b9c612e1244bf2f",
+  "authorization": "Owner requested reuse of PhaseForge QR setup and explicitly required MIT licensing for this project on 2026-10-13.",
+  "license": "MIT",
+  "modifications": "Only the qrcode-generator import changed to bundled local ESM. Vanilla DOM adapter is original Spark Dev Bridge code.",
+  "files": [
+    {
+      "source": "frontend/src/lib/sparkLinkQr.mjs",
+      "destination": "ui/vendor/sparkLinkQr.mjs",
+      "original_sha256": "0868846764bc103449678c4c24f6bea6bd8fe5d2a885418d2b88950f2d80f05d",
+      "sha256": "476b2a917884b48ff5bcc5955c86ab08caa0a7f49a8ce761ace9ead82b0f400c"
+    },
+    {
+      "source": "frontend/src/lib/sparkParticles.mjs",
+      "destination": "ui/vendor/sparkParticles.mjs",
+      "original_sha256": "089e3d35383c984378f24b172a18e808fdf2134f4879fc8c8d88e59c8968a121",
+      "sha256": "089e3d35383c984378f24b172a18e808fdf2134f4879fc8c8d88e59c8968a121"
+    }
+  ]
+}
