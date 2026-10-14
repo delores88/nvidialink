@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-14T04:48:20.933553+00:00",
+  "source_commit": "ccc273fc7e9903367364a7dc6adc6c7a7b380109",
+  "scope": "Every file in the exact Git source tree; no Git history or installer payload",
+  "tool": "gitleaks",
+  "version": "8.30.1",
+  "rules": "Upstream defaults; no baseline, publisher ignores or inline allows",
+  "files_supplied": 226,
+  "bytes_supplied": 3223982,
+  "exit_code": 0,
+  "report_created": true,
+  "findings": [],
+  "elapsed_seconds": 21.28,
+  "values_recorded": false
+}

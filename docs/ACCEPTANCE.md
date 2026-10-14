@@ -125,6 +125,15 @@ establish direct visual taskbar acceptance; see the
   [Published release receipt](../evidence/dgxbridge-public-beta.json),
   [manifest validation](../evidence/dgxbridge-manifest-validation.json).
   Browser and native login state are separate. No featured listing is requested.
+  Beta.2 is now published with independently verified installer and manifest
+  downloads. Native manifest validation and draft save passed; one Submit for
+  checks action returned that this exact release already has a submission.
+  Release decisions showed `t3I7c9a1Eg3yv9kn1hPoWX6K` as scanning at 04:54:59 UTC
+  on October 14. The public API corroborated its existence as queued with zero
+  eligible artifacts. Acceptance remains pending; the existing five-minute
+  heartbeat continues. [Beta.2 submission receipt](../evidence/dgxbridge-beta2-marketplace-submission.json),
+  [public artifact receipt](../evidence/dgxbridge-beta2-public.json),
+  [final tagged source scan](../evidence/dgxbridge-beta2-final-source-scan.json).
 
 ## Current functional limits
 

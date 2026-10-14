@@ -1,0 +1,59 @@
+{
+  "manifestSha256": "5b30d50edc203af1b8c7b8eee52c48a29d20874f35a9d74e7bf275e04b14144e",
+  "release": {
+    "repositoryId": 1418188832,
+    "releaseId": 412347006,
+    "draft": false,
+    "prerelease": true,
+    "sourceCommit": "ccc273fc7e9903367364a7dc6adc6c7a7b380109",
+    "assetId": 639255033,
+    "filename": "DGXBridge_0.1.0-beta.2_x64-setup.exe",
+    "bytes": 12791459,
+    "sha256": "46c9205a11a2826f5dcee0cc55b02441134e6acf43f49485611352cdaef30dab"
+  },
+  "media": {
+    "icon": {
+      "url": "https://raw.githubusercontent.com/delores88/nvidialink/9ba8a4175c4959363b272ba1ed0eaeceb83febf7/assets/icon.png",
+      "sha256": "f422206c5245ef8a0a5b6dce6f2463b92a504d1c231b46fd199ad1f3c152dbc9",
+      "bytes": 16921,
+      "width": 1024,
+      "height": 1024
+    },
+    "thumbnail": {
+      "url": "https://raw.githubusercontent.com/delores88/nvidialink/9ba8a4175c4959363b272ba1ed0eaeceb83febf7/assets/thumbnail.png",
+      "sha256": "8be2ea89d18984ade1f607be32691d30f7c6edf3952d1a48f22b52356d17d73c",
+      "bytes": 55999,
+      "width": 1600,
+      "height": 900
+    },
+    "screenshots": [
+      {
+        "url": "https://raw.githubusercontent.com/delores88/nvidialink/9ba8a4175c4959363b272ba1ed0eaeceb83febf7/assets/screenshots/dgxbridge-job-board.png",
+        "sha256": "027e9b07602b67e149e743104bd3ab8a953dced86a90bc8f7983da5e03c429cf",
+        "bytes": 72794,
+        "width": 1143,
+        "height": 821
+      },
+      {
+        "url": "https://raw.githubusercontent.com/delores88/nvidialink/9ba8a4175c4959363b272ba1ed0eaeceb83febf7/assets/screenshots/dgxbridge-job-output.png",
+        "sha256": "66a9d0af6e8a20b4a6b0107d620a018bd97c2be8858140a401b72ec75da92e9d",
+        "bytes": 38770,
+        "width": 1143,
+        "height": 821
+      }
+    ]
+  },
+  "validation": {
+    "contractCommit": "6fc5e97b49f33f5a7e14e7e1cd7e970cc933ab26",
+    "manifestSchema": true,
+    "publicationArtworkIssues": [],
+    "contractSha256": {
+      "index.ts": "6a4f72cec3249fd855fb06c6e49683ad895b110ba17a41b02dafa37113028540",
+      "artwork.ts": "2b2bd2e48d1101adcc7e1e8e4654aa669ff2e4108fac04c22909efb9ae506f1e"
+    }
+  },
+  "publisherIdentity": "Supplied by the release operator; account ownership is checked by the Marketplace submission workflow.",
+  "submitted": true,
+  "admissionApproved": false,
+  "marketplaceReleaseId": "t3I7c9a1Eg3yv9kn1hPoWX6K"
+}

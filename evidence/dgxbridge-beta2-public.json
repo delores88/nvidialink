@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-14T04:50:25.955520+00:00",
+  "release_url": "https://github.com/delores88/nvidialink/releases/tag/v0.1.0-beta.2",
+  "release_id": 412347006,
+  "tag": "v0.1.0-beta.2",
+  "source_commit": "ccc273fc7e9903367364a7dc6adc6c7a7b380109",
+  "prerelease": true,
+  "draft": false,
+  "verified_assets": [
+    {
+      "name": "DGXBridge_0.1.0-beta.2_x64-setup.exe",
+      "asset_id": 639255033,
+      "bytes": 12791459,
+      "sha256": "46c9205a11a2826f5dcee0cc55b02441134e6acf43f49485611352cdaef30dab",
+      "url": "https://github.com/delores88/nvidialink/releases/download/v0.1.0-beta.2/DGXBridge_0.1.0-beta.2_x64-setup.exe",
+      "anonymous_download_verified": true
+    },
+    {
+      "name": "deloresai.manifest.json",
+      "asset_id": 639258440,
+      "bytes": 12559,
+      "sha256": "5b30d50edc203af1b8c7b8eee52c48a29d20874f35a9d74e7bf275e04b14144e",
+      "url": "https://github.com/delores88/nvidialink/releases/download/v0.1.0-beta.2/deloresai.manifest.json",
+      "anonymous_download_verified": true
+    }
+  ],
+  "marketplace": {
+    "submitted": true,
+    "admitted": false,
+    "release_id": "t3I7c9a1Eg3yv9kn1hPoWX6K",
+    "native_status": "scanning",
+    "public_status": "queued",
+    "checked_at": "2026-10-14T04:56:08.391463+00:00",
+    "receipt": "dgxbridge-beta2-marketplace-submission.json"
+  }
+}
