@@ -1,6 +1,6 @@
 # DGXBridge 0.3.0
 
-Status: release candidate. A frontend-only redesign of the desktop window. The bundled `sparkdev` CLI, `sparkdev-link` sidecar and Spark ARM64 payload are the unchanged 0.2.1 builds; the CLI therefore still reports version 0.2.1. Publication, installation and Marketplace admission are recorded below only once they happen.
+Status: published on GitHub; Marketplace intake needs attention (see Publication). A frontend-only redesign of the desktop window. The bundled `sparkdev` CLI, `sparkdev-link` sidecar and Spark ARM64 payload are the unchanged 0.2.1 builds; the CLI therefore still reports version 0.2.1. Publication, installation and Marketplace admission are recorded below only once they happen.
 
 ## What changed
 
@@ -32,3 +32,18 @@ Measured on the tagged v0.3.0 source:
 Not verified for this release: the Spark was offline (owner travelling), so no physical Spark job, connection, pairing or resource save was exercised against 0.3.0. Prior Spark evidence remains in `evidence/dgxbridge-021-spark.json` and covers the unchanged 0.2.1 binaries only. Remote hotspot, sleep and restricted Codex shell limitations from earlier releases still apply.
 
 The listing screenshot `assets/screenshots/dgxbridge-030-jobs.png` is the final built 0.3.0 GUI running against a fresh, empty `SPARKDEV_HOME`. It contains no owner hosts, jobs, keys or pairing data. It was captured from the build output, not from a normal Windows installation.
+
+## Publication
+
+- [v0.3.0](https://github.com/delores88/nvidialink/releases/tag/v0.3.0) was published at 2026-10-15T18:38:01Z.
+- Release ID `414144303`. Annotated tag `v0.3.0` resolves to source `9b2b84af052931a919ef097baa3fc7c04dea9d67`.
+- Installer asset `644795569`, `DGXBridge_0.3.0_x64-setup.exe`, 12,460,461 bytes, SHA-256 `b4d73823921c51fc3272c27111402123646df5844abf3c40409d7fc5f160ab1c`. GitHub's digest metadata matches the local bytes.
+- The GUI SBOM digest matches the final bundle-patched `dgxbridge.exe`. The CLI, link and Linux SBOMs from 0.2.1 were re-verified against the bundled binaries.
+
+The manifest was attached late, and this is a release-process error. The release was published before `deloresai.manifest.json` existed:
+
+- Automatic Marketplace intake ran without a manifest and was blocked ("needs attention").
+- The first manifest run was validated against a DeloresAI checkout whose contract rejects `featureNotices`, and the laptop then briefly lost network.
+- The manifest was finally generated against the `codex/publisher-release-retry` contract, whose `index.ts` is byte-identical to the contract 0.2.1 was accepted under. It was uploaded at 18:41:10Z as asset `644806959`, SHA-256 `b686950ebf1dc48922993f85be16e45e05880b40043cf6659dba810f0da07ee6`, together with `manifest-validation.json`.
+
+Marketplace admission is not claimed. Whether intake re-runs on the attached manifest or needs the single ordinary Retry is pending confirmation with the Marketplace owner. No duplicate tag, release or submission was created.
