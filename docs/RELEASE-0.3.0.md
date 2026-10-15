@@ -23,10 +23,12 @@ Backend commands, the Tauri command surface, the CSP and all safety behavior are
 
 ## Verification
 
-Measured on source commit `f54fc2b`:
+Measured on the tagged v0.3.0 source:
 
 - 14 UI model tests pass (`node --test scripts/test-ui-model.mjs`).
 - Isolated Playwright fixture `scripts/test-ui-render.mjs` passes 22 checks at 1140px and 850px, with no horizontal overflow and no renderer exceptions. It now also covers job filters and detail, the two-step cancel, the route address used and the theme toggle. It uses a synthetic backend; it is not native acceptance.
 - Pinned Gitleaks 8.30.1 reports no findings for `ui/`, `scripts/`, `src-tauri/tauri.conf.json` and `package.json`.
 
 Not verified for this release: the Spark was offline (owner travelling), so no physical Spark job, connection, pairing or resource save was exercised against 0.3.0. Prior Spark evidence remains in `evidence/dgxbridge-021-spark.json` and covers the unchanged 0.2.1 binaries only. Remote hotspot, sleep and restricted Codex shell limitations from earlier releases still apply.
+
+The listing screenshot `assets/screenshots/dgxbridge-030-jobs.png` is the final built 0.3.0 GUI running against a fresh, empty `SPARKDEV_HOME`. It contains no owner hosts, jobs, keys or pairing data. It was captured from the build output, not from a normal Windows installation.
