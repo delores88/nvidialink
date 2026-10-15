@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "product": "DGXBridge",
+  "version": "0.3.0",
+  "source_commit": "9b2b84af052931a919ef097baa3fc7c04dea9d67",
+  "installer": {
+    "github_release_id": 414144303,
+    "github_asset_id": 644795569,
+    "filename": "DGXBridge_0.3.0_x64-setup.exe",
+    "bytes": 12460461,
+    "sha256": "b4d73823921c51fc3272c27111402123646df5844abf3c40409d7fc5f160ab1c"
+  },
+  "installed_windows": {
+    "launcher": "ordinary Windows Explorer",
+    "setup_result": "completed successfully",
+    "scope": "existing per-user installation; physical files checked independently of package path redirection",
+    "product_version": "0.3.0",
+    "gui_sha256": "36b8997e2ffe17d218137d7029bcb450ffaf4c537b6c7ba3f4ab39f1446f8ef6",
+    "gui_difference_from_build": "Only the expected three-byte UNK to NSS installation marker at offset 10165290",
+    "installed_bytes": 57021768,
+    "installed_files": 848,
+    "verified_main_payload_files": 17,
+    "verified_notice_files": 828,
+    "configuration_fingerprint_preserved": true,
+    "pairing_identity_fingerprint_preserved": true,
+    "peer_fingerprint_preserved": true,
+    "native_views_observed": ["Jobs", "Limits", "Codex setup", "Claude Code setup"],
+    "installed_payload_scan": {
+      "tool": "Gitleaks 8.30.1",
+      "rules": "Upstream defaults, no suppressions",
+      "files_supplied": 848,
+      "findings": 0,
+      "exit_code": 0,
+      "files_unchanged_after_scan": true
+    }
+  },
+  "marketplace": {
+    "status": "accepted",
+    "accepted_at": "2026-10-15T18:46:45.803Z",
+    "release_id": "jZEyZHIVRCAIdwElx36fzy1f",
+    "artifact_id": "eMnWt0yTRtW0_DY9DxATNKUE",
+    "job_id": "PT41XdUL6sH-W_D39U2csyTu",
+    "manifest_sha256": "b686950ebf1dc48922993f85be16e45e05880b40043cf6659dba810f0da07ee6",
+    "canonical_manifest_sha256": "eb99bf33f8396a88230719a9cd419a72146d49f797ee4cbd743aa58af6ac30a5",
+    "joint_contract_review": "DGXBridge and Marketplace owners independently passed the exact manifest against live-matched schema and artwork guards",
+    "native_release_decisions_verified": true,
+    "public_catalog_exact_artifact_verified_by_marketplace_owner": true,
+    "revoked": false,
+    "passed": 5,
+    "failed": 0,
+    "incomplete": 0,
+    "nonblocking_advisories": ["GHSA-wrw7-89jp-8q8g: glib 0.18.5, medium; reported fixed in 0.20.0"],
+    "retry_or_duplicate_submission": false,
+    "featured_requested": false
+  },
+  "boundaries": [
+    "No fresh physical Spark, pairing, hotspot, sleep, taskbar or end-to-end updater test was performed for this UI-only release.",
+    "Prior Spark evidence applies to unchanged backend components and is not a new 0.3.0 execution receipt.",
+    "Listing artwork depicts the built GUI with an empty profile; installed native captures are separate private receipts.",
+    "Secret-pattern and Marketplace scans do not prove the absence of every possible vulnerability or embedded secret.",
+    "No owner configuration, private keys or pairing data are included in this public receipt."
+  ]
+}
