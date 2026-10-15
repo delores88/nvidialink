@@ -34,12 +34,13 @@ document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener
 const STATE_LABELS={connected:'Spark connected',disconnected:'Disconnected',connecting:'Connecting…',error:'Needs attention',unavailable:'Spark unavailable'};
 function renderConnection(){
   const state=connectionView(observation,savedConfig,connecting),spark=observation?.devices?.find(device=>device.id==='spark'),used=routeAddress(observation,savedConfig);
-  document.querySelectorAll('[data-connection-state]').forEach(el=>el.textContent=STATE_LABELS[state.state]);
-  document.querySelectorAll('[data-connection-dot]').forEach(el=>el.dataset.state=state.state);
-  document.querySelectorAll('[data-connection-link]').forEach(el=>el.dataset.state=state.state);
+  const unconfigured=!savedConfig&&state.state==='error',shown=unconfigured?'unavailable':state.state,label=unconfigured?'Spark not set up':STATE_LABELS[state.state];
+  document.querySelectorAll('[data-connection-state]').forEach(el=>el.textContent=label);
+  document.querySelectorAll('[data-connection-dot]').forEach(el=>el.dataset.state=shown);
+  document.querySelectorAll('[data-connection-link]').forEach(el=>el.dataset.state=shown);
   document.querySelectorAll('[data-mode-label]').forEach(el=>el.textContent=MODE_LABELS[state.mode]);
   document.querySelectorAll('[data-spark-name]').forEach(el=>el.textContent=savedConfig?.ssh_alias||'Your Spark');
-  const routeText=state.connected?(used?`${state.route} · ${used.address}`:state.route):STATE_LABELS[state.state];
+  const routeText=state.connected?(used?`${state.route} · ${used.address}`:state.route):unconfigured?'Save an SSH connection to start':label;
   document.querySelectorAll('[data-connection-route]').forEach(el=>el.textContent=routeText);
   const note=!state.enabled?'New requests are paused. Running jobs and the saved pairing are unchanged.':state.connected?(state.schedulerHealthy?'Authenticated, and the shared scheduler is responding.':'Authenticated, but the scheduler did not report healthy. New jobs may not be admitted.'):(state.reason||'Save your SSH connection, then connect.');
   document.querySelectorAll('[data-connection-note]').forEach(el=>el.textContent=note);

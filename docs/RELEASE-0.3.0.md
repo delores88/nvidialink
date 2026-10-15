@@ -25,7 +25,7 @@ Backend commands, the Tauri command surface, the CSP and all safety behavior are
 
 Measured on source commit `f54fc2b`:
 
-- 11 UI model tests pass (`node --test scripts/test-ui-model.mjs`).
+- 14 UI model tests pass (`node --test scripts/test-ui-model.mjs`).
 - Isolated Playwright fixture `scripts/test-ui-render.mjs` passes 22 checks at 1140px and 850px, with no horizontal overflow and no renderer exceptions. It now also covers job filters and detail, the two-step cancel, the route address used and the theme toggle. It uses a synthetic backend; it is not native acceptance.
 - Pinned Gitleaks 8.30.1 reports no findings for `ui/`, `scripts/`, `src-tauri/tauri.conf.json` and `package.json`.
 
