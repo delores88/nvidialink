@@ -1,6 +1,6 @@
 # DGXBridge 0.3.0
 
-Status: published on GitHub; Marketplace intake needs attention (see Publication). A frontend-only redesign of the desktop window. The bundled `sparkdev` CLI, `sparkdev-link` sidecar and Spark ARM64 payload are the unchanged 0.2.1 builds; the CLI therefore still reports version 0.2.1. Publication, installation and Marketplace admission are recorded below only once they happen.
+Status: published and accepted by the DeloresAI Marketplace at 2026-10-15T18:46:45Z (5 passed, 0 failed, 0 incomplete; one nonblocking medium `glib 0.18.5` advisory). Installed through a normal Windows Explorer in-place upgrade; see `evidence/dgxbridge-030-windows.json`. A frontend-only redesign of the desktop window. The bundled `sparkdev` CLI, `sparkdev-link` sidecar and Spark ARM64 payload are the unchanged 0.2.1 builds; the CLI therefore still reports version 0.2.1. Publication, installation and Marketplace admission are recorded below only once they happen.
 
 ## What changed
 
@@ -48,3 +48,5 @@ The manifest was attached late, and this is a release-process error. The release
 - The manifest was finally generated against the `codex/publisher-release-retry` contract, whose `index.ts` is byte-identical to the contract 0.2.1 was accepted under. It was uploaded at 18:41:10Z as asset `644806959`, SHA-256 `b686950ebf1dc48922993f85be16e45e05880b40043cf6659dba810f0da07ee6`, together with `manifest-validation.json`.
 
 Marketplace admission is not claimed. Automatic intake picked up the manifest: Marketplace release `jZEyZHIVRCAIdwElx36fzy1f` queued at 18:41:23Z, 13 seconds after the upload, as observed by the Marketplace owner. No Retry was used. No duplicate tag, release or submission was created.
+
+Marketplace release `jZEyZHIVRCAIdwElx36fzy1f`, artifact `eMnWt0yTRtW0_DY9DxATNKUE`, was accepted at 18:46:45Z. It matches GitHub release `414144303`, installer asset `644795569`, the tagged source, size and SHA-256, and it is unrevoked. The Marketplace owner and the DGXBridge Codex agent jointly reconciled the manifest against the live contracts. The installed exe is `36b8997e…f8ef6`, with the expected 3-byte `UNK`→`NSS` bundle marker. The installed payload scan covered 848 files with zero findings, and saved configuration, identity and peer fingerprints were unchanged. Not proven for 0.3.0: a fresh Spark run, a later-version updater lifecycle and taskbar behavior.
