@@ -4,15 +4,19 @@
   "assetId": null,
   "sourceCommit": null,
   "tag": null,
-  "version": "0.1.0-beta.1",
+  "version": "0.3.1",
   "installer": {
     "filename": null,
     "localPath": null
   },
   "requirements": {
-    "minimumOs": null,
-    "memoryGb": null,
+    "minimumOs": "0",
+    "memoryGb": 0,
     "diskMb": null
+  },
+  "testedHost": {
+    "os": null,
+    "memoryGb": null
   },
   "artwork": {
     "icon": {"url": null, "localPath": null},
