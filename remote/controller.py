@@ -10,7 +10,10 @@ import argparse
 import base64
 import contextlib
 import hashlib
+import ipaddress
+import itertools
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -47,6 +50,35 @@ DENY_DIRS = {".git", "target", "node_modules", "dist", "build", "__pycache__",
 DENY_SUFFIX = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".ppk", ".ovpn", ".tfvars"}
 DENY_NAMES = re.compile(r"^(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:\.pub)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials(?:\..*)?|authorized_keys|known_hosts|nvsync\..*)$", re.I)
 SECRET = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-\d|(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}")
+# Network link report. A leading letter or digit keeps a name from reading as an iw/nmcli option.
+IFNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$")
+DRIVER = re.compile(r"^[a-z0-9_-]{1,32}$")
+IW_PATHS = ("/usr/sbin/iw", "/sbin/iw")
+NMCLI_PATHS = ("/usr/bin/nmcli",)
+TOOL_ENV = {"LC_ALL": "C", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+SIOCGIFADDR = 0x8915
+MAX_IFACES = 1024
+MAX_WIRED = 16
+PROBE_DEADLINE = 2.5
+SYS_READ = 4096
+PROC_READ = CHUNK
+TCP_READ = 8 * CHUNK
+TOOL_READ = 64 * 1024
+RTF_UP, RTF_GATEWAY, RTF_REJECT = 0x0001, 0x0002, 0x0200
+LINK_KINDS = ("wired", "wifi", "virtual", "unknown")
+OPERSTATES = ("up", "down", "dormant", "lowerlayerdown", "notpresent", "testing", "unknown")
+WIFI_BANDS = ("2.4", "5", "6", "multi")
+WIFI_WIDTHS = (20, 40, 80, 160, 320)
+WIFI_SOURCES = ("iw", "nmcli", "proc")
+# Line-anchored: iw escapes control characters in SSIDs, so an SSID cannot start a line.
+IW_FREQ = re.compile(r"^[ \t]*freq:[ \t]*(\d{4})(?:\.\d+)?[ \t]*$", re.M)
+IW_SIGNAL = re.compile(r"^[ \t]*signal:[ \t]*(-\d{1,3})(?:\.\d+)?[ \t]*(?:\[[-\d, ]*\][ \t]*)?dBm", re.M)
+IW_RATE = re.compile(r"^[ \t]*(tx|rx) bitrate:[ \t]*(\d{1,5}(?:\.\d+)?)[ \t]*MBit/s", re.M)
+IW_CHANNEL = re.compile(r"^[ \t]*channel[ \t]+(\d{1,3})[ \t]+\((\d{4})(?:\.\d+)?[ \t]*MHz\),[ \t]*width:[ \t]*(\d{2,3})[ \t]*MHz", re.M)
+NMCLI_ARGS = ("-t", "-e", "yes", "-f", "ACTIVE,FREQ,CHAN,BANDWIDTH", "device", "wifi", "list", "ifname")
+# nmcli prints fields in the requested order (FREQ before CHAN); the other order is also accepted.
+NMCLI_FREQ_FIRST = re.compile(r"^yes:(\d{4}) MHz:(\d{1,3}):(\d{2,3}) MHz$", re.M)
+NMCLI_CHAN_FIRST = re.compile(r"^yes:(\d{1,3}):(\d{4}) MHz:(\d{2,3}) MHz$", re.M)
 
 
 class Rejected(Exception):
@@ -152,6 +184,454 @@ def hardware_capacity():
     return {"cpu_count": os.cpu_count() or 0, "memory_gb": memory}
 
 
+def bounded_text(path, limit=SYS_READ):
+    # sysfs reports EINVAL for carrier/speed on a link that is down; that is unknown, not an error.
+    try:
+        with open(path, "rb") as stream:
+            return stream.read(limit).decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return None
+
+
+def uevent_values(path):
+    values = {}
+    for line in (bounded_text(path) or "").splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key] = value
+    return values
+
+
+def sys_positive(path):
+    try:
+        value = int((bounded_text(path) or "").strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def sys_carrier(path):
+    return {"1": True, "0": False}.get((bounded_text(path) or "").strip())
+
+
+def sys_operstate(path):
+    value = (bounded_text(path) or "").strip()
+    return value if value in OPERSTATES else None
+
+
+def link_kind(entry):
+    if not os.path.lexists(entry / "device"):
+        return "virtual"
+    if os.path.lexists(entry / "phy80211") or uevent_values(entry / "uevent").get("DEVTYPE") == "wlan":
+        return "wifi"
+    return "wired" if (bounded_text(entry / "type") or "").strip() in ("1", "32") else "unknown"
+
+
+def native_ipv4(text):
+    # /proc/net/route and /proc/net/tcp print a network-order address as a host-order word.
+    raw = bytes.fromhex(text)
+    if len(raw) != 4:
+        raise ValueError("IPv4 field")
+    return ipaddress.IPv4Address(raw[::-1] if sys.byteorder == "little" else raw)
+
+
+def native_ipv6(text):
+    # /proc/net/tcp6 prints four host-order words.
+    raw = bytes.fromhex(text)
+    if len(raw) != 16:
+        raise ValueError("IPv6 field")
+    if sys.byteorder == "little":
+        raw = b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4))
+    return ipaddress.IPv6Address(raw)
+
+
+def network_ipv6(text):
+    # /proc/net/ipv6_route and /proc/net/if_inet6 print network byte order.
+    raw = bytes.fromhex(text)
+    if len(raw) != 16:
+        raise ValueError("IPv6 field")
+    return ipaddress.IPv6Address(raw)
+
+
+def route_table(proc_root):
+    """Usable main-table routes as (interface, network, metric, flags)."""
+    routes = []
+    for line in (bounded_text(proc_root / "net" / "route", PROC_READ) or "").splitlines()[1:]:
+        parts = line.split()
+        try:
+            network = ipaddress.IPv4Network((native_ipv4(parts[1]), str(native_ipv4(parts[7]))), strict=False)
+            routes.append((parts[0], network, int(parts[6]), int(parts[3], 16)))
+        except (IndexError, ValueError):
+            continue
+    for line in (bounded_text(proc_root / "net" / "ipv6_route", PROC_READ) or "").splitlines():
+        parts = line.split()
+        try:
+            network = ipaddress.IPv6Network((network_ipv6(parts[0]), int(parts[1], 16)), strict=False)
+            routes.append((parts[9], network, int(parts[5], 16), int(parts[8], 16)))
+        except (IndexError, ValueError):
+            continue
+    return [r for r in routes if IFNAME.fullmatch(r[0]) and r[0] != "lo" and r[3] & RTF_UP and not r[3] & RTF_REJECT]
+
+
+def lowest_default(routes, allowed):
+    # IPv4 first: an IPv6 router advertisement must not outrank the LAN default.
+    for version in (4, 6):
+        candidates = [(metric, name) for name, network, metric, _ in routes
+                      if network.version == version and not network.prefixlen and allowed(name)]
+        if candidates:
+            return min(candidates)[1]
+    return None
+
+
+def route_lookup(routes, address, connected=False):
+    best = None
+    for name, network, metric, flags in routes:
+        if network.version != address.version or address not in network:
+            continue
+        if connected and (flags & RTF_GATEWAY or not network.prefixlen):
+            continue
+        key = (-network.prefixlen, metric, name)
+        best = key if best is None or key < best else best
+    return best[2] if best else None
+
+
+def ssh_address(token):
+    address, _, zone = token.partition("%")
+    if zone and not IFNAME.fullmatch(zone):
+        raise ValueError("zone")
+    ip = ipaddress.ip_address(address)
+    if ip.version == 6 and ip.ipv4_mapped:
+        return ip.ipv4_mapped, None
+    if zone and ip.version != 6:
+        raise ValueError("zone")
+    return ip, zone or None
+
+
+def ssh_session(environ):
+    """Parse SSH_CONNECTION; these addresses stay local to the probe and never reach output."""
+    value = environ.get("SSH_CONNECTION")
+    if not isinstance(value, str) or len(value) > 256:
+        return None
+    tokens = value.split()
+    if len(tokens) != 4 or not all(re.fullmatch(r"[0-9]{1,5}", tokens[i]) for i in (1, 3)):
+        return None
+    try:
+        client, _ = ssh_address(tokens[0])
+        server, zone = ssh_address(tokens[2])
+    except ValueError:
+        return None
+    client_port, server_port = int(tokens[1]), int(tokens[3])
+    if client.version != server.version or not (0 < client_port < 65536 and 0 < server_port < 65536):
+        return None
+    return client, client_port, server, server_port, zone
+
+
+def tcp_endpoint(text, decode):
+    address, _, port = text.partition(":")
+    ip = decode(address)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip, int(port, 16)
+
+
+def tcp_established(proc_root, client, client_port, server, server_port):
+    # An inherited SSH_CONNECTION (for example under sparkdev-link) is stale unless
+    # its exact 4-tuple is a live ESTABLISHED socket.
+    local, remote, suffix = (server, server_port), (client, client_port), ":%04X" % server_port
+    for name, decode in (("tcp", native_ipv4), ("tcp6", native_ipv6)):
+        for line in (bounded_text(proc_root / "net" / name, TCP_READ) or "").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 4 or parts[3] != "01" or not parts[1].upper().endswith(suffix):
+                continue
+            try:
+                if tcp_endpoint(parts[1], decode) == local and tcp_endpoint(parts[2], decode) == remote:
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def interface_ipv4(name):
+    """Primary IPv4 address of one interface via SIOCGIFADDR on an unbound socket."""
+    import fcntl
+    import socket
+    import struct
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            reply = fcntl.ioctl(sock.fileno(), SIOCGIFADDR, struct.pack("256s", name.encode("ascii")))
+        except OSError:
+            return None
+    return ipaddress.IPv4Address(reply[20:24])
+
+
+def address_owner(server, zone, names, proc_root, routes, ipv4_addr):
+    if zone:
+        return zone if zone in names else None
+    if server.version == 6:
+        for line in (bounded_text(proc_root / "net" / "if_inet6", PROC_READ) or "").splitlines():
+            parts = line.split()
+            try:
+                if len(parts) >= 6 and parts[5] in names and network_ipv6(parts[0]) == server:
+                    return parts[5]
+            except ValueError:
+                continue
+        return None
+    for name in names:
+        try:
+            found = ipv4_addr(name)
+            if found is not None and ipaddress.ip_address(str(found)) == server:
+                return name
+        except (OSError, ValueError):
+            continue
+    # SIOCGIFADDR reports only the primary address; a secondary one falls back to its connected route.
+    return route_lookup(routes, server, connected=True)
+
+
+def carrier_member(base, name, kinds):
+    """First physical lower_* member with carrier, through at most three stacked layers."""
+    frontier, seen = [name], {name}
+    for _ in range(3):
+        physical, virtual = [], []
+        for current in frontier:
+            try:
+                members = sorted(entry[6:] for entry in os.listdir(base / current) if entry.startswith("lower_"))
+            except OSError:
+                continue
+            for member in members[:MAX_IFACES]:
+                if member in kinds and member not in seen:
+                    seen.add(member)
+                    (virtual if kinds[member] == "virtual" else physical).append(member)
+        for member in physical:
+            if sys_carrier(base / member / "carrier"):
+                return member
+        frontier = virtual
+    return None
+
+
+def frequency_band(frequency):
+    if frequency == 2484:
+        return "2.4", 14
+    if frequency == 5935:
+        return "6", 2
+    if 2412 <= frequency <= 2472:
+        band, base = "2.4", 2407
+    elif 5150 <= frequency <= 5895:
+        band, base = "5", 5000
+    elif 5925 <= frequency <= 7125:
+        band, base = "6", 5950
+    else:
+        return None, None
+    channel, remainder = divmod(frequency - base, 5)
+    return band, channel if not remainder and channel >= 1 else None
+
+
+def wireless_level(proc_root, name):
+    for line in (bounded_text(proc_root / "net" / "wireless", PROC_READ) or "").splitlines()[2:]:
+        label, separator, rest = line.partition(":")
+        if separator and label.strip() == name:
+            try:
+                level = float(rest.split()[2])
+            except (IndexError, ValueError):
+                return None
+            return int(level) if math.isfinite(level) else None
+    return None
+
+
+def run_tool(argv, timeout):
+    """Run one fixed-path probe tool: argv only, fixed environment, no stdin or stderr."""
+    result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            env=TOOL_ENV, timeout=timeout, check=False)
+    return result.stdout[:TOOL_READ] if result.returncode == 0 else None
+
+
+def wifi_detail(name, run, proc_root, deadline):
+    """Radio facts for one Wi-Fi interface. Raw tool text is parsed here and discarded, never logged."""
+    detail = {"interface": name, "band": None, "channel": None, "frequency_mhz": None, "width_mhz": None,
+              "tx_bitrate_mbps": None, "rx_bitrate_mbps": None, "signal_dbm": None, "links": None, "source": None}
+
+    def tool(paths, args):
+        for path in paths:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return ""
+            try:
+                output = run([path, *args], min(1.0, remaining))
+            except OSError:
+                continue  # Absent or not executable at this fixed path.
+            except (subprocess.SubprocessError, ValueError):
+                return ""
+            return output[:TOOL_READ].decode("utf-8", "replace") if isinstance(output, bytes) else ""
+        return ""
+
+    def tune(channels):
+        if len(channels) >= 2:
+            # Multi-link operation: never claim one band unless it is the only link.
+            detail.update(band="multi", links=len(channels))
+        elif channels:
+            channel, frequency, width = channels[0]
+            band, computed = frequency_band(frequency)
+            detail.update(band=band, channel=channel or computed, frequency_mhz=frequency, width_mhz=width, links=1)
+
+    link = tool(IW_PATHS, ["dev", name, "link"])
+    info = tool(IW_PATHS, ["dev", name, "info"])
+    channels = [(int(c), int(f), int(w)) for c, f, w in IW_CHANNEL.findall(info)]
+    frequencies = [int(f) for f in IW_FREQ.findall(link)]
+    if len(frequencies) > max(1, len(channels)):
+        channels = [(None, f, None) for f in frequencies]
+    elif not channels and frequencies:
+        channels = [(None, frequencies[0], None)]
+    tune(channels)
+    rates = {}
+    for direction, value in IW_RATE.findall(link):
+        rates.setdefault(direction, round(float(value), 1))
+    signal = IW_SIGNAL.search(link)
+    detail.update(tx_bitrate_mbps=rates.get("tx"), rx_bitrate_mbps=rates.get("rx"),
+                  signal_dbm=int(signal.group(1)) if signal else None)
+    if any(detail[key] is not None for key in ("band", "tx_bitrate_mbps", "rx_bitrate_mbps", "signal_dbm")):
+        detail["source"] = "iw"
+    if detail["band"] is None:
+        # Requests only these four fields with no rescan, so SSID and BSSID are never read.
+        text = tool(NMCLI_PATHS, [*NMCLI_ARGS, name, "--rescan", "no"])
+        active = [(int(c), int(f), int(w)) for f, c, w in NMCLI_FREQ_FIRST.findall(text)]
+        active += [(int(c), int(f), int(w)) for c, f, w in NMCLI_CHAN_FIRST.findall(text)]
+        tune(active)
+        if active:
+            detail["source"] = detail["source"] or "nmcli"
+    if detail["signal_dbm"] is None:
+        detail["signal_dbm"] = wireless_level(proc_root, name)
+        if detail["signal_dbm"] is not None:
+            detail["source"] = detail["source"] or "proc"
+    return detail
+
+
+def network_link(sys_root=Path("/sys"), proc_root=Path("/proc"), environ=os.environ, run=None, ipv4_addr=None, os_name=None):
+    """Observe which link carries this controller's traffic. The raw result is only for network_view."""
+    if (os_name or os.name) != "posix":
+        return {"observed": False}
+    deadline = time.monotonic() + PROBE_DEADLINE
+    run, ipv4_addr = run or run_tool, ipv4_addr or interface_ipv4
+    base, proc_root = Path(sys_root) / "class" / "net", Path(proc_root)
+    try:
+        with os.scandir(base) as entries:
+            listed = [entry.name for entry in itertools.islice(entries, MAX_IFACES)]
+    except OSError:
+        return {"observed": False}
+    names = sorted(name for name in listed if IFNAME.fullmatch(name))
+    # Classify every entry before any cap: Docker veth*/br-* names sort before wl*.
+    kinds = {name: link_kind(base / name) for name in names}
+    routes = route_table(proc_root)
+    defaults = {name for name, network, _, _ in routes if not network.prefixlen}
+    basis, active, egress = "unknown", None, None
+    session = ssh_session(environ)
+    if session and tcp_established(proc_root, *session[:4]):
+        client, _, server, _, zone = session
+        active = address_owner(server, zone, names, proc_root, routes, ipv4_addr)
+        if active:
+            basis = "ssh_session"
+            # A tunnel's policy routing is invisible in the main table, and a link-local
+            # zone already fixes the egress; only a physical owner gets an egress check.
+            if not zone and kinds.get(active) != "virtual":
+                route = route_lookup(routes, client)
+                egress = route if route and route != active else None
+    if active is None:
+        active = lowest_default(routes, lambda name: name in kinds)
+        basis = "default_route" if active else "unknown"
+    underlay = None
+    if active and kinds.get(active) == "virtual":
+        member = carrier_member(base, active, kinds) or lowest_default(routes, lambda name: kinds.get(name, "virtual") != "virtual")
+        if member:
+            underlay = {"interface": member, "kind": kinds[member]}
+
+    def port(name):
+        # Never read `address`: the report carries no MAC.
+        return {"operstate": sys_operstate(base / name / "operstate"), "speed_mbps": sys_positive(base / name / "speed")}
+
+    active_view = None
+    if active:
+        active_view = {"interface": active, "kind": kinds.get(active, "unknown"), **port(active)}
+        if egress:
+            active_view["egress_interface"] = egress
+    wired = [{"interface": name, "carrier": sys_carrier(base / name / "carrier"), **port(name),
+              "driver": uevent_values(base / name / "device" / "uevent").get("DRIVER"), "default_route": name in defaults}
+             for name in names if kinds[name] == "wired"]
+    wired.sort(key=lambda p: (p["carrier"] is not True, p["interface"]))
+    radio = next((n for n in (active, underlay and underlay["interface"]) if n and kinds.get(n) == "wifi"), None)
+    return {"observed": True, "basis": basis, "active": active_view, "underlay": underlay, "wired": wired[:MAX_WIRED],
+            "wired_up": sum(p["carrier"] is True for p in wired),
+            "wired_lan_up": sum(p["carrier"] is True and p["default_route"] for p in wired),
+            "wifi": wifi_detail(radio, run, proc_root, deadline) if radio else None}
+
+
+def network_view(raw):
+    """The only path from probe data to RPC output: rebuild from whitelisted, bounded fields.
+
+    Additive fields keep v:1; only a breaking change bumps v.
+    """
+    if not isinstance(raw, dict) or raw.get("observed") is not True:
+        return {"v": 1, "observed": False, "basis": "unknown"}
+
+    def name(value):
+        return value if isinstance(value, str) and IFNAME.fullmatch(value) else None
+
+    def bounded(value, low, high, real=False):
+        if type(value) is int or (real and type(value) is float and math.isfinite(value)):
+            return value if low <= value <= high else None
+        return None
+
+    def choice(value, options):
+        return value if isinstance(value, str) and value in options else None
+
+    def mapping(value):
+        return value if isinstance(value, dict) else {}
+
+    def link(value, detailed):
+        value = mapping(value)
+        interface = name(value.get("interface"))
+        if interface is None:
+            return None
+        view = {"interface": interface, "kind": choice(value.get("kind"), LINK_KINDS) or "unknown"}
+        if detailed:
+            view.update(operstate=choice(value.get("operstate"), OPERSTATES), speed_mbps=bounded(value.get("speed_mbps"), 1, 1000000))
+            egress = name(value.get("egress_interface"))
+            if egress and egress != interface:
+                view["egress_interface"] = egress
+        return view
+
+    wired = []
+    ports = raw.get("wired")
+    for item in ports if isinstance(ports, list) else ():
+        item = mapping(item)
+        interface = name(item.get("interface"))
+        if interface is None:
+            continue
+        driver = item.get("driver")
+        wired.append({"interface": interface, "carrier": item.get("carrier") if type(item.get("carrier")) is bool else None,
+                      "operstate": choice(item.get("operstate"), OPERSTATES), "speed_mbps": bounded(item.get("speed_mbps"), 1, 1000000),
+                      "driver": driver if isinstance(driver, str) and DRIVER.fullmatch(driver) else None,
+                      "default_route": item.get("default_route") is True})
+        if len(wired) == MAX_WIRED:
+            break
+    wired_up = bounded(raw.get("wired_up"), 0, MAX_IFACES)
+    wired_lan_up = bounded(raw.get("wired_lan_up"), 0, MAX_IFACES)
+    radio = mapping(raw.get("wifi"))
+    wifi = None
+    if name(radio.get("interface")):
+        wifi = {"interface": radio["interface"], "band": choice(radio.get("band"), WIFI_BANDS),
+                "channel": bounded(radio.get("channel"), 1, 233), "frequency_mhz": bounded(radio.get("frequency_mhz"), 2400, 7200),
+                "width_mhz": radio.get("width_mhz") if type(radio.get("width_mhz")) is int and radio.get("width_mhz") in WIFI_WIDTHS else None,
+                "tx_bitrate_mbps": bounded(radio.get("tx_bitrate_mbps"), 0, 50000, real=True),
+                "rx_bitrate_mbps": bounded(radio.get("rx_bitrate_mbps"), 0, 50000, real=True),
+                "signal_dbm": bounded(radio.get("signal_dbm"), -120, -1), "links": bounded(radio.get("links"), 1, 3),
+                "source": choice(radio.get("source"), WIFI_SOURCES)}
+    active = link(raw.get("active"), True)
+    basis = choice(raw.get("basis"), ("ssh_session", "default_route")) if active else None
+    return {"v": 1, "observed": True, "basis": basis or "unknown", "active": active,
+            "underlay": link(raw.get("underlay"), False), "wired": wired,
+            "wired_up": sum(p["carrier"] is True for p in wired) if wired_up is None else wired_up,
+            "wired_lan_up": sum(p["carrier"] is True and p["default_route"] for p in wired) if wired_lan_up is None else wired_lan_up,
+            "wifi": wifi}
+
+
 def validate_resources(value, hardware):
     fields(value, RESOURCE_FIELDS)
     cpus = integer(hardware["cpu_count"], 1, 65536)
@@ -207,7 +687,7 @@ class Docker:
 
 
 class Controller:
-    def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None):
+    def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None, link_probe=None):
         self.root = Path(root or os.environ.get("SPARKDEV_STATE", Path.home() / "sparkdev/state")).absolute()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.root.is_symlink():
@@ -254,6 +734,7 @@ class Controller:
         self.docker = docker or Docker()
         self.memory_probe = memory_probe or available_gb
         self.hardware_probe = hardware_probe or hardware_capacity
+        self.link_probe = link_probe or network_link
 
     def resource_policy(self):
         hardware = self.hardware_probe()
@@ -716,11 +1197,17 @@ class Controller:
                          "state": "lease_lost" if row["state"] == "running" and row["expires"] < time.time() else row["state"],
                          "exit_code": row["exit_code"], "created_at": row["created"], "expires_at": row["expires"], "next_offset": row["log_offset"]})
         last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()
+        # The link report is observation only: a probe failure never fails status.
+        network = {"v": 1, "observed": False, "basis": "unknown"}
+        try:
+            network = network_view(self.link_probe())
+        except Exception:
+            pass
         # Every preparation, whatever its runtime, needs the Python image for its proxy.
         return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(registry),
                 "preparable_runtimes": list(registry) if "python" in registry else [],
                 "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": bool(last and time.time() - float(last[0]) < 15)},
-                **policy, "dependency_preparation": "isolated_allowlist_proxy"}
+                **policy, "dependency_preparation": "isolated_allowlist_proxy", "network": network}
 
     def doctor(self, request):
         fields(request, ("v", "op"))

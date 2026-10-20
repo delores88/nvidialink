@@ -1,16 +1,24 @@
 import base64
+import ipaddress
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
+import controller
 from controller import Controller, Rejected, canonical, sha, CHUNK, SECRET
+from controller import IW_PATHS, NMCLI_PATHS, TOOL_ENV, TOOL_READ, frequency_band, network_link, network_view, run_tool
 
 IMAGE = "sha256:" + "a" * 64
 CUDA_IMAGE = "sha256:" + "c" * 64
 PROJECT = "b" * 64
+# Existing tests never probe the host network; link tests use their own fixtures.
+NO_LINK = lambda: {"observed": False}
 
 
 class FakeDocker:
@@ -59,7 +67,7 @@ class ControllerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "state"
         self.docker = FakeDocker()
-        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120})
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK)
         (self.root.parent / "runtimes.json").write_text(json.dumps({"v": 1, "runtimes": {"python": {"image": IMAGE, "provenance": "test fixture"}}}))
 
     def tearDown(self):
@@ -152,7 +160,7 @@ class ControllerTests(unittest.TestCase):
         self.c.tick()
         self.assertEqual(self.c.get_job(first["job"])["state"], "running")
         self.c.db.close()
-        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120})
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK)
         self.c.tick()
         self.assertEqual(sum(call[0] == "create" for call in self.docker.calls), 1)
         self.assertEqual(sum(call[0] == "start" for call in self.docker.calls), 1)
@@ -252,7 +260,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(saved["limits"], limits)
         self.assertTrue(saved["policy_saved"])
         self.c.db.close()
-        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120})
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK)
         self.assertEqual(self.rpc("status")["limits"], limits)
         for key, value in (("cpu_per_job", 21), ("cpu_per_job", 13), ("client_cpu", 19),
                            ("cpu_total", 0), ("memory_gb_total", 100), ("memory_gb_per_job", 81),
@@ -570,6 +578,498 @@ class ControllerTests(unittest.TestCase):
     def test_unknown_fields_and_types_fail_closed(self):
         for request in ({"v": True, "op": "status"}, {"v": 1, "op": "status", "network": "host"}, {"v": 1, "op": []}, {"v": 1, "op": "missing", "hashes": ["../oops"]}):
             self.assertFalse(self.c.rpc(request)["ok"], request)
+
+
+SSID = "OwnerHome-5521"
+BSSID = "a4:2b:b0:11:22:33"
+MAC = "48:b0:2d:aa:bb:cc"
+CLIENT_IP = "192.168.1.50"
+SPARK_IP = "192.168.1.20"
+WIRED_IP = "192.168.1.21"
+GATEWAY = "192.168.1.1"
+ANY, MASK24 = "0.0.0.0", "255.255.255.0"
+SECRETS = (SSID, BSSID, MAC, CLIENT_IP, SPARK_IP, WIRED_IP, GATEWAY)
+IW_LINK = f"""Connected to {BSSID} (on wlP9s9)
+\tSSID: {SSID}
+\tfreq: 2462
+\tRX: 1234567 bytes (2345 packets)
+\tTX: 234567 bytes (1234 packets)
+\tsignal: -52 dBm
+\trx bitrate: 72.2 MBit/s MCS 7 short GI
+\ttx bitrate: 144.4 MBit/s MCS 15 40MHz short GI
+\tbss flags:\tshort-slot-time
+\tdtim period:\t1
+\tbeacon int:\t100
+"""
+IW_INFO = f"""Interface wlP9s9
+\tifindex 4
+\twdev 0x1
+\taddr {MAC}
+\tssid {SSID}
+\ttype managed
+\twiphy 0
+\tchannel 11 (2462 MHz), width: 20 MHz, center1: 2462 MHz
+\ttxpower 22.00 dBm
+"""
+NMCLI = ["/usr/bin/nmcli", "-t", "-e", "yes", "-f", "ACTIVE,FREQ,CHAN,BANDWIDTH", "device", "wifi", "list",
+         "ifname", "wlP9s9", "--rescan", "no"]
+NO_RADIO = {"tx_bitrate_mbps": None, "rx_bitrate_mbps": None}
+
+
+def native4(address):
+    raw = ipaddress.IPv4Address(address).packed
+    return (raw[::-1] if sys.byteorder == "little" else raw).hex().upper()
+
+
+def native16(address):
+    raw = ipaddress.IPv6Address(address).packed
+    if sys.byteorder == "little":
+        raw = b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4))
+    return raw.hex().upper()
+
+
+def put(path, text):
+    path.write_bytes(text.encode())
+
+
+class LinkFixture:
+    """Synthetic /sys and /proc trees; `device` is a plain directory, as the spec requires."""
+
+    def __init__(self, root):
+        self.sys, self.proc = root / "sys", root / "proc"
+        (self.sys / "class" / "net").mkdir(parents=True)
+        (self.proc / "net").mkdir(parents=True)
+        self.files = {name: [] for name in ("route", "ipv6_route", "tcp", "tcp6", "if_inet6", "wireless")}
+        self.addresses, self.outputs, self.absent, self.calls, self.environ = {}, {}, set(), [], {}
+
+    def iface(self, name, kind, carrier=None, operstate="down", speed=None, driver=None, lower=(), ipv4=None, wlan="phy80211"):
+        entry = self.sys / "class" / "net" / name
+        entry.mkdir()
+        put(entry / "operstate", operstate + "\n")
+        put(entry / "type", "32\n" if kind == "infiniband" else "1\n")
+        put(entry / "address", MAC + "\n")
+        uevent = f"INTERFACE={name}\n"
+        if kind != "virtual":
+            (entry / "device").mkdir()
+            put(entry / "device" / "uevent", f"DRIVER={driver}\nPCI_SLOT_NAME=0000:01:00.0\n" if driver else "")
+        if kind == "wifi" and wlan == "phy80211":
+            (entry / "phy80211").mkdir()
+        elif kind == "wifi":
+            uevent += "DEVTYPE=wlan\n"
+        put(entry / "uevent", uevent)
+        if carrier is not None:  # A missing file stands in for EINVAL on a down link.
+            put(entry / "carrier", "1\n" if carrier else "0\n")
+        if speed is not None:
+            put(entry / "speed", f"{speed}\n")
+        for member in lower:
+            (entry / ("lower_" + member)).mkdir()
+        if ipv4:
+            self.addresses[name] = ipaddress.IPv4Address(ipv4)
+
+    def route(self, name, destination, mask, gateway=ANY, metric=0):
+        flags = 0x1 | (0x2 if gateway != ANY else 0)
+        self.files["route"].append(f"{name}\t{native4(destination)}\t{native4(gateway)}\t{flags:04X}\t0\t0\t{metric}\t{native4(mask)}\t0\t0\t0")
+
+    def route6(self, name, destination, prefix, metric=1024, flags=0x3):
+        self.files["ipv6_route"].append(f"{ipaddress.IPv6Address(destination).packed.hex()} {prefix:02x} {'0' * 32} 00 "
+                                        f"{'0' * 32} {metric:08x} 00000001 00000000 {flags:08x} {name:>8}")
+
+    def socket(self, client, client_port, server, server_port, state="01"):
+        six = ":" in server
+        encode = native16 if six else native4
+        self.files["tcp6" if six else "tcp"].append(
+            f"   0: {encode(server)}:{server_port:04X} {encode(client)}:{client_port:04X} {state} "
+            "00000000:00000000 00:00000000 00000000  1000        0 4242 1 0000000000000000 20 4 30 10 -1")
+
+    def session(self, client, client_port, server, server_port, live=True):
+        self.environ["SSH_CONNECTION"] = f"{client} {client_port} {server} {server_port}"
+        if live:
+            self.socket(client.split("%")[0], client_port, server.split("%")[0], server_port)
+
+    def inet6(self, name, address, prefix=64):
+        self.files["if_inet6"].append(f"{ipaddress.IPv6Address(address).packed.hex()} 04 {prefix:02x} 00 80 {name:>8}")
+
+    def wireless(self, name, level):
+        self.files["wireless"].append(f"{name}: 0000   70.  {level}.  -256        0      0      0      0      0        0")
+
+    def write(self):
+        headers = {"route": "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT",
+                   "tcp": "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+                   "tcp6": "  sl  local_address                         remote_address                        st tx_queue",
+                   "wireless": "Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n"
+                               " face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22"}
+        for name, lines in self.files.items():
+            put(self.proc / "net" / name, "\n".join(([headers[name]] if name in headers else []) + lines) + "\n")
+
+    def run(self, argv, timeout):
+        self.calls.append((list(argv), timeout))
+        if argv[0] in self.absent:
+            raise FileNotFoundError(argv[0])
+        value = self.outputs.get("nmcli" if argv[0] in NMCLI_PATHS else argv[-1])
+        if isinstance(value, BaseException):
+            raise value
+        return value.encode() if isinstance(value, str) else value
+
+    def ipv4(self, name):
+        return self.addresses.get(name)
+
+    def probe(self):
+        self.write()
+        return network_link(self.sys, self.proc, self.environ, self.run, self.ipv4, os_name="posix")
+
+    def view(self):
+        return network_view(self.probe())
+
+
+class NetworkLinkTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.f = LinkFixture(Path(self.tmp.name))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def reports(self, probe):
+        c = Controller(Path(self.tmp.name) / "state", FakeDocker(), lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=probe)
+        try:
+            return c.rpc({"v": 1, "op": "status"}), c.rpc({"v": 1, "op": "doctor"})
+        finally:
+            c.db.close()
+
+    def owner_spark(self):
+        """The owner's Spark: 2.4 GHz Wi-Fi, all five wired ports down, Docker running."""
+        f = self.f
+        f.iface("enP7s7", "wired", carrier=False, driver="r8127", ipv4=None)
+        for name in ("enp1s0f0np0", "enp1s0f1np1", "enP2p1s0f0np0", "enP2p1s0f1np1"):
+            f.iface(name, "wired", carrier=False, driver="mlx5_core")
+        f.iface("wlP9s9", "wifi", carrier=True, operstate="up", driver="mt7925e", ipv4=SPARK_IP)
+        f.iface("docker0", "virtual", carrier=False, ipv4="172.17.0.1")
+        f.iface("lo", "virtual", carrier=True, operstate="unknown", ipv4="127.0.0.1")
+        f.route("wlP9s9", ANY, ANY, gateway=GATEWAY, metric=600)
+        f.route("wlP9s9", "192.168.1.0", MASK24, metric=600)
+        f.route("docker0", "172.17.0.0", "255.255.0.0")
+        f.session(CLIENT_IP, 51234, SPARK_IP, 22)
+        f.outputs.update(link=IW_LINK, info=IW_INFO)
+
+    def test_owner_spark_on_2_4_ghz_with_every_wired_port_down(self):
+        self.owner_spark()
+        reads = []
+        real = controller.bounded_text
+        def spy(path, *args):
+            reads.append(Path(path).name)
+            return real(path, *args)
+        with mock.patch.object(controller, "bounded_text", spy):
+            status, doctor = self.reports(self.f.probe)
+        self.assertTrue(status["ok"] and doctor["ok"])
+        wired = [{"interface": name, "carrier": False, "operstate": "down", "speed_mbps": None,
+                  "driver": "r8127" if name == "enP7s7" else "mlx5_core", "default_route": False}
+                 for name in sorted(("enP7s7", "enp1s0f0np0", "enp1s0f1np1", "enP2p1s0f0np0", "enP2p1s0f1np1"))]
+        self.assertEqual(status["network"], {
+            "v": 1, "observed": True, "basis": "ssh_session",
+            "active": {"interface": "wlP9s9", "kind": "wifi", "operstate": "up", "speed_mbps": None},
+            "underlay": None, "wired": wired, "wired_up": 0, "wired_lan_up": 0,
+            "wifi": {"interface": "wlP9s9", "band": "2.4", "channel": 11, "frequency_mhz": 2462, "width_mhz": 20,
+                     "tx_bitrate_mbps": 144.4, "rx_bitrate_mbps": 72.2, "signal_dbm": -52, "links": 1, "source": "iw"}})
+        self.assertEqual(doctor["network"], status["network"])
+        for report in (status, doctor):
+            encoded = canonical(report)
+            for secret in SECRETS:
+                self.assertNotIn(secret.encode(), encoded, secret)
+        self.assertNotIn("address", reads)
+        self.assertEqual({tuple(argv) for argv, _ in self.f.calls},
+                         {(IW_PATHS[0], "dev", "wlP9s9", "link"), (IW_PATHS[0], "dev", "wlP9s9", "info")})
+        self.assertTrue(all(0 < timeout <= 1 for _, timeout in self.f.calls))
+
+    def test_hostile_ssid_line_supplies_no_radio_facts(self):
+        self.owner_spark()
+        hostile = "freq: 5180 signal: -10 dBm rx bitrate: 9999.0 MBit/s <img src=x> channel 36 (5180 MHz), width: 160 MHz"
+        self.f.outputs.update(link=IW_LINK.replace(SSID, hostile), info=IW_INFO.replace(SSID, hostile))
+        view = self.f.view()
+        wifi = view["wifi"]
+        self.assertEqual((wifi["band"], wifi["frequency_mhz"], wifi["width_mhz"], wifi["signal_dbm"], wifi["rx_bitrate_mbps"]),
+                         ("2.4", 2462, 20, -52, 72.2))
+        self.assertNotIn(b"img", canonical(view))
+        # With only the SSID lines left, nothing at all is claimed.
+        self.f.outputs.update(link=f"Connected to {BSSID} (on wlP9s9)\n\tSSID: {hostile}\n", info=f"Interface wlP9s9\n\tssid {hostile}\n")
+        self.f.calls.clear()
+        self.assertEqual(self.f.view()["wifi"], {"interface": "wlP9s9", "band": None, "channel": None, "frequency_mhz": None,
+                                                 "width_mhz": None, **NO_RADIO, "signal_dbm": None, "links": None, "source": None})
+        self.assertEqual(self.f.calls[-1][0], NMCLI)
+
+    def test_docker_interfaces_sorting_first_never_hide_wifi(self):
+        f = self.f
+        for index in range(20):
+            f.iface(f"veth{index:04x}a", "virtual", operstate="up")
+        for index in range(12):
+            f.iface(f"br-{index:012x}", "virtual", operstate="up")
+        f.iface("docker0", "virtual")
+        f.iface("-wl0", "wifi", carrier=True, operstate="up")  # Never a valid name; never reaches iw argv.
+        f.iface("wlP9s9", "wifi", carrier=True, operstate="up", wlan="devtype")
+        f.route("wlP9s9", ANY, ANY, gateway=GATEWAY, metric=600)
+        f.route("-wl0", ANY, ANY, gateway=GATEWAY, metric=1)
+        f.outputs.update(link=IW_LINK, info=IW_INFO)
+        self.assertGreater(sorted(os.listdir(f.sys / "class" / "net")).index("wlP9s9"), 30)
+        view = f.view()
+        self.assertEqual((view["basis"], view["active"]["interface"], view["active"]["kind"]), ("default_route", "wlP9s9", "wifi"))
+        self.assertEqual((view["wifi"]["band"], view["wifi"]["channel"]), ("2.4", 11))
+        self.assertEqual((view["wired"], view["wired_up"], view["wired_lan_up"]), ([], 0, 0))
+        self.assertFalse(any("-wl0" in argv for argv, _ in f.calls))
+
+    def test_wired_10_gigabit_never_runs_a_wifi_tool(self):
+        f = self.f
+        f.iface("enP7s7", "wired", carrier=True, operstate="up", speed=10000, driver="r8127", ipv4=WIRED_IP)
+        f.iface("wlP9s9", "wifi", carrier=False, operstate="down")
+        f.route("enP7s7", ANY, ANY, gateway=GATEWAY, metric=100)
+        f.route("enP7s7", "192.168.1.0", MASK24, metric=100)
+        f.session(CLIENT_IP, 51234, WIRED_IP, 22)
+        view = f.view()
+        self.assertEqual(view["active"], {"interface": "enP7s7", "kind": "wired", "operstate": "up", "speed_mbps": 10000})
+        self.assertEqual((view["basis"], view["wifi"], view["underlay"]), ("ssh_session", None, None))
+        self.assertEqual(view["wired"], [{"interface": "enP7s7", "carrier": True, "operstate": "up", "speed_mbps": 10000,
+                                          "driver": "r8127", "default_route": True}])
+        self.assertEqual((view["wired_up"], view["wired_lan_up"]), (1, 1))
+        self.assertEqual(f.calls, [])
+
+    def test_qsfp_carrier_without_default_route_is_not_lan(self):
+        f = self.f
+        f.iface("enP7s7", "wired", carrier=False, driver="r8127")
+        f.iface("enp1s0f0np0", "infiniband", carrier=True, operstate="up", speed=200000, driver="mlx5_core")
+        f.iface("wlP9s9", "wifi", carrier=True, operstate="up", ipv4=SPARK_IP)
+        f.route("wlP9s9", ANY, ANY, gateway=GATEWAY, metric=600)
+        f.route("enp1s0f0np0", "10.10.0.0", MASK24, metric=100)
+        f.outputs.update(link=IW_LINK, info=IW_INFO)
+        view = f.view()
+        self.assertEqual(view["wired"][0], {"interface": "enp1s0f0np0", "carrier": True, "operstate": "up", "speed_mbps": 200000,
+                                            "driver": "mlx5_core", "default_route": False})
+        self.assertEqual(view["wired"][1]["interface"], "enP7s7")
+        self.assertEqual((view["wired_up"], view["wired_lan_up"]), (1, 0))
+        self.assertEqual((view["active"]["interface"], view["wifi"]["band"]), ("wlP9s9", "2.4"))
+
+    def test_tailscale_session_reports_wifi_underlay(self):
+        f = self.f
+        f.iface("tailscale0", "virtual", operstate="unknown", ipv4="100.64.0.5")
+        f.iface("wlP9s9", "wifi", carrier=True, operstate="up", ipv4=SPARK_IP)
+        f.iface("enP7s7", "wired", carrier=False)
+        f.route("wlP9s9", ANY, ANY, gateway=GATEWAY, metric=600)
+        f.route("wlP9s9", "192.168.1.0", MASK24, metric=600)
+        f.session("100.101.102.103", 50000, "100.64.0.5", 22)
+        f.outputs.update(link=IW_LINK, info=IW_INFO)
+        view = f.view()
+        # Tunnel policy routing is not in the main table, so no egress claim is made.
+        self.assertEqual(view["active"], {"interface": "tailscale0", "kind": "virtual", "operstate": "unknown", "speed_mbps": None})
+        self.assertEqual((view["basis"], view["underlay"]), ("ssh_session", {"interface": "wlP9s9", "kind": "wifi"}))
+        self.assertEqual((view["wifi"]["interface"], view["wifi"]["band"]), ("wlP9s9", "2.4"))
+        self.assertNotIn(b"100.", canonical(view))
+
+    def test_bridge_underlay_prefers_lower_member_with_carrier(self):
+        f = self.f
+        f.iface("br0", "virtual", operstate="up", lower=("bond0",), ipv4=WIRED_IP)
+        f.iface("bond0", "virtual", operstate="up", lower=("enP7s7", "enp1s0f0np0"))
+        f.iface("enP7s7", "wired", carrier=False)
+        f.iface("enp1s0f0np0", "wired", carrier=True, operstate="up", speed=100000)
+        f.iface("wlP9s9", "wifi", carrier=True, operstate="up")
+        f.route("br0", ANY, ANY, gateway=GATEWAY, metric=100)
+        f.route("wlP9s9", ANY, ANY, gateway=GATEWAY, metric=600)
+        view = f.view()
+        self.assertEqual((view["basis"], view["active"]["interface"]), ("default_route", "br0"))
+        self.assertEqual((view["underlay"], view["wifi"]), ({"interface": "enp1s0f0np0", "kind": "wired"}, None))
+        self.assertEqual(f.calls, [])
+
+    def test_stale_ssh_connection_falls_back_to_default_route(self):
+        self.owner_spark()
+        f = self.f
+        f.iface("enP7s7-x", "wired", carrier=True, operstate="up", ipv4=WIRED_IP)
+        f.files["tcp"].clear()
+        f.session(CLIENT_IP, 51234, WIRED_IP, 22, live=False)
+        f.socket(CLIENT_IP, 51234, WIRED_IP, 22, state="06")  # TIME_WAIT
+        f.socket(CLIENT_IP, 51235, WIRED_IP, 22)  # A different client port
+        f.socket("192.168.1.51", 51234, WIRED_IP, 22)  # A different client
+        view = f.view()
+        self.assertEqual((view["basis"], view["active"]["interface"]), ("default_route", "wlP9s9"))
+        f.environ.clear()
+        self.assertEqual(f.view()["basis"], "default_route")
+        f.files["route"].clear()
+        empty = f.view()
+        self.assertEqual((empty["basis"], empty["active"], empty["underlay"], empty["wifi"]), ("unknown", None, None, None))
+
+    def test_ipv6_zone_mapped_and_global_addresses(self):
+        self.owner_spark()
+        f = self.f
+        f.iface("enP7s7-x", "wired", carrier=True, operstate="up", speed=10000, ipv4=WIRED_IP)
+        f.files["tcp"].clear()
+        f.session("fe80::1234%enP7s7-x", 50000, "fe80::abcd%enP7s7-x", 22)
+        self.assertEqual((f.view()["basis"], f.view()["active"]["interface"]), ("ssh_session", "enP7s7-x"))
+        for bad in ("fe80::1234%-x 50000 fe80::abcd%-x 22", "fe80::1234%enP7s7-x 50000 fe80::abcd%enP7s7-x/1 22",
+                    "192.168.1.50%enP7s7-x 50000 192.168.1.21%enP7s7-x 22", "fe80::1234 99999 fe80::abcd 22", "a b c"):
+            f.environ["SSH_CONNECTION"] = bad
+            self.assertEqual(f.view()["basis"], "default_route", bad)
+        f.files["tcp6"].clear()
+        f.session("::ffff:" + CLIENT_IP, 51234, "::ffff:" + WIRED_IP, 22)
+        self.assertEqual(f.view()["active"]["interface"], "enP7s7-x")
+        f.environ["SSH_CONNECTION"] = f"{CLIENT_IP} 51234 {WIRED_IP} 22"  # sshd unwraps; the socket stays mapped.
+        self.assertEqual((f.view()["basis"], f.view()["active"]["interface"]), ("ssh_session", "enP7s7-x"))
+        f.session("2001:db8::50", 40000, "2001:db8::21", 22)
+        f.inet6("enP7s7-x", "2001:db8::21")
+        f.route6("enP7s7-x", "2001:db8::", 64, metric=256)
+        view = f.view()
+        self.assertEqual((view["basis"], view["active"]["interface"]), ("ssh_session", "enP7s7-x"))
+        self.assertNotIn("egress_interface", view["active"])
+        self.assertNotIn(b"2001:db8", canonical(view))
+
+    def test_egress_reported_only_when_it_differs_from_owner(self):
+        f = self.f
+        f.iface("enP7s7", "wired", carrier=True, operstate="up", speed=10000, ipv4=WIRED_IP)
+        f.iface("wlP9s9", "wifi", carrier=True, operstate="up", ipv4=SPARK_IP)
+        f.route("wlP9s9", ANY, ANY, gateway=GATEWAY, metric=600)
+        f.route("wlP9s9", "192.168.1.0", MASK24, metric=600)
+        f.route("enP7s7", "192.168.1.0", MASK24, metric=700)
+        f.session(CLIENT_IP, 51234, WIRED_IP, 22)
+        view = f.view()
+        self.assertEqual(view["active"], {"interface": "enP7s7", "kind": "wired", "operstate": "up", "speed_mbps": 10000,
+                                          "egress_interface": "wlP9s9"})
+        self.assertEqual((view["wifi"], f.calls), (None, []))
+        # A secondary address is missed by SIOCGIFADDR; its connected route still names the owner.
+        f.addresses.clear()
+        f.route("enP7s7", "10.0.0.0", MASK24, metric=100)
+        f.files["tcp"].clear()
+        f.session("10.0.0.50", 40000, "10.0.0.21", 22)
+        view = f.view()
+        self.assertEqual((view["basis"], view["active"]["interface"]), ("ssh_session", "enP7s7"))
+        self.assertNotIn("egress_interface", view["active"])
+
+    def test_nmcli_when_iw_is_absent_and_proc_when_both_are(self):
+        self.owner_spark()
+        f = self.f
+        f.absent.update(IW_PATHS)
+        f.wireless("wlP9s9", -61)
+        expected = {"interface": "wlP9s9", "band": "5", "channel": 36, "frequency_mhz": 5180, "width_mhz": 80,
+                    **NO_RADIO, "signal_dbm": -61, "links": 1, "source": "nmcli"}
+        for listing in ("no:2412 MHz:1:20 MHz\nyes:5180 MHz:36:80 MHz\nno:5955 MHz:1:160 MHz\n", "yes:36:5180 MHz:80 MHz\n"):
+            f.outputs["nmcli"] = listing
+            f.calls.clear()
+            self.assertEqual(f.view()["wifi"], expected)
+            self.assertEqual([argv[0] for argv, _ in f.calls], [*IW_PATHS, *IW_PATHS, NMCLI_PATHS[0]])
+            self.assertEqual(f.calls[-1][0], NMCLI)
+        self.assertFalse(any("SSID" in arg or "BSSID" in arg for argv, _ in f.calls for arg in argv))
+        f.absent.update(NMCLI_PATHS)
+        f.files["wireless"] = []
+        f.wireless("wlP9s9", -71)
+        self.assertEqual(f.view()["wifi"], {"interface": "wlP9s9", "band": None, "channel": None, "frequency_mhz": None,
+                                            "width_mhz": None, **NO_RADIO, "signal_dbm": -71, "links": None, "source": "proc"})
+
+    def test_tool_timeout_falls_through_without_trying_another_path(self):
+        self.owner_spark()
+        f = self.f
+        f.outputs.update(link=subprocess.TimeoutExpired("iw", 1), info=subprocess.TimeoutExpired("iw", 1), nmcli="yes:2437 MHz:6:40 MHz\n")
+        wifi = f.view()["wifi"]
+        self.assertEqual((wifi["band"], wifi["channel"], wifi["width_mhz"], wifi["source"]), ("2.4", 6, 40, "nmcli"))
+        self.assertEqual([argv[0] for argv, _ in f.calls], [IW_PATHS[0], IW_PATHS[0], NMCLI_PATHS[0]])
+
+    def test_tool_time_is_bounded_by_the_probe_deadline(self):
+        self.owner_spark()
+        f = self.f
+        f.outputs.clear()
+        clock = [100.0]
+        def slow(argv, timeout):
+            f.calls.append((list(argv), timeout))
+            clock[0] += 1.0
+            return None
+        f.write()
+        with mock.patch.object(controller.time, "monotonic", lambda: clock[0]):
+            wifi = network_view(network_link(f.sys, f.proc, f.environ, slow, f.ipv4, os_name="posix"))["wifi"]
+        self.assertEqual([timeout for _, timeout in f.calls], [1.0, 1.0, 0.5])
+        self.assertEqual(wifi["source"], None)
+
+    def test_multi_link_operation_never_claims_one_band(self):
+        self.owner_spark()
+        mld = (f"Interface wlP9s9\n\taddr {MAC}\n\tssid {SSID}\n\ttype managed\n\tMLD with links:\n"
+               f"\t - link ID  0 link addr {MAC}\n\t   channel 1 (2412 MHz), width: 20 MHz, center1: 2412 MHz\n"
+               f"\t - link ID  1 link addr {MAC}\n\t   channel 36 (5180 MHz), width: 160 MHz, center1: 5250 MHz\n")
+        self.f.outputs["info"] = mld
+        wifi = self.f.view()["wifi"]
+        self.assertEqual(wifi, {"interface": "wlP9s9", "band": "multi", "channel": None, "frequency_mhz": None, "width_mhz": None,
+                                "tx_bitrate_mbps": 144.4, "rx_bitrate_mbps": 72.2, "signal_dbm": -52, "links": 2, "source": "iw"})
+        self.f.outputs["info"] = mld + "\t - link ID  2 link addr x\n\t   channel 37 (6135 MHz), width: 320 MHz, center1: 6105 MHz\n"
+        self.assertEqual((self.f.view()["wifi"]["band"], self.f.view()["wifi"]["links"]), ("multi", 3))
+        self.f.outputs.update(info="", link=IW_LINK.replace("\tfreq: 2462\n", "\tfreq: 2412\n\tfreq: 5180\n"))
+        self.assertEqual((self.f.view()["wifi"]["band"], self.f.view()["wifi"]["links"]), ("multi", 2))
+
+    def test_frequency_table(self):
+        for frequency, expected in ((2412, ("2.4", 1)), (2472, ("2.4", 13)), (2484, ("2.4", 14)), (5180, ("5", 36)),
+                                    (5895, ("5", 179)), (5935, ("6", 2)), (5955, ("6", 1)), (7115, ("6", 233)),
+                                    (2400, (None, None)), (2413, ("2.4", None)), (5000, (None, None)), (7200, (None, None))):
+            self.assertEqual(frequency_band(frequency), expected, frequency)
+        self.owner_spark()
+        self.f.outputs.update(link=IW_LINK.replace("freq: 2462", "freq: 5955.0"), info="")
+        wifi = self.f.view()["wifi"]
+        self.assertEqual((wifi["band"], wifi["channel"], wifi["frequency_mhz"], wifi["width_mhz"]), ("6", 1, 5955, None))
+
+    def test_sanitizer_rebuilds_only_whitelisted_bounded_fields(self):
+        raw = {"observed": True, "basis": "ssh_session", "ssid": SSID, "client_ip": CLIENT_IP,
+               "active": {"interface": "wlP9s9", "kind": "wifi", "operstate": "up", "speed_mbps": float("nan"),
+                          "address": MAC, "egress_interface": "x" * 16},
+               "underlay": {"interface": "-bad", "kind": "wired"},
+               "wired": [{"interface": "a" * 16, "carrier": True},
+                         {"interface": "enP7s7", "carrier": 1, "operstate": "sideways", "speed_mbps": True,
+                          "driver": "Bad Driver", "default_route": "yes", "mac": MAC}],
+               "wired_up": -1, "wired_lan_up": 10 ** 400,
+               "wifi": {"interface": "wlP9s9", "band": "2.4GHz", "channel": 0, "frequency_mhz": 2462.0, "width_mhz": 30,
+                        "tx_bitrate_mbps": float("inf"), "rx_bitrate_mbps": float("nan"), "signal_dbm": 0, "links": 4,
+                        "source": "scan", "ssid": SSID, "bssid": BSSID}}
+        view = network_view(raw)
+        self.assertEqual(view, {"v": 1, "observed": True, "basis": "ssh_session",
+                                "active": {"interface": "wlP9s9", "kind": "wifi", "operstate": "up", "speed_mbps": None},
+                                "underlay": None,
+                                "wired": [{"interface": "enP7s7", "carrier": None, "operstate": None, "speed_mbps": None,
+                                           "driver": None, "default_route": False}],
+                                "wired_up": 0, "wired_lan_up": 0,
+                                "wifi": {"interface": "wlP9s9", "band": None, "channel": None, "frequency_mhz": None,
+                                         "width_mhz": None, **NO_RADIO, "signal_dbm": None, "links": None, "source": None}})
+        encoded = json.dumps(view, allow_nan=False)
+        for secret in SECRETS:
+            self.assertNotIn(secret, encoded)
+        self.assertEqual(len(network_view({"observed": True, "wired": [{"interface": f"eth{i}"} for i in range(40)]})["wired"]), 16)
+        self.assertEqual(network_view({"observed": True, "basis": "ssh_session", "active": {"interface": "<img>"}})["basis"], "unknown")
+        for invalid in (None, [], "observed", {"observed": "true"}, {"observed": 1}, {}):
+            self.assertEqual(network_view(invalid), {"v": 1, "observed": False, "basis": "unknown"})
+
+    def test_failing_or_unsupported_probe_still_reports_status(self):
+        def broken():
+            raise RuntimeError("probe exploded")
+        for probe in (broken, lambda: ["not", "a", "dict"], lambda: network_link(os_name="nt")):
+            status, doctor = self.reports(probe)
+            self.assertTrue(status["ok"] and doctor["ok"])
+            self.assertEqual(status["network"], {"v": 1, "observed": False, "basis": "unknown"})
+            self.assertEqual(doctor["network"], status["network"])
+        self.assertEqual(network_link(os_name="nt"), {"observed": False})
+        if os.name != "posix":
+            self.assertEqual(network_link(), {"observed": False})
+        self.assertEqual(network_link(Path(self.tmp.name) / "missing", os_name="posix"), {"observed": False})
+
+    def test_four_positional_arguments_still_construct(self):
+        c = Controller(Path(self.tmp.name) / "positional", FakeDocker(), lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120})
+        try:
+            self.assertIs(c.link_probe, network_link)
+            c.link_probe = NO_LINK  # Never probe the test host's own network.
+            self.assertTrue(c.rpc({"v": 1, "op": "status"})["ok"])
+        finally:
+            c.db.close()
+
+    def test_default_tool_runner_is_argv_only_with_fixed_environment(self):
+        argv = [IW_PATHS[0], "dev", "wlP9s9", "link"]
+        with mock.patch.object(controller.subprocess, "run", return_value=subprocess.CompletedProcess(argv, 0, b"x" * (TOOL_READ + 9))) as run:
+            self.assertEqual(len(run_tool(argv, 0.75)), TOOL_READ)
+        args, kwargs = run.call_args
+        self.assertEqual(args, (argv,))
+        self.assertEqual({k: kwargs[k] for k in ("stdin", "stdout", "stderr", "env", "timeout", "check")},
+                         {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.DEVNULL,
+                          "env": TOOL_ENV, "timeout": 0.75, "check": False})
+        self.assertNotIn("shell", kwargs)
+        with mock.patch.object(controller.subprocess, "run", return_value=subprocess.CompletedProcess(argv, 1, b"partial")):
+            self.assertIsNone(run_tool(argv, 0.75))
+        self.assertIsNone(controller.IFNAME.fullmatch("-wl0"))
+        self.assertIsNone(controller.IFNAME.fullmatch("w" * 16))
+        self.assertTrue(controller.IFNAME.fullmatch("enP2p1s0f1np1"))
 
 
 if __name__ == "__main__":
