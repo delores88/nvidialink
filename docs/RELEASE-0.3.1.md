@@ -1,6 +1,6 @@
 # DGXBridge 0.3.1
 
-Status: release candidate. A Marketplace compatibility correction plus startup status wording. The bundled `sparkdev` CLI, `sparkdev-link` sidecar and Spark ARM64 payload are the unchanged 0.2.1 builds. Publication and Marketplace admission are recorded below only once they happen.
+Status: published and accepted by the DeloresAI Marketplace at 2026-10-20T16:19:00Z. A Marketplace compatibility correction plus startup status wording. The bundled `sparkdev` CLI, `sparkdev-link` sidecar and Spark ARM64 payload are the unchanged 0.2.1 builds. Publication and admission are recorded below.
 
 ## What changed
 
@@ -21,3 +21,18 @@ Measured on the tagged v0.3.1 source:
 - The installer contains the shipped GUI `1f0d71f79cd0ca5d7e667d1e0a57624fbb3b566e3d9f6f68359224a789971f4c` as one of its 359 file records. The GUI SBOM's source digest is that value.
 
 Not verified: compatibility on lower-spec or older Windows machines. The Marketplace values only stop declaring false floors. The listing screenshot is the 0.3.0 build-output capture; the UI differs only in the startup wording.
+
+## Publication
+
+- [v0.3.1](https://github.com/delores88/nvidialink/releases/tag/v0.3.1) was published once at 2026-10-20T16:13:35Z.
+- Release ID `418590976`. Annotated tag `v0.3.1` resolves to `7f09a6399d09d30931b509607a4876e34f9f5c59`.
+- Installer asset `659778490`, 12,456,639 bytes, SHA-256 `878976e98eecf3b12a96781b06fbd1a35a47d740ead868f56d95885b8c62f32c`.
+- `deloresai.manifest.json` asset `659779840`, SHA-256 `1367e7a78f8826bd632d3921507b9a40704a097a057057004b539b4985a5f67d`. It was validated and attached while the release was still a draft, so intake never saw an incomplete release. A post-publication `--require-published` run produced byte-identical manifest bytes; that receipt is retained locally and no assets were replaced.
+- Before publication, the DGXBridge and Marketplace Codex reviewers independently re-downloaded the draft and re-checked every hash, the installer decode and the source scan, then cleared it.
+
+Marketplace artifact `zrbHBUCGYb79J_dMEHS2iz5i` was accepted at 16:19:00Z:
+- Passed: file and package identity, publisher authorization, source binding, malware, SBOM, dependencies and secrets.
+- Not required: OS signature.
+- Not run: runtime lifecycle, static analysis and provenance.
+
+The live catalog shows `minimumOs "0"`, `memoryGb 0` and `runtimes ["Microsoft Edge WebView2"]`. The older 0.1.0-beta.2 artifact still carries its original floors. Accepted artifacts are immutable, and the Marketplace owner chose to leave it unchanged.
