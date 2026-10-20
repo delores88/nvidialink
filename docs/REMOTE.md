@@ -70,8 +70,8 @@ images are only pulled/built during explicit owner provisioning, never job submi
 | `wait` | `job,timeout?` (0â€“60 seconds) | current job receipt |
 | `logs` | `job,since,limit?` (1 MiB maximum) | base64 `data`, display `text`, `next_offset`, receipt |
 | `cancel` | `job` | durable cancellation receipt |
-| `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, limits, runtimes |
-| `doctor` | none | status plus SQLite, Docker, Linux and memory checks |
+| `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, limits, runtimes, observed `network` link |
+| `doctor` | none | status (including `network`) plus SQLite, Docker, Linux and memory checks |
 | `resources` | `limits?` (complete owner policy) | effective policy, hardware bounds, persistence and application timing |
 | `claim` | `project,client,request_id,job?,ttl?` | laptop `lease,job,expires_at` |
 | `heartbeat` | `lease,job?,ttl?,state?,exit_code?,data?,since?` | renewed lease and next log offset |
@@ -97,6 +97,57 @@ manifest content/modes, exact argv, runtime image/provenance, fixed policy, reso
 limits, and the supervisor content hash. Failed jobs never populate this cache.
 `no_cache:true` executes again. Cached receipts are previous execution results, so
 time-dependent commands should use this bypass. No artifact export is inferred.
+
+## Network link report
+
+`status`, and therefore `doctor`, carries `network`: an observation of which Spark
+link carries this controller's traffic. It is observation only and never changes
+route choice, admission or retry classification. The probe reads bounded sysfs and
+procfs files (4 KiB per sysfs file, at most 1,024 interfaces, all classified before
+the wired list is capped at 16). For Wi-Fi it runs `/usr/sbin/iw` or `/sbin/iw`
+(`dev IF link`, `dev IF info`), else `/usr/bin/nmcli -t -e yes -f
+ACTIVE,FREQ,CHAN,BANDWIDTH device wifi list ifname IF --rescan no`, with argv only,
+`LC_ALL=C`, a fixed `PATH`, no stdin or stderr, 64 KiB of stdout, a one-second
+timeout per call and a 2.5-second overall deadline. Signal falls back to
+`/proc/net/wireless`. It never scans and never requests SSID or BSSID fields. Raw
+tool output is parsed in memory and discarded, never logged. A single sanitizer
+rebuilds the object from whitelisted, bounded fields, so it holds no SSID, BSSID,
+MAC or IP address; the probe never reads an interface `address` file.
+
+```json
+{"v":1,"observed":true,"basis":"ssh_session",
+ "active":{"interface":"wlP9s9","kind":"wifi","operstate":"up","speed_mbps":null},
+ "underlay":null,
+ "wired":[{"interface":"enP7s7","carrier":false,"operstate":"down","speed_mbps":null,"driver":"r8127","default_route":false}],
+ "wired_up":0,"wired_lan_up":0,
+ "wifi":{"interface":"wlP9s9","band":"2.4","channel":11,"frequency_mhz":2462,"width_mhz":20,
+         "tx_bitrate_mbps":144.4,"rx_bitrate_mbps":72.2,"signal_dbm":-52,"links":1,"source":"iw"}}
+```
+
+- `basis` is `ssh_session` only when `SSH_CONNECTION` parses, its exact 4-tuple is an
+  ESTABLISHED socket in `/proc/net/tcp` or `tcp6`, and a local interface owns the
+  server address. Otherwise it is `default_route` (lowest-metric IPv4 default, else
+  IPv6), which includes a stale `SSH_CONNECTION` inherited on the paired route. With
+  no default route it is `unknown` and `active` is null.
+- `kind` is `wired` (sysfs type 1 or 32), `wifi`, `virtual` (no `device`) or `unknown`.
+  `active.egress_interface` appears only when the main-table route back to the client
+  leaves through a different interface; it is not computed for a virtual owner, whose
+  policy routing the main table does not show.
+- `underlay` is set only when `active` is virtual: the first physical `lower_*` member
+  with carrier, else the physical default-route interface.
+- `wired_up` counts wired ports with carrier. `wired_lan_up` counts those that also
+  have a default route, so a QSFP cluster cable alone is not a LAN link.
+- `wifi` is reported only for an active or underlay Wi-Fi interface. `band` is `2.4`,
+  `5`, `6`, `multi` (multi-link operation, with `links`; channel, frequency and width
+  are then null) or null. `source` is `iw`, `nmcli`, `proc` (signal only) or null.
+  Out-of-bounds or unknown values are null.
+- `{"v":1,"observed":false,"basis":"unknown"}` means this controller could not observe
+  its link (non-Linux host, unreadable sysfs or a failed probe); status still
+  succeeds. A missing `network` key means an older controller, which a bridge repair
+  replaces. `sparkdev devices` passes the object through as the Spark device's
+  `network` and reports null for a missing key, an unreachable Spark or a version
+  other than 1.
+- Additive fields keep `v:1`; only a breaking change bumps `v`.
 
 ## Isolation, fairness and dependency access
 
