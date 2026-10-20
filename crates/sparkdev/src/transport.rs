@@ -489,14 +489,22 @@ impl Transport {
     ) {
         self.push_attempt(json!({"route":route,"attempted":attempted,"status":status,"reason":reason,"target_index":target}));
     }
-    /// LAN candidate receipt. `target_index` still indexes config.hosts and is
-    /// null for sticky, remembered and alias candidates.
+    /// LAN candidate receipt. `target_index` is the dialed address's position
+    /// in config.hosts (compared case-insensitively) whatever its source, so
+    /// a configured address keeps its index once it is remembered or sticky.
+    /// It is null for an address that is not a configured host.
     fn record_candidate(&mut self, candidate: &Candidate, status: &str, reason: &str) {
-        let target = match (candidate.source, &candidate.host) {
-            (Source::Configured, Some(host)) => self.config.hosts.iter().position(|h| h == host),
-            _ => None,
-        };
+        let target = candidate
+            .host
+            .as_deref()
+            .and_then(|host| self.configured_index(host));
         self.push_attempt(json!({"route":"lan_ssh","attempted":true,"status":status,"reason":reason,"target_index":target,"source":candidate.source.name(),"host":candidate.host}));
+    }
+    fn configured_index(&self, host: &str) -> Option<usize> {
+        self.config
+            .hosts
+            .iter()
+            .position(|h| h.eq_ignore_ascii_case(host))
     }
     pub fn command(&self, host: Option<&str>, remote: &str) -> Command {
         let mut command = Command::new("ssh");
@@ -1395,10 +1403,8 @@ mod tests {
         tr.dial(&sticky, [Open], "true", |_| ok(b"")).unwrap();
         assert!(!route_file.exists());
         assert_eq!(tr.info()["attempted_routes"][3]["source"], "sticky");
-        assert_eq!(
-            tr.info()["attempted_routes"][3]["target_index"],
-            Value::Null
-        );
+        // A sticky configured address keeps its configured position.
+        assert_eq!(tr.info()["attempted_routes"][3]["target_index"], 1);
         // An alias dialed through OpenSSH has no concrete address to report.
         let mut alias = fixture(&[], "lan-only");
         alias
@@ -1757,6 +1763,44 @@ mod tests {
             tr.info()["attempted_routes"][0]["status"],
             "ssh_command_failed"
         );
+    }
+    #[test]
+    fn every_attempt_at_a_configured_address_carries_its_configured_index() {
+        let _home = state::TestHome::new();
+        // A configured address that became remembered, then sticky, keeps
+        // its configured position (compared case-insensitively), so the GUI
+        // can still say which configured address was used.
+        let mut tr = fixture(&["192.0.2.1", "spark-b.local"], "both");
+        state::remember_host(&tr.config, "SPARK-B.LOCAL").unwrap();
+        let plan = tr.lan_plan(|_| route(Some("192.0.2.9"), true));
+        assert_eq!(
+            plan,
+            [
+                candidate(Source::Remembered, Some("SPARK-B.LOCAL")),
+                candidate(Source::Configured, Some("192.0.2.1")),
+                candidate(Source::Alias, Some("192.0.2.9")),
+            ]
+        );
+        tr.dial(&plan, [Open], "true", |_| ok(b"")).unwrap();
+        let sticky = tr.lan_plan(|_| panic!("a sticky host needs no alias lookup"));
+        tr.dial(&sticky, [Open], "true", |_| ok(b"")).unwrap();
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts[0]["source"], "remembered");
+        assert_eq!(attempts[0]["target_index"], 1);
+        assert_eq!(attempts[1]["source"], "sticky");
+        assert_eq!(attempts[1]["target_index"], 1);
+        assert_eq!(tr.info()["lan_host"], "SPARK-B.LOCAL");
+        // The alias HostName is not a configured address: no index.
+        let mut alias = fixture(&["192.0.2.1"], "both");
+        let plan = alias.lan_plan(|_| route(Some("192.0.2.9"), true));
+        alias
+            .dial(&plan, [Closed, Open], "true", |_| ok(b""))
+            .unwrap();
+        let attempts = alias.info()["attempted_routes"].clone();
+        assert_eq!(attempts[0]["target_index"], 0);
+        assert_eq!(attempts[1]["source"], "alias");
+        assert_eq!(attempts[1]["target_index"], Value::Null);
+        assert_eq!(alias.info()["lan_host"], "192.0.2.9");
     }
     #[test]
     fn controller_rejections_preserve_nested_and_legacy_details() {
