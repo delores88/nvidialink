@@ -379,8 +379,26 @@ fn forget_host_at(path: &Path, config: &Config, host: &str) -> Result<()> {
     }
     Ok(())
 }
-fn with_lan_routes<T>(change: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
+/// lan-route.json is written only when the state folder is known not to be
+/// redirected. Unknown (null) counts as redirected: a virtualized private
+/// copy would shadow the owner's file without ever learning new addresses.
+fn lan_routes_writable(diagnostics: &Value) -> bool {
+    diagnostics["redirected"] == false
+}
+/// The one write path for remember and forget, so both share the guard.
+fn with_lan_routes(change: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let directory = root()?;
+    with_lan_routes_in(&directory, lan_routes_writable(&diagnostics()), change)
+}
+/// A skipped write creates neither lan-route.lock nor lan-route.json.
+fn with_lan_routes_in(
+    directory: &Path,
+    writable: bool,
+    change: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    if !writable {
+        return Ok(());
+    }
     let lock = fs::OpenOptions::new()
         .create(true)
         .read(true)
@@ -399,14 +417,14 @@ pub fn remembered_hosts(config: &Config) -> Vec<String> {
         .unwrap_or_default()
 }
 /// Record an address that just completed pinned SSH authentication. Skipped
-/// for a redirected (virtualized) state folder; config.json is never touched.
+/// unless the state folder is known not to be redirected (virtualized);
+/// config.json is never touched.
 pub fn remember_host(config: &Config, host: &str) -> Result<()> {
-    if diagnostics()["redirected"] == true {
-        return Ok(());
-    }
+    validate_host(host)?;
     with_lan_routes(|path| remember_host_at(path, config, host, now()))
 }
-/// Drop a remembered address whose SSH identity check failed.
+/// Drop a remembered address that proved stale. Skipped under the same
+/// redirection guard as remember_host.
 pub fn forget_host(config: &Config, host: &str) -> Result<()> {
     with_lan_routes(|path| forget_host_at(path, config, host))
 }
@@ -657,6 +675,44 @@ mod tests {
             route_file(&home.path)["entries"].as_array().unwrap().len(),
             8
         );
+    }
+    #[test]
+    fn lan_route_writes_fail_closed_unless_the_folder_is_known_unredirected() {
+        let home = TestHome::new();
+        assert!(lan_routes_writable(&serde_json::json!({"redirected":false})));
+        for unknown in [
+            serde_json::json!({"redirected":true}),
+            serde_json::json!({"redirected":null}),
+            serde_json::json!({}),
+        ] {
+            assert!(!lan_routes_writable(&unknown), "{unknown}");
+        }
+        // The test home is canonical, so the real diagnostics permit writes.
+        assert!(lan_routes_writable(&diagnostics()));
+        let config = legacy(false);
+        let folder = home.path.join("redirected-view");
+        fs::create_dir_all(&folder).unwrap();
+        let file = folder.join(LAN_ROUTE_FILE);
+        remember_host_at(&file, &config, "192.0.2.50", now()).unwrap();
+        let before = fs::read(&file).unwrap();
+        // Neither forget nor remember writes, or even creates the lock, when
+        // redirection is detected or unknown.
+        with_lan_routes_in(&folder, false, |path| {
+            forget_host_at(path, &config, "192.0.2.50")
+        })
+        .unwrap();
+        with_lan_routes_in(&folder, false, |path| {
+            remember_host_at(path, &config, "192.0.2.51", now())
+        })
+        .unwrap();
+        assert_eq!(fs::read(&file).unwrap(), before);
+        assert!(!folder.join("lan-route.lock").exists());
+        with_lan_routes_in(&folder, true, |path| {
+            forget_host_at(path, &config, "192.0.2.50")
+        })
+        .unwrap();
+        assert!(folder.join("lan-route.lock").exists());
+        assert!(remembered_hosts_at(&file, &config, now()).is_empty());
     }
     #[test]
     fn corrupt_stale_or_invalid_lan_routes_are_ignored() {
