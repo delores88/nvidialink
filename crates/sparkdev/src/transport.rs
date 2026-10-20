@@ -225,8 +225,9 @@ fn probe(host: &str, port: u16, per_connect: Duration, deadline: Instant) -> Rea
 /// Parallel TCP reachability check of each concrete address on the SSH port,
 /// all started at once and bounded by one deadline. `consume` receives the
 /// results in candidate order and each is awaited only when it is pulled, so
-/// a live early candidate is not held up by a dead later one. A candidate
-/// without an address is `Unchecked` and dialed without precheck.
+/// a live early candidate is not held up by a dead later one, neither before
+/// it is dialed nor when the request returns. A candidate without an address
+/// is `Unchecked` and dialed without precheck.
 pub fn with_precheck<T>(
     hosts: &[Option<&str>],
     port: u16,
@@ -234,19 +235,49 @@ pub fn with_precheck<T>(
     deadline: Duration,
     consume: impl FnOnce(&mut dyn Iterator<Item = Reach>) -> T,
 ) -> T {
+    with_probe(
+        hosts,
+        deadline,
+        move |host: String, until| probe(&host, port, per_connect, until),
+        consume,
+    )
+}
+/// Time allowed past the deadline for a probe to report; probes bound
+/// themselves by the deadline, so this only absorbs scheduling delay.
+const PRECHECK_GRACE: Duration = Duration::from_millis(250);
+/// Each probe runs on a detached thread that reports over its own channel.
+/// Nothing joins the threads, so returning never waits for a probe still
+/// stuck on a dead or slow address; its late result is discarded and the
+/// thread ends by the deadline. A probe that never reports is `Unchecked`.
+fn with_probe<T>(
+    hosts: &[Option<&str>],
+    deadline: Duration,
+    probe: impl Fn(String, Instant) -> Reach + Clone + Send + 'static,
+    consume: impl FnOnce(&mut dyn Iterator<Item = Reach>) -> T,
+) -> T {
     let deadline = Instant::now() + deadline;
-    thread::scope(|scope| {
-        let checks: Vec<_> = hosts
-            .iter()
-            .map(|host| {
-                host.map(|host| scope.spawn(move || probe(host, port, per_connect, deadline)))
+    let pending: Vec<Option<mpsc::Receiver<Reach>>> = hosts
+        .iter()
+        .map(|host| {
+            let host = (*host)?.to_owned();
+            let (sender, receiver) = mpsc::channel();
+            let probe = probe.clone();
+            thread::Builder::new()
+                .spawn(move || {
+                    let _ = sender.send(probe(host, deadline));
+                })
+                .ok()?;
+            Some(receiver)
+        })
+        .collect();
+    consume(&mut pending.into_iter().map(|receiver| {
+        receiver
+            .and_then(|receiver| {
+                let wait = deadline.saturating_duration_since(Instant::now()) + PRECHECK_GRACE;
+                receiver.recv_timeout(wait).ok()
             })
-            .collect();
-        consume(&mut checks.into_iter().map(|check| match check {
-            Some(handle) => handle.join().unwrap_or(Reach::Unchecked),
-            None => Reach::Unchecked,
-        }))
-    })
+            .unwrap_or(Reach::Unchecked)
+    }))
 }
 pub fn precheck(
     hosts: &[Option<&str>],
@@ -1376,5 +1407,51 @@ mod tests {
             |results| results.next(),
         );
         assert_eq!(first, Some(Open));
+    }
+    #[test]
+    fn a_request_returns_without_waiting_for_a_dead_later_precheck() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&["192.0.2.1", "192.0.2.2"], "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+        let hosts: Vec<Option<&str>> = plan.iter().map(|c| c.host.as_deref()).collect();
+        // The later address stays silent for the whole connect budget, as an
+        // unplugged interface or a dead DHCP lease does.
+        let silent = |host: String, _until: Instant| {
+            if host == "192.0.2.2" {
+                thread::sleep(PRECHECK_CONNECT);
+                return Closed;
+            }
+            Open
+        };
+        let started = Instant::now();
+        let out = with_probe(&hosts, PRECHECK_DEADLINE, silent, |reach| {
+            tr.dial(&plan, reach, "true", |_| {
+                Ok((true, b"ok".to_vec(), Vec::new()))
+            })
+        })
+        .unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(out, b"ok");
+        assert_eq!(tr.info()["lan_host"], "192.0.2.1");
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "returned after {elapsed:?}"
+        );
+        // A probe that never reports in time leaves the candidate to OpenSSH.
+        let started = Instant::now();
+        let stuck = |_host: String, until: Instant| {
+            thread::sleep(until.saturating_duration_since(Instant::now()) + 2 * PRECHECK_GRACE);
+            Closed
+        };
+        assert_eq!(
+            with_probe(
+                &[Some("192.0.2.1")],
+                Duration::from_millis(50),
+                stuck,
+                |reach| reach.collect::<Vec<_>>()
+            ),
+            [Unchecked]
+        );
+        assert!(started.elapsed() < Duration::from_millis(50) + 2 * PRECHECK_GRACE);
     }
 }
