@@ -55,7 +55,25 @@ pub const MAX_REMEMBERED: usize = 4;
 pub const MAX_CANDIDATES: usize = 8;
 pub const PRECHECK_CONNECT: Duration = Duration::from_millis(1500);
 pub const PRECHECK_DEADLINE: Duration = Duration::from_secs(2);
-const PRECHECK_REASON: &str = "No TCP answer on the SSH port within 1.5s";
+const CLOSED_REASON: &str = "No TCP answer on the SSH port within the 1.5s precheck";
+const UNRESOLVED_REASON: &str = "The address resolved to nothing during the precheck";
+/// The TCP reachability hint for one candidate. Only `Closed` and
+/// `Unresolved` skip a candidate; the others are dialed through the pinned
+/// `command()`, and an answering port is never trust.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// Not prechecked, or the precheck ran out of time before it could decide
+    /// (a slow name lookup, or a connect cut short by the deadline). OpenSSH
+    /// then resolves and connects with its own budgets, as before prechecks.
+    Unchecked,
+    /// A resolved address accepted a TCP connection on the SSH port.
+    Open,
+    /// The name lookup finished without any address.
+    Unresolved,
+    /// Every resolved address refused, or stayed silent for the full
+    /// per-connect budget.
+    Closed,
+}
 
 fn add_candidate(plan: &mut Vec<Candidate>, source: Source, host: &str) {
     if !plan.iter().any(|c| {
@@ -149,6 +167,8 @@ pub fn alias_hostname(config: &Config) -> Option<String> {
     }
     parse_ssh_g(&String::from_utf8_lossy(&out), &config.ssh_alias)
 }
+/// The addresses of `host`, or None when the lookup did not finish before the
+/// deadline (or could not be started), which leaves reachability unknown.
 fn resolve(host: &str, port: u16, deadline: Instant) -> Option<Vec<SocketAddr>> {
     let bare = host
         .strip_prefix('[')
@@ -158,7 +178,7 @@ fn resolve(host: &str, port: u16, deadline: Instant) -> Option<Vec<SocketAddr>> 
         return Some(vec![SocketAddr::new(ip, port)]);
     }
     // getaddrinfo has no timeout. A detached helper performs the lookup so the
-    // scoped precheck still ends at its deadline; a late answer is discarded.
+    // precheck still ends at its deadline; a late answer is discarded.
     let (sender, receiver) = mpsc::channel();
     let name = bare.to_owned();
     thread::Builder::new()
@@ -171,50 +191,61 @@ fn resolve(host: &str, port: u16, deadline: Instant) -> Option<Vec<SocketAddr>> 
         .ok()?;
     receiver
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .ok()?
         .ok()
+        .map(|found| found.unwrap_or_default())
 }
-fn port_answers(host: &str, port: u16, per_connect: Duration, deadline: Instant) -> bool {
-    for address in resolve(host, port, deadline).unwrap_or_default() {
+fn probe(host: &str, port: u16, per_connect: Duration, deadline: Instant) -> Reach {
+    let Some(addresses) = resolve(host, port, deadline) else {
+        return Reach::Unchecked;
+    };
+    if addresses.is_empty() {
+        return Reach::Unresolved;
+    }
+    let mut cut_short = false;
+    for address in addresses {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
+            cut_short = true;
             break;
         }
-        if TcpStream::connect_timeout(&address, per_connect.min(remaining)).is_ok() {
-            return true;
+        let budget = per_connect.min(remaining);
+        match TcpStream::connect_timeout(&address, budget) {
+            Ok(_) => return Reach::Open,
+            Err(error) => {
+                cut_short |= error.kind() == std::io::ErrorKind::TimedOut && budget < per_connect
+            }
         }
     }
-    false
+    if cut_short {
+        Reach::Unchecked
+    } else {
+        Reach::Closed
+    }
 }
 /// Parallel TCP reachability check of each concrete address on the SSH port,
 /// all started at once and bounded by one deadline. `consume` receives the
 /// results in candidate order and each is awaited only when it is pulled, so
-/// a live early candidate is not held up by a dead later one. `None` marks a
-/// candidate without an address (dialed without precheck), otherwise
-/// `Some(answered)`. An answering port is not authentication: it is still
-/// dialed through strict pinned SSH.
+/// a live early candidate is not held up by a dead later one. A candidate
+/// without an address is `Unchecked` and dialed without precheck.
 pub fn with_precheck<T>(
     hosts: &[Option<&str>],
     port: u16,
     per_connect: Duration,
     deadline: Duration,
-    consume: impl FnOnce(&mut dyn Iterator<Item = Option<bool>>) -> T,
+    consume: impl FnOnce(&mut dyn Iterator<Item = Reach>) -> T,
 ) -> T {
     let deadline = Instant::now() + deadline;
     thread::scope(|scope| {
         let checks: Vec<_> = hosts
             .iter()
             .map(|host| {
-                host.map(|host| {
-                    scope.spawn(move || port_answers(host, port, per_connect, deadline))
-                })
+                host.map(|host| scope.spawn(move || probe(host, port, per_connect, deadline)))
             })
             .collect();
-        consume(
-            &mut checks
-                .into_iter()
-                .map(|check| check.map(|handle| handle.join().unwrap_or(false))),
-        )
+        consume(&mut checks.into_iter().map(|check| match check {
+            Some(handle) => handle.join().unwrap_or(Reach::Unchecked),
+            None => Reach::Unchecked,
+        }))
     })
 }
 pub fn precheck(
@@ -222,7 +253,7 @@ pub fn precheck(
     port: u16,
     per_connect: Duration,
     deadline: Duration,
-) -> Vec<Option<bool>> {
+) -> Vec<Reach> {
     with_precheck(hosts, port, per_connect, deadline, |results| {
         results.collect()
     })
@@ -459,8 +490,8 @@ impl Transport {
         let plan = self.lan_plan(alias_hostname);
         let hosts: Vec<Option<&str>> = plan.iter().map(|c| c.host.as_deref()).collect();
         let port = self.config.port;
-        with_precheck(&hosts, port, PRECHECK_CONNECT, PRECHECK_DEADLINE, |open| {
-            self.dial(&plan, open, remote, |command| {
+        with_precheck(&hosts, port, PRECHECK_CONNECT, PRECHECK_DEADLINE, |reach| {
+            self.dial(&plan, reach, remote, |command| {
                 process(command, input, timeout)
             })
         })
@@ -487,18 +518,23 @@ impl Transport {
     /// Dial prechecked candidates in planned order through the pinned
     /// `command()`. Only reachability failures move to the next candidate;
     /// authentication, host-key, service and process failures stop at once.
-    /// `open` is pulled lazily, one result per candidate reached.
+    /// `reach` is pulled lazily, one result per candidate reached.
     fn dial(
         &mut self,
         plan: &[Candidate],
-        open: impl IntoIterator<Item = Option<bool>>,
+        reach: impl IntoIterator<Item = Reach>,
         remote: &str,
         mut run: impl FnMut(Command) -> Result<(bool, Vec<u8>, Vec<u8>)>,
     ) -> Result<Vec<u8>> {
-        for (candidate, open) in plan.iter().zip(open) {
+        for (candidate, reach) in plan.iter().zip(reach) {
             let host = candidate.host.as_deref();
-            if open == Some(false) {
-                self.record_candidate(candidate, "host_unreachable", PRECHECK_REASON);
+            let skipped = match reach {
+                Reach::Closed => Some(CLOSED_REASON),
+                Reach::Unresolved => Some(UNRESOLVED_REASON),
+                Reach::Open | Reach::Unchecked => None,
+            };
+            if let Some(reason) = skipped {
+                self.record_candidate(candidate, "host_unreachable", reason);
                 continue;
             }
             let (success, out, err) = match run(self.command(host, remote)) {
@@ -700,6 +736,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Reach::{Closed, Open, Unchecked, Unresolved};
     use std::{ffi::OsStr, net::TcpListener};
     fn configured(mode: &str, enabled: bool) -> Transport {
         Transport::from_config(serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":[],"host_key_alias":"test-pin","connection_mode":mode,"connection_enabled":enabled})).unwrap())
@@ -938,7 +975,7 @@ mod tests {
                 PRECHECK_CONNECT,
                 PRECHECK_DEADLINE
             ),
-            [Some(true), None, Some(true)]
+            [Open, Unchecked, Open]
         );
         assert!(started.elapsed() < PRECHECK_DEADLINE + slack);
         let started = Instant::now();
@@ -954,12 +991,56 @@ mod tests {
                 PRECHECK_CONNECT,
                 PRECHECK_DEADLINE
             ),
-            [Some(false), Some(false), Some(false), None]
+            [Closed, Closed, Closed, Unchecked]
         );
         // Three closed checks in parallel finish within one deadline.
         assert!(started.elapsed() < PRECHECK_DEADLINE + slack);
         assert!(precheck(&[], open_port, PRECHECK_CONNECT, PRECHECK_DEADLINE).is_empty());
         drop(listener);
+    }
+    #[test]
+    fn a_precheck_that_runs_out_of_time_is_unknown_not_closed() {
+        let closed_port = {
+            let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        // A lookup or connect cut short by the deadline proves nothing about
+        // the host, so the candidate is left to OpenSSH instead of skipped.
+        let expired = Instant::now();
+        assert_eq!(
+            probe("127.0.0.1", closed_port, PRECHECK_CONNECT, expired),
+            Unchecked
+        );
+        assert_eq!(
+            probe("localhost", closed_port, PRECHECK_CONNECT, expired),
+            Unchecked
+        );
+        assert_eq!(
+            probe(
+                "127.0.0.1",
+                closed_port,
+                PRECHECK_CONNECT,
+                Instant::now() + PRECHECK_DEADLINE
+            ),
+            Closed
+        );
+    }
+    #[test]
+    fn unknown_prechecks_are_dialed_and_unresolved_names_skipped_with_their_reason() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&["spark-a.local", "spark-b.local"], "lan-only");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), Some("192.0.2.3"));
+        let mut dialed = Vec::new();
+        tr.dial(&plan, [Unresolved, Unchecked], "true", |command| {
+            dialed.push(hostname_of(&command));
+            Ok((true, Vec::new(), Vec::new()))
+        })
+        .unwrap();
+        assert_eq!(dialed, [Some("spark-b.local".to_owned())]);
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts[0]["status"], "host_unreachable");
+        assert_eq!(attempts[0]["reason"], UNRESOLVED_REASON);
+        assert_eq!(attempts[1]["status"], "authenticated");
     }
     fn refused() -> Result<(bool, Vec<u8>, Vec<u8>)> {
         Ok((
@@ -978,7 +1059,7 @@ mod tests {
             &tr.config.hosts.clone(),
             Some("192.0.2.3"),
         );
-        let open = [Some(false), Some(true), Some(true), Some(true)];
+        let open = [Closed, Open, Open, Open];
         let mut dialed = Vec::new();
         let out = tr
             .dial(&plan, open, "true", |command| {
@@ -1001,7 +1082,7 @@ mod tests {
         assert_eq!(attempts.len(), 3);
         assert_eq!(
             attempts[0],
-            json!({"route":"lan_ssh","attempted":true,"status":"host_unreachable","reason":PRECHECK_REASON,"target_index":null,"source":"remembered","host":"198.51.100.7"})
+            json!({"route":"lan_ssh","attempted":true,"status":"host_unreachable","reason":CLOSED_REASON,"target_index":null,"source":"remembered","host":"198.51.100.7"})
         );
         assert_eq!(attempts[1]["status"], "host_unreachable");
         assert_eq!(attempts[1]["source"], "configured");
@@ -1017,7 +1098,7 @@ mod tests {
         std::fs::remove_file(&route_file).unwrap();
         let sticky = plan_candidates(tr.host.as_deref(), &[], &[], None);
         assert_eq!(sticky, [candidate(Source::Sticky, Some("192.0.2.2"))]);
-        tr.dial(&sticky, [Some(true)], "true", |_| {
+        tr.dial(&sticky, [Open], "true", |_| {
             Ok((true, Vec::new(), Vec::new()))
         })
         .unwrap();
@@ -1032,7 +1113,7 @@ mod tests {
         alias
             .dial(
                 &[candidate(Source::Alias, None)],
-                [None],
+                [Unchecked],
                 "true",
                 |command| {
                     assert_eq!(hostname_of(&command), None);
@@ -1067,7 +1148,7 @@ mod tests {
         let mut tr = fixture(&hosts, "both");
         let plan = tr.lan_plan(|_| None);
         assert_eq!(plan[0], candidate(Source::Remembered, Some("192.0.2.2")));
-        tr.dial(&plan, [Some(true)], "true", |_| {
+        tr.dial(&plan, [Open], "true", |_| {
             Ok((true, Vec::new(), Vec::new()))
         })
         .unwrap();
@@ -1077,7 +1158,7 @@ mod tests {
         let before = std::fs::read(&file).unwrap();
         let mut next = fixture(&hosts, "both");
         let plan = next.lan_plan(|_| None);
-        next.dial(&plan, [Some(true)], "true", |_| {
+        next.dial(&plan, [Open], "true", |_| {
             Ok((true, Vec::new(), Vec::new()))
         })
         .unwrap();
@@ -1094,7 +1175,7 @@ mod tests {
         state::remember_host(&tr.config, "198.51.100.9").unwrap();
         let remembered = state::remembered_hosts(&tr.config);
         let plan = plan_candidates(None, &remembered, &tr.config.hosts.clone(), None);
-        let open = [Some(true), Some(true), Some(true), Some(true), None];
+        let open = [Open, Open, Open, Open, Unchecked];
         let mut dialed = 0;
         let error = tr
             .dial(&plan, open, "true", |_| {
@@ -1125,18 +1206,13 @@ mod tests {
             None,
         );
         let error = tr
-            .dial(
-                &plan,
-                [Some(false), Some(true), Some(true), None],
-                "true",
-                |_| {
-                    Ok((
-                        false,
-                        Vec::new(),
-                        b"owner@192.0.2.1: Permission denied (publickey).".to_vec(),
-                    ))
-                },
-            )
+            .dial(&plan, [Closed, Open, Open, Unchecked], "true", |_| {
+                Ok((
+                    false,
+                    Vec::new(),
+                    b"owner@192.0.2.1: Permission denied (publickey).".to_vec(),
+                ))
+            })
             .unwrap_err();
         assert_eq!(error.code, 7);
         assert_eq!(tr.info()["attempted_routes"].as_array().unwrap().len(), 2);
@@ -1145,15 +1221,10 @@ mod tests {
         let mut tr = fixture(&hosts, "both");
         let mut dialed = 0;
         let error = tr
-            .dial(
-                &plan,
-                [Some(true), Some(true), Some(true), None],
-                "true",
-                |_| {
-                    dialed += 1;
-                    Ok((false, Vec::new(), b"python3: command not found".to_vec()))
-                },
-            )
+            .dial(&plan, [Open, Open, Open, Unchecked], "true", |_| {
+                dialed += 1;
+                Ok((false, Vec::new(), b"python3: command not found".to_vec()))
+            })
             .unwrap_err();
         assert_eq!((error.code, dialed), (4, 1));
         assert!(!tr.can_fallback(&error));
@@ -1164,7 +1235,7 @@ mod tests {
         // A local process failure is returned as-is.
         let mut tr = fixture(&hosts, "both");
         let error = tr
-            .dial(&plan, [Some(true), Some(true), Some(true), None], "true", |_| {
+            .dial(&plan, [Open, Open, Open, Unchecked], "true", |_| {
                 Err(AppError::new(4, "Transport timeout; request may have completed remotely. Retry using the same request ID."))
             })
             .unwrap_err();
@@ -1180,7 +1251,7 @@ mod tests {
             let error = tr
                 .dial(
                     &plan,
-                    [Some(false), Some(false), Some(false), None],
+                    [Closed, Closed, Closed, Unchecked],
                     "true",
                     |command| {
                         dialed.push(hostname_of(&command));
@@ -1289,7 +1360,7 @@ mod tests {
         let _home = state::TestHome::new();
         let mut tr = fixture(&["192.0.2.1", "192.0.2.2"], "both");
         let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
-        let open = [Some(true)].into_iter().chain(std::iter::from_fn(|| {
+        let open = [Open].into_iter().chain(std::iter::from_fn(|| {
             panic!("a later precheck was awaited before dialing an earlier candidate")
         }));
         tr.dial(&plan, open, "true", |_| Ok((true, Vec::new(), Vec::new())))
@@ -1304,6 +1375,6 @@ mod tests {
             PRECHECK_DEADLINE,
             |results| results.next(),
         );
-        assert_eq!(first, Some(Some(true)));
+        assert_eq!(first, Some(Open));
     }
 }
