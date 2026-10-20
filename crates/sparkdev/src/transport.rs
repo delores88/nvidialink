@@ -62,17 +62,25 @@ pub const PRECHECK_CONNECT: Duration = Duration::from_millis(1500);
 pub const PRECHECK_DEADLINE: Duration = Duration::from_secs(2);
 const CLOSED_REASON: &str = "No TCP answer on the SSH port within the 1.5s precheck";
 const UNRESOLVED_REASON: &str = "The address resolved to nothing during the precheck";
+const UNREACHABLE_REASON: &str =
+    "SSH reported connection refusal, timeout, unreachable network or DNS failure";
 const REMEMBERED_REJECTED_REASON: &str = "SSH authentication or host pin rejected at a remembered address; forgotten, next address tried, no fallback";
+const REMEMBERED_UNLISTED_REJECTED_REASON: &str = "SSH authentication or host pin rejected at a remembered address that is not a configured host; forgotten, next address tried";
+const UNLISTED_REJECTED_REASON: &str = "SSH authentication or host pin rejected at the alias's HostName, which is not a configured host; next address tried";
 const REMEMBERED_HANDSHAKE_REASON: &str =
     "Remembered address broke off the SSH handshake before authentication; forgotten as stale";
+const UNLISTED_HANDSHAKE_REASON: &str =
+    "The alias's HostName broke off the SSH handshake before authentication; next address tried";
 fn refused_error() -> AppError {
     AppError::new(
         7,
         "SSH authentication or pinned host-key verification failed; fallback refused",
     )
 }
-/// The TCP reachability hint for one candidate. Only `Closed` and
-/// `Unresolved` skip a candidate; the others are dialed through the pinned
+/// The TCP reachability hint for one candidate. `Closed` and `Unresolved`
+/// hold a candidate back: a configured host is dialed only after every other
+/// candidate failed, and an alias HostName outside the configured hosts is
+/// not dialed. The others are dialed in order through the pinned
 /// `command()`, and an answering port is never trust.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reach {
@@ -369,6 +377,8 @@ fn ssh_failure(message: &str) -> &'static str {
 fn broke_before_auth(code: Option<i32>, stdout: &[u8], message: &str) -> bool {
     let negotiation = [
         "kex_exchange_identification",
+        // The same identification phase as named by OpenSSH before 8.x.
+        "ssh_exchange_identification",
         "unable to negotiate with",
         "banner exchange",
     ]
@@ -506,6 +516,13 @@ impl Transport {
             .iter()
             .position(|h| h.eq_ignore_ascii_case(host))
     }
+    /// Whether the code before rediscovery dialed this candidate: one of the
+    /// configured hosts, or the alias left to OpenSSH (planned only when no
+    /// hosts are configured). Its failures keep their earlier meaning; any
+    /// other candidate may only add a way to succeed.
+    fn dialed_before_rediscovery(&self, host: Option<&str>) -> bool {
+        host.is_none_or(|host| self.configured_index(host).is_some())
+    }
     pub fn command(&self, host: Option<&str>, remote: &str) -> Command {
         let mut command = Command::new("ssh");
         command.args([
@@ -638,15 +655,11 @@ impl Transport {
             .collect()
     }
     /// Dial prechecked candidates in planned order through the pinned
-    /// `command()`. Reachability failures move to the next candidate. At a
-    /// configured, alias or sticky address, authentication, host-key,
-    /// service and process failures stop at once. A remembered address is
-    /// only a learned hint: when it fails before authentication completes (a
-    /// broken SSH handshake, or a rejected host key or login) it is forgotten
-    /// and the next candidate is dialed, still through the same pin. Nothing
-    /// ran remotely, so retrying elsewhere cannot duplicate work. A rejection
-    /// still refuses fallback: unless a later candidate authenticates, the
-    /// request fails with 7. `reach` is pulled lazily, one per candidate.
+    /// `command()`; `reach` is pulled lazily, one per candidate. A configured
+    /// host the precheck held back (`Closed` or `Unresolved`) is dialed once
+    /// more after every other candidate failed, so a precheck false negative
+    /// never stops the owner's own host from being tried. See `attempt` for
+    /// what each failure means.
     fn dial(
         &mut self,
         plan: &[Candidate],
@@ -655,8 +668,8 @@ impl Transport {
         mut run: impl FnMut(Command) -> Result<Finished>,
     ) -> Result<Vec<u8>> {
         let mut refused = false;
+        let mut held_back = Vec::new();
         for (candidate, reach) in plan.iter().zip(reach) {
-            let host = candidate.host.as_deref();
             let skipped = match reach {
                 Reach::Closed => Some(CLOSED_REASON),
                 Reach::Unresolved => Some(UNRESOLVED_REASON),
@@ -664,71 +677,130 @@ impl Transport {
             };
             if let Some(reason) = skipped {
                 self.record_candidate(candidate, "host_unreachable", reason);
+                if self.dialed_before_rediscovery(candidate.host.as_deref()) {
+                    held_back.push(candidate);
+                }
                 continue;
             }
-            let (code, out, err) = match run(self.command(host, remote)) {
-                Ok(r) => r,
-                Err(e) => {
-                    let status = if e.message.starts_with("Transport timeout") {
-                        "transport_timeout"
-                    } else {
-                        "process_error"
-                    };
-                    self.record_candidate(candidate, status, &e.message);
-                    return Err(e);
-                }
-            };
-            if code == Some(0) {
-                self.selected = "ssh".into();
-                self.reason = "LAN SSH authenticated with the configured known-host pin".into();
-                self.host = candidate.host.clone();
-                self.authenticated = true;
-                self.record_candidate(
-                    candidate,
-                    "authenticated",
-                    "Strict SSH host pin and key authentication succeeded",
-                );
-                if let Some(host) = host {
-                    if self.remembered_head.as_deref() != Some(host) {
-                        // Best effort: a failed write never fails the request.
-                        let _ = state::remember_host(&self.config, host);
-                        self.remembered_head = Some(host.into());
-                    }
-                }
+            if let Some(out) = self.attempt(candidate, remote, &mut run, &mut refused)? {
                 return Ok(out);
             }
-            let message = String::from_utf8_lossy(&err).to_lowercase();
-            let failure = ssh_failure(&message);
-            if let (Source::Remembered, Some(host)) = (candidate.source, host) {
-                let stale = if failure == "authentication_failed" {
-                    Some((failure, REMEMBERED_REJECTED_REASON))
-                } else if broke_before_auth(code, &out, &message) {
-                    Some(("host_unreachable", REMEMBERED_HANDSHAKE_REASON))
-                } else {
-                    None
-                };
-                if let Some((status, reason)) = stale {
-                    self.record_candidate(candidate, status, reason);
-                    self.forget_remembered(host);
-                    refused |= status == "authentication_failed";
-                    continue;
-                }
-            }
-            self.record_candidate(candidate, failure, match failure {"authentication_failed"=>"SSH authentication or host pin rejected; no fallback", "host_unreachable"=>"SSH reported connection refusal, timeout, unreachable network or DNS failure", _=>"SSH command failed without evidence that the LAN host is unreachable"});
-            if failure == "authentication_failed" {
-                return Err(refused_error());
-            }
-            if failure != "host_unreachable" {
-                return Err(AppError::new(
-                    4,
-                    "SSH command failed; inspect the configured service and key (stderr withheld)",
-                ));
+        }
+        // The precheck can miss a slow host (a first SYN or ARP over 1.5s, a
+        // flaky resolver). Before giving up, each configured host it held
+        // back gets the dial it had before prechecks, with OpenSSH's budgets.
+        for candidate in held_back {
+            if let Some(out) = self.attempt(candidate, remote, &mut run, &mut refused)? {
+                return Ok(out);
             }
         }
         if refused {
             return Err(refused_error());
         }
         Err(AppError::new(4, "Configured LAN addresses are unreachable"))
+    }
+    /// Dial one candidate. `Ok(None)` moves on to the next one.
+    ///
+    /// Reachability failures always move on. A configured host, the alias
+    /// left to OpenSSH, or a sticky configured host keeps the semantics it
+    /// had before rediscovery: an authentication or host-key rejection stops
+    /// at once with 7 (no fallback), any other SSH failure with 4.
+    ///
+    /// A remembered address is only a learned hint. When it rejects the pin
+    /// or login, or OpenSSH breaks off before authentication, it is forgotten
+    /// and the next candidate dialed, still through the same pin. The alias's
+    /// HostName outside the configured hosts was never dialed before
+    /// rediscovery, so the same failures there also move on. Nothing ran
+    /// remotely in any of these cases, so retrying elsewhere cannot duplicate
+    /// work. A rejection at a configured host (remembered or not) still
+    /// refuses fallback: unless a later candidate authenticates, the request
+    /// fails with 7. A rejection at an address outside the configured hosts
+    /// cannot turn an otherwise unreachable result into 7.
+    ///
+    /// For every source, a failure after authentication may have run the
+    /// command, so it stops with 4, and a local process error or timeout is
+    /// returned as-is.
+    fn attempt(
+        &mut self,
+        candidate: &Candidate,
+        remote: &str,
+        run: &mut impl FnMut(Command) -> Result<Finished>,
+        refused: &mut bool,
+    ) -> Result<Option<Vec<u8>>> {
+        let host = candidate.host.as_deref();
+        let (code, out, err) = match run(self.command(host, remote)) {
+            Ok(r) => r,
+            Err(e) => {
+                let status = if e.message.starts_with("Transport timeout") {
+                    "transport_timeout"
+                } else {
+                    "process_error"
+                };
+                self.record_candidate(candidate, status, &e.message);
+                return Err(e);
+            }
+        };
+        if code == Some(0) {
+            self.selected = "ssh".into();
+            self.reason = "LAN SSH authenticated with the configured known-host pin".into();
+            self.host = candidate.host.clone();
+            self.authenticated = true;
+            self.record_candidate(
+                candidate,
+                "authenticated",
+                "Strict SSH host pin and key authentication succeeded",
+            );
+            if let Some(host) = host {
+                if self.remembered_head.as_deref() != Some(host) {
+                    // Best effort: a failed write never fails the request.
+                    let _ = state::remember_host(&self.config, host);
+                    self.remembered_head = Some(host.into());
+                }
+            }
+            return Ok(Some(out));
+        }
+        let message = String::from_utf8_lossy(&err).to_lowercase();
+        let failure = ssh_failure(&message);
+        if failure == "host_unreachable" {
+            self.record_candidate(candidate, failure, UNREACHABLE_REASON);
+            return Ok(None);
+        }
+        let rejected = failure == "authentication_failed";
+        let broken = !rejected && broke_before_auth(code, &out, &message);
+        let configured = self.dialed_before_rediscovery(host);
+        let remembered = candidate.source == Source::Remembered;
+        if (rejected || broken) && (remembered || !configured) {
+            let (status, reason) = match (rejected, remembered, configured) {
+                (true, true, true) => (failure, REMEMBERED_REJECTED_REASON),
+                (true, true, false) => (failure, REMEMBERED_UNLISTED_REJECTED_REASON),
+                (true, false, _) => (failure, UNLISTED_REJECTED_REASON),
+                (false, true, _) => ("host_unreachable", REMEMBERED_HANDSHAKE_REASON),
+                (false, false, _) => ("host_unreachable", UNLISTED_HANDSHAKE_REASON),
+            };
+            self.record_candidate(candidate, status, reason);
+            if let (true, Some(host)) = (remembered, host) {
+                self.forget_remembered(host);
+            }
+            *refused |= rejected && configured;
+            return Ok(None);
+        }
+        if rejected {
+            self.record_candidate(
+                candidate,
+                failure,
+                "SSH authentication or host pin rejected; no fallback",
+            );
+            return Err(refused_error());
+        }
+        self.record_candidate(
+            candidate,
+            failure,
+            "SSH command failed without evidence that the LAN host is unreachable",
+        );
+        Err(AppError::new(
+            4,
+            "SSH command failed; inspect the configured service and key (stderr withheld)",
+        ))
     }
     fn forget_remembered(&mut self, host: &str) {
         // Best effort: a failed write never fails the request.
@@ -1473,25 +1545,38 @@ mod tests {
                 candidate(Source::Remembered, Some("192.0.2.1")),
             ]
         );
-        let mut dialed = 0;
+        // The precheck held 192.0.2.1 back, so it is dialed after the
+        // rejection, and only the rejected address is forgotten.
+        let mut dialed = Vec::new();
         let error = tr
-            .dial(&plan, [Open, Closed], "true", |_| {
-                dialed += 1;
-                ssh_error("Host key verification failed.\r\n")
+            .dial(&plan, [Open, Closed], "true", |command| {
+                assert_pinned(&command, "test-pin");
+                let host = hostname_of(&command);
+                dialed.push(host.clone());
+                match host.as_deref() {
+                    Some("192.0.2.2") => ssh_error("Host key verification failed.\r\n"),
+                    _ => refused(),
+                }
             })
             .unwrap_err();
-        assert_eq!((error.code, dialed), (7, 1));
+        assert_eq!(error.code, 7);
+        assert_eq!(
+            dialed,
+            [Some("192.0.2.2".to_owned()), Some("192.0.2.1".to_owned())]
+        );
         assert!(!tr.can_fallback(&error));
         assert!(!tr.authenticated);
         assert_eq!(tr.info()["route"], "none");
-        assert_eq!(
-            tr.info()["attempted_routes"][0]["status"],
-            "authentication_failed"
-        );
-        assert_eq!(
-            tr.info()["attempted_routes"][1]["status"],
-            "host_unreachable"
-        );
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts[0]["status"], "authentication_failed");
+        assert_eq!(attempts[0]["reason"], REMEMBERED_REJECTED_REASON);
+        // Remembered configured addresses keep their configured position.
+        assert_eq!(attempts[0]["target_index"], 1);
+        assert_eq!(attempts[1]["status"], "host_unreachable");
+        assert_eq!(attempts[1]["reason"], CLOSED_REASON);
+        assert_eq!(attempts[2]["status"], "host_unreachable");
+        assert_eq!(attempts[2]["host"], "192.0.2.1");
+        assert_eq!(attempts[2]["target_index"], 0);
         assert_eq!(state::remembered_hosts(&tr.config), ["192.0.2.1"]);
         // A configured address failing authentication fails closed but does
         // not erase remembered addresses.
@@ -1544,7 +1629,8 @@ mod tests {
             tr.info()["attempted_routes"][0]["status"],
             "transport_timeout"
         );
-        // Every address unreachable is exactly the fallback-eligible error.
+        // Every address unreachable is exactly the fallback-eligible error,
+        // after the held-back configured address got its own dial.
         for mode in ["both", "lan-only"] {
             let mut tr = fixture(&hosts, mode);
             let mut dialed = Vec::new();
@@ -1557,15 +1643,17 @@ mod tests {
             assert_eq!(error.code, 4);
             assert_eq!(error.message, "Configured LAN addresses are unreachable");
             assert_eq!(tr.can_fallback(&error), mode == "both");
-            assert_eq!(dialed, [Some("192.0.2.2".to_owned())]);
+            assert_eq!(
+                dialed,
+                [Some("192.0.2.2".to_owned()), Some("192.0.2.1".to_owned())]
+            );
             let attempts = tr.info()["attempted_routes"].as_array().unwrap().clone();
-            assert_eq!(attempts.len(), 2);
+            assert_eq!(attempts.len(), 3);
             assert!(attempts.iter().all(|a| a["status"] == "host_unreachable"));
             assert_eq!(attempts[1]["source"], "configured");
-            assert_eq!(
-                attempts[1]["reason"],
-                "SSH reported connection refusal, timeout, unreachable network or DNS failure"
-            );
+            assert_eq!(attempts[1]["reason"], UNREACHABLE_REASON);
+            assert_eq!(attempts[2]["source"], "remembered");
+            assert_eq!(attempts[2]["reason"], UNREACHABLE_REASON);
         }
         assert_eq!(
             state::remembered_hosts(&fixture(&hosts, "both").config),
@@ -1709,13 +1797,34 @@ mod tests {
         let mut tr = fixture(&hosts, "both");
         let plan = stale(&mut tr);
         let error = tr
-            .dial(&plan, [Open, Closed], "true", |_| {
-                ssh_error("kex_exchange_identification: read: Connection reset by peer\r\n")
-            })
+            .dial(
+                &plan,
+                [Open, Closed],
+                "true",
+                |command| match hostname_of(&command).as_deref() {
+                    Some("192.0.2.51") => {
+                        ssh_error("kex_exchange_identification: read: Connection reset by peer\r\n")
+                    }
+                    _ => refused(),
+                },
+            )
             .unwrap_err();
         assert_eq!(error.message, "Configured LAN addresses are unreachable");
         assert!(tr.can_fallback(&error));
         assert!(!state::remembered_hosts(&tr.config).contains(&"192.0.2.51".to_owned()));
+        // Older OpenSSH names the identification phase differently.
+        let mut tr = fixture(&hosts, "both");
+        let plan = stale(&mut tr);
+        tr.dial(&plan, [Open, Open], "true", |command| {
+            match hostname_of(&command).as_deref() {
+                Some("192.0.2.51") => {
+                    ssh_error("ssh_exchange_identification: Connection closed by remote host\r\n")
+                }
+                _ => ok(b""),
+            }
+        })
+        .unwrap();
+        assert_eq!(tr.info()["lan_host"], "192.0.2.50");
         // Another SSH server's host key at the remembered address: forget it,
         // and the configured address still authenticates through the pin.
         let mut tr = fixture(&hosts, "both");
@@ -1763,6 +1872,177 @@ mod tests {
             tr.info()["attempted_routes"][0]["status"],
             "ssh_command_failed"
         );
+    }
+    #[test]
+    fn a_configured_host_the_precheck_missed_still_gets_its_dial() {
+        let _home = state::TestHome::new();
+        // Both configured hosts answered too slowly for the precheck and the
+        // alias's HostName is dead. After everything else failed, the
+        // configured hosts are dialed in order; the alias HostName is not.
+        let mut tr = fixture(&["192.0.2.1", "spark-b.local"], "lan-only");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), Some("192.0.2.9"));
+        let mut dialed = Vec::new();
+        tr.dial(&plan, [Closed, Unresolved, Closed], "true", |command| {
+            assert_pinned(&command, "test-pin");
+            let host = hostname_of(&command);
+            dialed.push(host.clone());
+            match host.as_deref() {
+                Some("192.0.2.1") => refused(),
+                _ => ok(b""),
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            dialed,
+            [
+                Some("192.0.2.1".to_owned()),
+                Some("spark-b.local".to_owned())
+            ]
+        );
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts.as_array().unwrap().len(), 5);
+        assert_eq!(attempts[2]["source"], "alias");
+        assert_eq!(attempts[2]["reason"], CLOSED_REASON);
+        assert_eq!(attempts[3]["status"], "host_unreachable");
+        assert_eq!(attempts[4]["status"], "authenticated");
+        assert_eq!(attempts[4]["target_index"], 1);
+        assert_eq!(tr.info()["lan_host"], "spark-b.local");
+        assert_eq!(state::remembered_hosts(&tr.config), ["spark-b.local"]);
+        // That later dial keeps the fail-closed rule of a configured host.
+        let mut tr = fixture(&["192.0.2.1"], "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+        let error = tr
+            .dial(&plan, [Closed], "true", |_| {
+                ssh_error("Host key verification failed.\r\n")
+            })
+            .unwrap_err();
+        assert_eq!(error.code, 7);
+        assert!(!tr.can_fallback(&error));
+        // Only the alias HostName was held back: it is not dialed, and the
+        // result is the plain fallback-eligible one.
+        let mut tr = fixture(&["192.0.2.1"], "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), Some("192.0.2.9"));
+        let mut dialed = Vec::new();
+        let error = tr
+            .dial(&plan, [Open, Closed], "true", |command| {
+                dialed.push(hostname_of(&command));
+                refused()
+            })
+            .unwrap_err();
+        assert_eq!(dialed, [Some("192.0.2.1".to_owned())]);
+        assert!(tr.can_fallback(&error));
+    }
+    #[test]
+    fn an_alias_hostname_outside_the_hosts_never_blocks_fallback() {
+        let _home = state::TestHome::new();
+        let hosts = ["192.0.2.1"];
+        let alias_plan =
+            |tr: &Transport| plan_candidates(None, &[], &tr.config.hosts, Some("192.0.2.9"));
+        // Before rediscovery only 192.0.2.1 was dialed, and its refusal fell
+        // back. A rejection or a broken handshake at the alias's HostName
+        // keeps that result; the attempt still reports what happened.
+        for (stderr, status, reason) in [
+            (
+                "Host key verification failed.\r\n",
+                "authentication_failed",
+                UNLISTED_REJECTED_REASON,
+            ),
+            (
+                "jump@bastion: Permission denied (publickey).\r\n",
+                "authentication_failed",
+                UNLISTED_REJECTED_REASON,
+            ),
+            (
+                "Connection closed by UNKNOWN port 65535\r\n",
+                "host_unreachable",
+                UNLISTED_HANDSHAKE_REASON,
+            ),
+        ] {
+            let mut tr = fixture(&hosts, "both");
+            let plan = alias_plan(&tr);
+            let error = tr
+                .dial(&plan, [Open, Open], "true", |command| {
+                    assert_pinned(&command, "test-pin");
+                    match hostname_of(&command).as_deref() {
+                        Some("192.0.2.9") => ssh_error(stderr),
+                        _ => refused(),
+                    }
+                })
+                .unwrap_err();
+            assert_eq!(
+                error.message, "Configured LAN addresses are unreachable",
+                "{stderr}"
+            );
+            assert!(tr.can_fallback(&error), "{stderr}");
+            let attempts = tr.info()["attempted_routes"].clone();
+            assert_eq!(attempts[1]["source"], "alias");
+            assert_eq!(attempts[1]["status"], status);
+            assert_eq!(attempts[1]["reason"], reason);
+            assert_eq!(attempts[1]["target_index"], Value::Null);
+        }
+        // Once the pinned Spark authenticated there, a dropped connection may
+        // have run the command: it stops without fallback, as for any source.
+        let mut tr = fixture(&hosts, "both");
+        let plan = alias_plan(&tr);
+        let mut dialed = 0;
+        let error = tr
+            .dial(&plan, [Closed, Open], "true", |_| {
+                dialed += 1;
+                ssh_error("Connection to 192.0.2.9 closed by remote host.\r\n")
+            })
+            .unwrap_err();
+        assert_eq!((error.code, dialed), (4, 1));
+        assert!(!tr.can_fallback(&error));
+        // A remembered alias HostName that now rejects the pin is forgotten
+        // and refuses nothing; the configured host is still dialed.
+        let mut tr = fixture(&hosts, "both");
+        state::remember_host(&tr.config, "192.0.2.9").unwrap();
+        let plan = tr.lan_plan(|_| route(Some("192.0.2.9"), true));
+        assert_eq!(
+            plan,
+            [
+                candidate(Source::Remembered, Some("192.0.2.9")),
+                candidate(Source::Configured, Some("192.0.2.1")),
+            ]
+        );
+        let mut dialed = Vec::new();
+        let error = tr
+            .dial(&plan, [Open, Open], "true", |command| {
+                let host = hostname_of(&command);
+                dialed.push(host.clone());
+                match host.as_deref() {
+                    Some("192.0.2.9") => ssh_error("Host key verification failed.\r\n"),
+                    _ => refused(),
+                }
+            })
+            .unwrap_err();
+        assert_eq!(dialed.len(), 2);
+        assert!(tr.can_fallback(&error));
+        assert_eq!(
+            tr.info()["attempted_routes"][0]["reason"],
+            REMEMBERED_UNLISTED_REJECTED_REASON
+        );
+        assert!(state::remembered_hosts(&tr.config).is_empty());
+        // Without configured hosts the alias is the only route, as before
+        // rediscovery: a rejection stops with 7 and any other SSH failure,
+        // a broken handshake included, with the non-fallback 4.
+        let mut tr = fixture(&[], "both");
+        let plan = tr.lan_plan(|_| panic!("no alias lookup without configured hosts"));
+        assert_eq!(plan, [candidate(Source::Alias, None)]);
+        let error = tr
+            .dial(&plan, [Unchecked], "true", |_| {
+                ssh_error("Host key verification failed.\r\n")
+            })
+            .unwrap_err();
+        assert_eq!(error.code, 7);
+        assert!(!tr.can_fallback(&error));
+        let error = tr
+            .dial(&plan, [Unchecked], "true", |_| {
+                ssh_error("kex_exchange_identification: Connection closed by remote host\r\n")
+            })
+            .unwrap_err();
+        assert_eq!(error.code, 4);
+        assert!(!tr.can_fallback(&error));
     }
     #[test]
     fn every_attempt_at_a_configured_address_carries_its_configured_index() {
