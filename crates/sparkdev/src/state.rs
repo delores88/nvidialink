@@ -241,17 +241,7 @@ pub fn validate_config(config: &Config) -> Result<()> {
         .chain(std::iter::once(&config.host_key_alias))
         .chain(config.user.iter())
     {
-        if value.is_empty()
-            || value.starts_with('-')
-            || !value
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "._:-@[]".contains(c))
-        {
-            return Err(AppError::new(
-                2,
-                "SSH host, user and pin alias must be plain host identifiers",
-            ));
-        }
+        validate_host(value)?;
     }
     if config.port == 0 {
         return Err(AppError::new(2, "SSH port must be nonzero"));
@@ -267,6 +257,158 @@ pub fn validate_config(config: &Config) -> Result<()> {
         }
     }
     Ok(())
+}
+/// The single plain-identifier rule for SSH aliases, hosts, users and pins.
+/// Values reach OpenSSH as separate arguments, so a leading dash or shell or
+/// option syntax is refused rather than escaped.
+pub fn validate_host(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.starts_with('-')
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:-@[]".contains(c))
+    {
+        return Err(AppError::new(
+            2,
+            "SSH host, user and pin alias must be plain host identifiers",
+        ));
+    }
+    Ok(())
+}
+
+const LAN_ROUTE_FILE: &str = "lan-route.json";
+const LAN_ROUTE_MAX: usize = 8;
+const LAN_ROUTE_PER_BINDING: usize = 4;
+const LAN_ROUTE_MAX_AGE: u64 = 30 * 24 * 60 * 60;
+const LAN_ROUTE_MAX_BYTES: u64 = 64 * 1024;
+
+#[derive(Serialize, Deserialize)]
+struct LanRoutes {
+    v: u32,
+    entries: Vec<LanRoute>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct LanRoute {
+    binding: String,
+    host: String,
+    verified_at: u64,
+}
+
+/// Remembered LAN addresses belong to one SSH identity: the alias, the pinned
+/// host key alias, port and login user. Changing any of them starts empty.
+pub fn lan_binding(config: &Config) -> String {
+    use sha2::{Digest, Sha256};
+    let identity = format!(
+        "{}|{}|{}|{}",
+        config.ssh_alias,
+        config.host_key_alias,
+        config.port,
+        config.user.as_deref().unwrap_or("")
+    );
+    format!("{:x}", Sha256::digest(identity.as_bytes()))
+}
+fn read_lan_routes(path: &Path) -> Vec<LanRoute> {
+    use std::io::Read;
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take(LAN_ROUTE_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() as u64 > LAN_ROUTE_MAX_BYTES
+    {
+        return Vec::new();
+    }
+    match serde_json::from_slice::<LanRoutes>(&bytes) {
+        Ok(routes) if routes.v == 1 => routes.entries,
+        _ => Vec::new(),
+    }
+}
+fn lan_route_usable(entry: &LanRoute, now: u64) -> bool {
+    now.saturating_sub(entry.verified_at) <= LAN_ROUTE_MAX_AGE && validate_host(&entry.host).is_ok()
+}
+fn remembered_hosts_at(path: &Path, config: &Config, now: u64) -> Vec<String> {
+    let binding = lan_binding(config);
+    let mut hosts: Vec<String> = Vec::new();
+    for entry in read_lan_routes(path) {
+        if hosts.len() == LAN_ROUTE_PER_BINDING {
+            break;
+        }
+        if entry.binding == binding
+            && lan_route_usable(&entry, now)
+            && !hosts.iter().any(|h| h.eq_ignore_ascii_case(&entry.host))
+        {
+            hosts.push(entry.host);
+        }
+    }
+    hosts
+}
+fn remember_host_at(path: &Path, config: &Config, host: &str, now: u64) -> Result<()> {
+    validate_host(host)?;
+    let binding = lan_binding(config);
+    let mut entries = vec![LanRoute {
+        binding: binding.clone(),
+        host: host.into(),
+        verified_at: now,
+    }];
+    entries.extend(read_lan_routes(path).into_iter().filter(|entry| {
+        lan_route_usable(entry, now)
+            && !(entry.binding == binding && entry.host.eq_ignore_ascii_case(host))
+    }));
+    let mut per_binding = std::collections::BTreeMap::<String, usize>::new();
+    entries.retain(|entry| {
+        let count = per_binding.entry(entry.binding.clone()).or_default();
+        *count += 1;
+        *count <= LAN_ROUTE_PER_BINDING
+    });
+    entries.truncate(LAN_ROUTE_MAX);
+    atomic_json(path, &LanRoutes { v: 1, entries })
+}
+fn forget_host_at(path: &Path, config: &Config, host: &str) -> Result<()> {
+    let binding = lan_binding(config);
+    let entries = read_lan_routes(path);
+    let before = entries.len();
+    let entries: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| !(entry.binding == binding && entry.host.eq_ignore_ascii_case(host)))
+        .collect();
+    if entries.len() != before {
+        atomic_json(path, &LanRoutes { v: 1, entries })?;
+    }
+    Ok(())
+}
+fn with_lan_routes<T>(change: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
+    let directory = root()?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(directory.join("lan-route.lock"))?;
+    fs2::FileExt::lock_exclusive(&lock)?;
+    change(&directory.join(LAN_ROUTE_FILE))
+}
+/// Verified LAN addresses for this SSH identity, most recent first. Missing,
+/// oversized or corrupt state, stale entries and invalid hosts are ignored:
+/// the list only orders candidates, it never authorizes one.
+pub fn remembered_hosts(config: &Config) -> Vec<String> {
+    root()
+        .map(|directory| remembered_hosts_at(&directory.join(LAN_ROUTE_FILE), config, now()))
+        .unwrap_or_default()
+}
+/// Record an address that just completed pinned SSH authentication. Skipped
+/// for a redirected (virtualized) state folder; config.json is never touched.
+pub fn remember_host(config: &Config, host: &str) -> Result<()> {
+    if diagnostics()["redirected"] == true {
+        return Ok(());
+    }
+    with_lan_routes(|path| remember_host_at(path, config, host, now()))
+}
+/// Drop a remembered address whose SSH identity check failed.
+pub fn forget_host(config: &Config, host: &str) -> Result<()> {
+    with_lan_routes(|path| forget_host_at(path, config, host))
 }
 pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     atomic_bytes(path, &serde_json::to_vec(value)?)
@@ -336,6 +478,48 @@ pub fn now() -> u64 {
         .as_secs()
 }
 
+/// Tests that reach `root()` must hold this guard: it serializes the
+/// process-wide SPARKDEV_HOME override and points it at a fresh temporary
+/// directory, so no test can read or write the owner's real state.
+#[cfg(test)]
+pub(crate) struct TestHome {
+    pub(crate) path: PathBuf,
+    previous: Option<std::ffi::OsString>,
+    _directory: tempfile::TempDir,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+#[cfg(test)]
+impl TestHome {
+    pub(crate) fn new() -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let directory = tempfile::tempdir().unwrap();
+        // The canonical form matches what redirection diagnostics resolve.
+        let path = fs::canonicalize(directory.path()).unwrap();
+        let previous = std::env::var_os("SPARKDEV_HOME");
+        // SAFETY: every test that changes or depends on SPARKDEV_HOME holds LOCK.
+        unsafe { std::env::set_var("SPARKDEV_HOME", &path) };
+        Self {
+            path,
+            previous,
+            _directory: directory,
+            _guard: guard,
+        }
+    }
+}
+#[cfg(test)]
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        // SAFETY: LOCK is still held; it is released after this body runs.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var("SPARKDEV_HOME", value),
+                None => std::env::remove_var("SPARKDEV_HOME"),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +550,150 @@ mod tests {
         config.laptop_jobs = 65;
         assert!(validate_config(&config).is_err());
         assert!(serde_json::from_value::<Config>(serde_json::json!({"ssh_alias":"spark","hosts":[],"host_key_alias":"pin","connection_mode":"insecure"})).is_err());
+    }
+    #[test]
+    fn host_rule_is_shared_with_configuration_validation() {
+        for good in [
+            "192.0.2.1",
+            "spark.local",
+            "spark-1",
+            "[2001:db8::1]",
+            "owner@spark",
+        ] {
+            assert!(validate_host(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "",
+            "-oProxyCommand=x",
+            "a b",
+            "spark;id",
+            "a/b",
+            "spark%eth0",
+            "$(x)",
+        ] {
+            assert!(validate_host(bad).is_err(), "{bad}");
+            let mut config = legacy(false);
+            config.hosts = vec![bad.into()];
+            let error = validate_config(&config).unwrap_err();
+            assert_eq!(error.code, 2);
+            assert_eq!(
+                error.message,
+                "SSH host, user and pin alias must be plain host identifiers"
+            );
+        }
+        assert!(validate_config(&legacy(false)).is_ok());
+    }
+    fn route_file(path: &Path) -> Value {
+        read_json(&path.join(LAN_ROUTE_FILE)).unwrap()
+    }
+    #[test]
+    fn lan_route_roundtrip_is_bounded_and_never_touches_config() {
+        let home = TestHome::new();
+        let config = legacy(false);
+        assert!(remembered_hosts(&config).is_empty());
+        remember_host(&config, "192.0.2.10").unwrap();
+        remember_host(&config, "192.0.2.11").unwrap();
+        remember_host(&config, "192.0.2.10").unwrap();
+        assert_eq!(remembered_hosts(&config), ["192.0.2.10", "192.0.2.11"]);
+        let file = route_file(&home.path);
+        assert_eq!(file["v"], 1);
+        assert_eq!(file["entries"].as_array().unwrap().len(), 2);
+        assert_eq!(file["entries"][0]["binding"], lan_binding(&config));
+        assert_eq!(file["entries"][0]["binding"].as_str().unwrap().len(), 64);
+        assert!(file["entries"][0]["verified_at"].as_u64().unwrap() > 0);
+        for n in 0..6 {
+            remember_host(&config, &format!("198.51.100.{n}")).unwrap();
+        }
+        assert_eq!(
+            remembered_hosts(&config),
+            [
+                "198.51.100.5",
+                "198.51.100.4",
+                "198.51.100.3",
+                "198.51.100.2"
+            ]
+        );
+        assert_eq!(
+            route_file(&home.path)["entries"].as_array().unwrap().len(),
+            4
+        );
+        assert!(!home.path.join("config.json").exists());
+        assert!(remember_host(&config, "-oProxyCommand=x").is_err());
+    }
+    #[test]
+    fn lan_route_bindings_are_isolated_and_forget_is_scoped() {
+        let home = TestHome::new();
+        let first = legacy(false);
+        let mut other_pin = legacy(false);
+        other_pin.host_key_alias = "other-pin".into();
+        let mut other_port = legacy(false);
+        other_port.port = 2222;
+        let mut other_user = legacy(false);
+        other_user.user = Some("owner".into());
+        let bindings: std::collections::BTreeSet<_> =
+            [&first, &other_pin, &other_port, &other_user]
+                .iter()
+                .map(|c| lan_binding(c))
+                .collect();
+        assert_eq!(bindings.len(), 4);
+        remember_host(&first, "192.0.2.20").unwrap();
+        remember_host(&other_pin, "192.0.2.21").unwrap();
+        remember_host(&other_pin, "192.0.2.20").unwrap();
+        assert_eq!(remembered_hosts(&first), ["192.0.2.20"]);
+        assert_eq!(remembered_hosts(&other_pin), ["192.0.2.20", "192.0.2.21"]);
+        assert!(remembered_hosts(&other_port).is_empty());
+        assert!(remembered_hosts(&other_user).is_empty());
+        forget_host(&first, "192.0.2.20").unwrap();
+        assert!(remembered_hosts(&first).is_empty());
+        assert_eq!(remembered_hosts(&other_pin), ["192.0.2.20", "192.0.2.21"]);
+        forget_host(&first, "192.0.2.99").unwrap();
+        // Many identities still share one file capped at eight entries.
+        for n in 0..12u16 {
+            let mut config = legacy(false);
+            config.port = 3000 + n;
+            remember_host(&config, "192.0.2.30").unwrap();
+        }
+        assert_eq!(
+            route_file(&home.path)["entries"].as_array().unwrap().len(),
+            8
+        );
+    }
+    #[test]
+    fn corrupt_stale_or_invalid_lan_routes_are_ignored() {
+        let home = TestHome::new();
+        let config = legacy(false);
+        let path = home.path.join(LAN_ROUTE_FILE);
+        for corrupt in [&b"{broken"[..], &b"[]"[..], &br#"{"v":2,"entries":[]}"#[..]] {
+            fs::write(&path, corrupt).unwrap();
+            assert!(remembered_hosts(&config).is_empty());
+            forget_host(&config, "192.0.2.1").unwrap();
+        }
+        fs::write(&path, vec![b' '; LAN_ROUTE_MAX_BYTES as usize + 1]).unwrap();
+        assert!(remembered_hosts(&config).is_empty());
+        remember_host(&config, "192.0.2.40").unwrap();
+        assert_eq!(remembered_hosts(&config), ["192.0.2.40"]);
+        let now = now();
+        let binding = lan_binding(&config);
+        let file = serde_json::json!({"v":1,"entries":[
+            {"binding":binding,"host":"192.0.2.41","verified_at":now - LAN_ROUTE_MAX_AGE - 1},
+            {"binding":binding,"host":"a b","verified_at":now},
+            {"binding":binding,"host":"-oProxyCommand=x","verified_at":now},
+            {"binding":binding,"host":"192.0.2.42","verified_at":now - LAN_ROUTE_MAX_AGE + 60}
+        ]});
+        fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        assert_eq!(remembered_hosts(&config), ["192.0.2.42"]);
+        remember_host_at(&path, &config, "192.0.2.43", now).unwrap();
+        let hosts: Vec<_> = route_file(&home.path)["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["host"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(hosts, ["192.0.2.43", "192.0.2.42"]);
+        assert_eq!(
+            remembered_hosts_at(&path, &config, now + LAN_ROUTE_MAX_AGE - 1),
+            ["192.0.2.43"]
+        );
+        assert!(remembered_hosts_at(&path, &config, now + LAN_ROUTE_MAX_AGE + 1).is_empty());
     }
 }
