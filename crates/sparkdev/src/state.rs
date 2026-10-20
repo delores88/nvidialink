@@ -748,7 +748,7 @@ mod tests {
             {"binding":binding,"host":"192.0.2.63","verified_at":now + 60},
             {"binding":binding,"host":"192.0.2.64","verified_at":u64::MAX}
         ]));
-        assert_eq!(remembered_hosts(&config), ["192.0.2.63"]);
+        assert_eq!(remembered_hosts_at(&path, &config, now), ["192.0.2.63"]);
         remember_host_at(&path, &config, "192.0.2.65", now).unwrap();
         let hosts: Vec<_> = route_file(&home.path)["entries"]
             .as_array()
