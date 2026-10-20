@@ -119,7 +119,8 @@ def pip_env():
 
 def image_path():
     # sys.path[0] is the directory of /sparkdev-prepare.py, i.e. "/": never the image's packages.
-    return sys.path[1:]
+    # An image PYTHONSAFEPATH omits that entry, and then every entry belongs to the image.
+    return list(sys.path) if sys.flags.safe_path else sys.path[1:]
 
 
 def dist_name(dist):

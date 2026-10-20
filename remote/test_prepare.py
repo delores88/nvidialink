@@ -176,6 +176,14 @@ class PrecheckTests(unittest.TestCase):
                          ["sparkdev: refused: numpy is provided by the CUDA image",
                           "sparkdev: refused: pillow is provided by the CUDA image"])
 
+    def test_image_path_drops_only_the_script_directory(self):
+        paths = ["/", "/usr/lib/python312.zip", "/usr/local/lib/python3.12/dist-packages"]
+        with mock.patch.object(sys, "path", paths):
+            with mock.patch.object(sys, "flags", mock.Mock(safe_path=False)):
+                self.assertEqual(prepare.image_path(), paths[1:])
+            with mock.patch.object(sys, "flags", mock.Mock(safe_path=True)):
+                self.assertEqual(prepare.image_path(), paths)
+
     def test_non_utf8_lock_is_refused(self):
         self.assertEqual(prepare.precheck(b"\xff\xfe\x00", set()), ["sparkdev: refused: requirements-cuda.lock is not UTF-8"])
 
