@@ -1,7 +1,7 @@
 import {qrArt,eyeRing,eyePupil,alignRing,alignDot,sparkPath,checkPoints} from './vendor/sparkLinkQr.mjs';
 import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vendor/sparkParticles.mjs';
 import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
-  isActiveJob,jobId,jobRunner,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress} from './model.mjs';
+  isActiveJob,jobId,jobRunner,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel} from './model.mjs';
 import {createConnectionVisual} from './connection-visual.mjs';
 const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__.core.invoke(name,args);
@@ -46,7 +46,7 @@ function renderConnection(){
   document.querySelectorAll('[data-connection-note]').forEach(el=>el.textContent=note);
   $('connection-toggle').textContent=state.enabled?'Disconnect':'Connect';$('connection-toggle').className=`button ${state.enabled?'secondary':'primary'}`;$('connection-toggle').disabled=connecting||!savedConfig;
   const transport=spark?.transport||{},heartbeat=Number(spark?.scheduler?.last_heartbeat),hardware=spark?.hardware;
-  const facts=[['Route',state.connected?state.route:'None authenticated'],['Address used',used?`${used.address}${used.of>1?` (configured address ${used.index+1} of ${used.of})`:''}`:'—'],['Scheduler',spark?.scheduler?(spark.scheduler.healthy?'Healthy':'Not healthy'):'Not observed'],['Heartbeat',Number.isFinite(heartbeat)&&heartbeat>0?relativeTime(heartbeat,observation?.observed_at):'—'],['Spark hardware',hardware?.cpu_count?`${hardware.cpu_count} CPU cores · ${hardware.memory_gb} GiB`:'Not observed'],['Last check',observation?.observed_at?relativeTime(observation.observed_at):'Not checked']];
+  const facts=[['Route',state.connected?state.route:'None authenticated'],['Address used',routeAddressLabel(used)],['Scheduler',spark?.scheduler?(spark.scheduler.healthy?'Healthy':'Not healthy'):'Not observed'],['Heartbeat',Number.isFinite(heartbeat)&&heartbeat>0?relativeTime(heartbeat,observation?.observed_at):'—'],['Spark hardware',hardware?.cpu_count?`${hardware.cpu_count} CPU cores · ${hardware.memory_gb} GiB`:'Not observed'],['Last check',observation?.observed_at?relativeTime(observation.observed_at):'Not checked']];
   if(transport.reason&&!state.connected)facts.push(['Reason',transport.reason]);
   renderFacts($('route-facts'),facts);
   visuals.forEach(visual=>visual.render(state,reduced));renderAgents();

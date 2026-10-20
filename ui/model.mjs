@@ -175,12 +175,23 @@ export function boardSummary(observation, jobs) {
     failedRecently: jobs.filter(job => jobOutcome(job).kind === 'fail' && Number(job.created_at) > observedAt - 86400).length,
   };
 }
+// The dialed address comes from lan_host (or the authenticated attempt's
+// host); its configured position is found by matching config.hosts, because a
+// remembered, sticky or alias attempt may have no target_index. target_index
+// is only used by observations that report no dialed host.
 export function routeAddress(observation, config) {
   const transport = observation?.devices?.find(device => device.id === 'spark')?.transport || {};
   if (transport.route !== 'lan_ssh' || transport.authenticated !== true) return null;
   const used = [...(transport.attempted_routes || [])].reverse().find(attempt => attempt.route === 'lan_ssh' && attempt.status === 'authenticated');
   const hosts = Array.isArray(config?.hosts) ? config.hosts : [];
-  const index = Number.isSafeInteger(used?.target_index) ? used.target_index : null;
-  const address = cleanReference(transport.host) || (index !== null ? cleanReference(hosts[index]) : '') || cleanReference(config?.ssh_alias);
+  const dialed = cleanReference(transport.lan_host) || cleanReference(used?.host);
+  const listed = hosts.findIndex(host => typeof host === 'string' && dialed !== '' && host.toLowerCase() === dialed.toLowerCase());
+  const reported = Number.isSafeInteger(used?.target_index) && used.target_index >= 0 && used.target_index < hosts.length ? used.target_index : null;
+  const index = dialed ? (listed >= 0 ? listed : null) : reported;
+  const address = dialed || (index !== null ? cleanReference(hosts[index]) : '') || cleanReference(config?.ssh_alias);
   return address ? {address, index, of: hosts.length} : null;
+}
+export function routeAddressLabel(used) {
+  if (!used) return '—';
+  return used.index !== null && used.of > 1 ? `${used.address} (configured address ${used.index + 1} of ${used.of})` : used.address;
 }

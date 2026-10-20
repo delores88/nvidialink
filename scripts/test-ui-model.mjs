@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration} from '../ui/model.mjs';
+import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel} from '../ui/model.mjs';
 import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
 import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
@@ -10,6 +10,28 @@ test('connection is never claimed from reachability without authentication',()=>
   const forged=structuredClone(lan);forged.devices[0].transport.authenticated=false;
   assert.equal(connectionView(forged,{}).connected,false);
   assert.equal(connectionView(lan,{}).route,'Pinned SSH · LAN');
+});
+test('address used names the dialed host and its configured position whatever its source',()=>{
+  const config={ssh_alias:'my-spark',hosts:['192.0.2.186','192.0.2.187']};
+  const seen=(attempt,lanHost=attempt.host)=>({ok:true,devices:[{id:'spark',transport:{route:'lan_ssh',authenticated:true,...(lanHost?{lan_host:lanHost}:{}),attempted_routes:[{route:'lan_ssh',status:'host_unreachable',source:'configured',host:'192.0.2.186',target_index:0},{route:'lan_ssh',status:'authenticated',...attempt}]}}]});
+  // A remembered configured address carries no target_index of its own.
+  const remembered=routeAddress(seen({source:'remembered',host:'192.0.2.187',target_index:null}),config);
+  assert.deepEqual(remembered,{address:'192.0.2.187',index:1,of:2});
+  assert.equal(routeAddressLabel(remembered),'192.0.2.187 (configured address 2 of 2)');
+  assert.deepEqual(routeAddress(seen({source:'sticky',host:'spark-b.local',target_index:null}),{...config,hosts:['spark-a.local','SPARK-B.local']}),{address:'spark-b.local',index:1,of:2});
+  // An address outside the configured list gets no position suffix.
+  const alias=routeAddress(seen({source:'alias',host:'192.0.2.9',target_index:null}),config);
+  assert.deepEqual(alias,{address:'192.0.2.9',index:null,of:2});
+  assert.equal(routeAddressLabel(alias),'192.0.2.9');
+  // An alias OpenSSH resolved reports no host: name the alias, no suffix.
+  const bare=routeAddress(seen({source:'alias',host:null,target_index:null},null),config);
+  assert.deepEqual(bare,{address:'my-spark',index:null,of:2});
+  assert.equal(routeAddressLabel(bare),'my-spark');
+  // Older observations without a dialed host still use target_index.
+  const legacy={ok:true,devices:[{id:'spark',transport:{route:'lan_ssh',authenticated:true,attempted_routes:[{route:'lan_ssh',status:'authenticated',target_index:1}]}}]};
+  assert.equal(routeAddressLabel(routeAddress(legacy,config)),'192.0.2.187 (configured address 2 of 2)');
+  assert.equal(routeAddressLabel(routeAddress(legacy,{...config,hosts:['192.0.2.186']})),'my-spark');
+  assert.equal(routeAddressLabel(null),'—');
 });
 test('disconnection wins over a stale successful observation and legacy mode migrates',()=>{
   const state=connectionView(lan,{connection_enabled:false,allow_remote:true});
