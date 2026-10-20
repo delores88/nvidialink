@@ -280,6 +280,12 @@ const LAN_ROUTE_FILE: &str = "lan-route.json";
 const LAN_ROUTE_MAX: usize = 8;
 const LAN_ROUTE_PER_BINDING: usize = 4;
 const LAN_ROUTE_MAX_AGE: u64 = 30 * 24 * 60 * 60;
+/// A newest entry verified longer ago than this is rewritten on its next
+/// success, so an address in daily use never ages out.
+const LAN_ROUTE_REFRESH: u64 = 24 * 60 * 60;
+/// Clock skew tolerated for a verified_at in the future. Anything later was
+/// written with a wrong clock and would otherwise outlive the 30-day expiry.
+const LAN_ROUTE_MAX_SKEW: u64 = 5 * 60;
 const LAN_ROUTE_MAX_BYTES: u64 = 64 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -327,23 +333,44 @@ fn read_lan_routes(path: &Path) -> Vec<LanRoute> {
     }
 }
 fn lan_route_usable(entry: &LanRoute, now: u64) -> bool {
-    now.saturating_sub(entry.verified_at) <= LAN_ROUTE_MAX_AGE && validate_host(&entry.host).is_ok()
+    entry.verified_at <= now.saturating_add(LAN_ROUTE_MAX_SKEW)
+        && now.saturating_sub(entry.verified_at) <= LAN_ROUTE_MAX_AGE
+        && validate_host(&entry.host).is_ok()
 }
-fn remembered_hosts_at(path: &Path, config: &Config, now: u64) -> Vec<String> {
+/// Remembered addresses for one SSH identity.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RememberedLan {
+    /// Verified addresses, most recent first.
+    pub hosts: Vec<String>,
+    /// The newest address when it was verified within the last day. A success
+    /// there need not rewrite lan-route.json; an older head is refreshed.
+    pub fresh_head: Option<String>,
+}
+fn remembered_at(path: &Path, config: &Config, now: u64) -> RememberedLan {
     let binding = lan_binding(config);
-    let mut hosts: Vec<String> = Vec::new();
+    let mut found = RememberedLan::default();
     for entry in read_lan_routes(path) {
-        if hosts.len() == LAN_ROUTE_PER_BINDING {
+        if found.hosts.len() == LAN_ROUTE_PER_BINDING {
             break;
         }
         if entry.binding == binding
             && lan_route_usable(&entry, now)
-            && !hosts.iter().any(|h| h.eq_ignore_ascii_case(&entry.host))
+            && !found
+                .hosts
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(&entry.host))
         {
-            hosts.push(entry.host);
+            if found.hosts.is_empty() && now.saturating_sub(entry.verified_at) < LAN_ROUTE_REFRESH {
+                found.fresh_head = Some(entry.host.clone());
+            }
+            found.hosts.push(entry.host);
         }
     }
-    hosts
+    found
+}
+#[cfg(test)]
+fn remembered_hosts_at(path: &Path, config: &Config, now: u64) -> Vec<String> {
+    remembered_at(path, config, now).hosts
 }
 fn remember_host_at(path: &Path, config: &Config, host: &str, now: u64) -> Result<()> {
     validate_host(host)?;
@@ -412,8 +439,12 @@ fn with_lan_routes_in(
 /// oversized or corrupt state, stale entries and invalid hosts are ignored:
 /// the list only orders candidates, it never authorizes one.
 pub fn remembered_hosts(config: &Config) -> Vec<String> {
+    remembered_lan(config).hosts
+}
+/// remembered_hosts plus whether the newest entry is fresh (see RememberedLan).
+pub fn remembered_lan(config: &Config) -> RememberedLan {
     root()
-        .map(|directory| remembered_hosts_at(&directory.join(LAN_ROUTE_FILE), config, now()))
+        .map(|directory| remembered_at(&directory.join(LAN_ROUTE_FILE), config, now()))
         .unwrap_or_default()
 }
 /// Record an address that just completed pinned SSH authentication. Skipped
@@ -677,9 +708,62 @@ mod tests {
         );
     }
     #[test]
+    fn lan_route_head_freshness_and_future_timestamps() {
+        let home = TestHome::new();
+        let config = legacy(false);
+        let path = home.path.join(LAN_ROUTE_FILE);
+        let now = now();
+        let binding = lan_binding(&config);
+        let write = |entries: Value| {
+            fs::write(
+                &path,
+                serde_json::to_vec(&serde_json::json!({"v":1,"entries":entries})).unwrap(),
+            )
+            .unwrap()
+        };
+        // A head verified over a day ago is usable but not fresh, so its next
+        // success rewrites it instead of letting it expire while in use.
+        write(serde_json::json!([
+            {"binding":binding,"host":"192.0.2.60","verified_at":now - LAN_ROUTE_REFRESH - 1},
+            {"binding":binding,"host":"192.0.2.61","verified_at":now}
+        ]));
+        assert_eq!(
+            remembered_at(&path, &config, now),
+            RememberedLan {
+                hosts: vec!["192.0.2.60".into(), "192.0.2.61".into()],
+                fresh_head: None
+            }
+        );
+        write(serde_json::json!([
+            {"binding":binding,"host":"192.0.2.60","verified_at":now - 60}
+        ]));
+        assert_eq!(
+            remembered_lan(&config).fresh_head.as_deref(),
+            Some("192.0.2.60")
+        );
+        // A timestamp beyond the tolerated skew was written with a wrong clock
+        // and is ignored rather than living past the 30-day expiry.
+        write(serde_json::json!([
+            {"binding":binding,"host":"192.0.2.62","verified_at":now + LAN_ROUTE_MAX_SKEW + 1},
+            {"binding":binding,"host":"192.0.2.63","verified_at":now + 60},
+            {"binding":binding,"host":"192.0.2.64","verified_at":u64::MAX}
+        ]));
+        assert_eq!(remembered_hosts(&config), ["192.0.2.63"]);
+        remember_host_at(&path, &config, "192.0.2.65", now).unwrap();
+        let hosts: Vec<_> = route_file(&home.path)["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["host"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(hosts, ["192.0.2.65", "192.0.2.63"]);
+    }
+    #[test]
     fn lan_route_writes_fail_closed_unless_the_folder_is_known_unredirected() {
         let home = TestHome::new();
-        assert!(lan_routes_writable(&serde_json::json!({"redirected":false})));
+        assert!(lan_routes_writable(
+            &serde_json::json!({"redirected":false})
+        ));
         for unknown in [
             serde_json::json!({"redirected":true}),
             serde_json::json!({"redirected":null}),

@@ -20,8 +20,9 @@ pub struct Transport {
     pub host: Option<String>,
     pub authenticated: bool,
     attempts: Vec<Value>,
-    /// First remembered address seen by this process, so a sticky success does
-    /// not rewrite lan-route.json on every request.
+    /// The newest remembered address while its entry is fresh (verified within
+    /// a day), so a success there does not rewrite lan-route.json on every
+    /// request or process. A stale head is rewritten, refreshing verified_at.
     remembered_head: Option<String>,
 }
 
@@ -455,16 +456,7 @@ impl Transport {
                 "Remote-only mode does not permit SSH; choose LAN-only or Both for initial setup",
             ));
         }
-        let plan = match self.host.clone() {
-            Some(sticky) => plan_candidates(Some(&sticky), &[], &[], None),
-            None if self.config.hosts.is_empty() => plan_candidates(None, &[], &[], None),
-            None => {
-                let remembered = state::remembered_hosts(&self.config);
-                self.remembered_head = remembered.first().cloned();
-                let alias = alias_hostname(&self.config);
-                plan_candidates(None, &remembered, &self.config.hosts, alias.as_deref())
-            }
-        };
+        let plan = self.lan_plan(alias_hostname);
         let hosts: Vec<Option<&str>> = plan.iter().map(|c| c.host.as_deref()).collect();
         let port = self.config.port;
         with_precheck(&hosts, port, PRECHECK_CONNECT, PRECHECK_DEADLINE, |open| {
@@ -472,6 +464,25 @@ impl Transport {
                 process(command, input, timeout)
             })
         })
+    }
+    /// The candidate plan for the next LAN request. `alias_lookup` reads the
+    /// alias's HostName (a local `ssh -G`) and is only called when needed.
+    fn lan_plan(&mut self, alias_lookup: impl FnOnce(&Config) -> Option<String>) -> Vec<Candidate> {
+        match self.host.clone() {
+            Some(sticky) => plan_candidates(Some(&sticky), &[], &[], None),
+            None if self.config.hosts.is_empty() => plan_candidates(None, &[], &[], None),
+            None => {
+                let remembered = state::remembered_lan(&self.config);
+                self.remembered_head = remembered.fresh_head;
+                let alias = alias_lookup(&self.config);
+                plan_candidates(
+                    None,
+                    &remembered.hosts,
+                    &self.config.hosts,
+                    alias.as_deref(),
+                )
+            }
+        }
     }
     /// Dial prechecked candidates in planned order through the pinned
     /// `command()`. Only reachability failures move to the next candidate;
@@ -1033,6 +1044,45 @@ mod tests {
         assert!(alias.info().get("lan_host").is_none());
         assert_eq!(alias.info()["attempted_routes"][0]["host"], Value::Null);
         assert!(!route_file.exists());
+    }
+    #[test]
+    fn a_stale_remembered_head_is_refreshed_and_a_fresh_one_is_left_alone() {
+        let home = state::TestHome::new();
+        let hosts = ["192.0.2.1", "192.0.2.2"];
+        let binding = state::lan_binding(&fixture(&hosts, "both").config);
+        let file = home.path.join("lan-route.json");
+        let verified_at = || {
+            state::read_json(&file).unwrap()["entries"][0]["verified_at"]
+                .as_u64()
+                .unwrap()
+        };
+        let two_days_ago = state::now() - 2 * 24 * 60 * 60;
+        std::fs::write(
+            &file,
+            serde_json::to_vec(&json!({"v":1,"entries":[{"binding":binding,"host":"192.0.2.2","verified_at":two_days_ago}]})).unwrap(),
+        )
+        .unwrap();
+        // Each process reads the file again; the head winning every day must
+        // still be rewritten so it does not expire 30 days after first use.
+        let mut tr = fixture(&hosts, "both");
+        let plan = tr.lan_plan(|_| None);
+        assert_eq!(plan[0], candidate(Source::Remembered, Some("192.0.2.2")));
+        tr.dial(&plan, [Some(true)], "true", |_| {
+            Ok((true, Vec::new(), Vec::new()))
+        })
+        .unwrap();
+        let refreshed = verified_at();
+        assert!(refreshed >= state::now() - 60, "{refreshed}");
+        // A fresh head in the next process is not rewritten.
+        let before = std::fs::read(&file).unwrap();
+        let mut next = fixture(&hosts, "both");
+        let plan = next.lan_plan(|_| None);
+        next.dial(&plan, [Some(true)], "true", |_| {
+            Ok((true, Vec::new(), Vec::new()))
+        })
+        .unwrap();
+        assert_eq!(next.info()["lan_host"], "192.0.2.2");
+        assert_eq!(std::fs::read(&file).unwrap(), before);
     }
     #[test]
     fn dial_failures_keep_fail_closed_semantics() {
