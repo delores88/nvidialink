@@ -10,6 +10,30 @@ import subprocess
 import sys
 
 MAX_LOG = 256 * 1024 * 1024
+SKIP = {".git", "target", "node_modules", ".venv", "build", "dist"}
+# Must match prepare.LOCKS: each runtime's prepared env is named by its lock's SHA-256.
+LOCKS = {"python": "requirements.lock", "cuda": "requirements-cuda.lock"}
+
+
+def env_paths(runtime, root, envs):
+    """Prepared site directories for this runtime's lockfiles, in walk order."""
+    name = LOCKS.get(runtime)
+    paths = []
+    if name is None:
+        return paths
+    for directory, names, filenames in os.walk(root, followlinks=False):
+        names[:] = [n for n in names if n not in SKIP]
+        if name in filenames:
+            lock = Path(directory) / name
+            cache = Path(envs) / hashlib.sha256(lock.read_bytes()).hexdigest()
+            if cache.is_dir():
+                paths.append(str(cache))
+    return paths
+
+
+def python_path(prepared, inherited):
+    """Prepared envs first, then any PYTHONPATH the image or job already sets."""
+    return os.pathsep.join(prepared + ([inherited] if inherited else []))
 
 
 def main():
@@ -20,21 +44,17 @@ def main():
     # the controller namespaces by both worktree and runtime image identity.
     if "/sparkdev-prepare.py" not in argv:
         runtime = os.environ.get("SPARKDEV_RUNTIME_NAME")
-        python_paths = []
-        for directory, names, filenames in os.walk("/work", followlinks=False):
-            names[:] = [n for n in names if n not in {".git", "target", "node_modules", ".venv", "build", "dist"}]
-            if runtime == "node" and "package-lock.json" in filenames:
-                lock = Path(directory) / "package-lock.json"
-                cache = Path("/npm-cache/trees") / hashlib.sha256(lock.read_bytes()).hexdigest()
-                if cache.is_dir() and not (Path(directory) / "node_modules").exists():
-                    shutil.copytree(cache, Path(directory) / "node_modules", symlinks=True)
-            if runtime == "python" and "requirements.lock" in filenames:
-                lock = Path(directory) / "requirements.lock"
-                cache = Path("/pip-cache/envs") / hashlib.sha256(lock.read_bytes()).hexdigest()
-                if cache.is_dir():
-                    python_paths.append(str(cache))
-        if python_paths:
-            os.environ["PYTHONPATH"] = os.pathsep.join(python_paths)
+        if runtime == "node":
+            for directory, names, filenames in os.walk("/work", followlinks=False):
+                names[:] = [n for n in names if n not in SKIP]
+                if "package-lock.json" in filenames:
+                    lock = Path(directory) / "package-lock.json"
+                    cache = Path("/npm-cache/trees") / hashlib.sha256(lock.read_bytes()).hexdigest()
+                    if cache.is_dir() and not (Path(directory) / "node_modules").exists():
+                        shutil.copytree(cache, Path(directory) / "node_modules", symlinks=True)
+        prepared = env_paths(runtime, "/work", "/pip-cache/envs")
+        if prepared:
+            os.environ["PYTHONPATH"] = python_path(prepared, os.environ.get("PYTHONPATH"))
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open("/sparkdev-output/stdout.log", flags, 0o600)
     process = None
