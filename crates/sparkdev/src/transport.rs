@@ -24,6 +24,9 @@ pub struct Transport {
     /// a day), so a success there does not rewrite lan-route.json on every
     /// request or process. A stale head is rewritten, refreshing verified_at.
     remembered_head: Option<String>,
+    /// Whether the planned route is dialed directly from this computer, so a
+    /// local TCP precheck tests the path ssh uses. Kept for the sticky host.
+    direct: bool,
 }
 
 /// Where a LAN candidate came from. Every source is dialed through the same
@@ -123,28 +126,45 @@ pub fn plan_candidates(
     plan.truncate(MAX_CANDIDATES);
     plan
 }
-/// Extract the alias's configured HostName from `ssh -G` output. A configured
-/// ProxyJump or ProxyCommand means the address is not directly dialable, and
-/// a hostname that merely echoes the alias means no HostName is configured;
-/// either way the alias stays with OpenSSH (None) and is not prechecked.
-pub fn parse_ssh_g(output: &str, alias: &str) -> Option<String> {
+/// What the alias's local OpenSSH configuration says about reaching it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AliasRoute {
+    /// The alias's own concrete HostName. None when `ssh -G` merely echoes
+    /// the alias (no HostName is configured) or the value is not a plain host.
+    pub hostname: Option<String>,
+    /// OpenSSH connects to this alias's addresses directly from this
+    /// computer: no ProxyJump, ProxyCommand, BindAddress or BindInterface
+    /// applies. Every candidate is dialed through the alias, so only then
+    /// does a local TCP precheck test the path ssh will use. False when the
+    /// configuration could not be read.
+    pub direct: bool,
+}
+/// Read the alias's HostName and routing options from `ssh -G` output.
+pub fn parse_ssh_g(output: &str, alias: &str) -> AliasRoute {
     let mut hostname = None;
+    let mut routed = false;
     for line in output.lines() {
-        let line = line.trim_end_matches('\r');
-        if let Some(value) = line
-            .strip_prefix("proxyjump ")
-            .or_else(|| line.strip_prefix("proxycommand "))
-        {
-            if !value.trim().eq_ignore_ascii_case("none") {
-                return None;
+        let Some((key, value)) = line.trim_end_matches('\r').split_once(' ') else {
+            continue;
+        };
+        let value = value.trim();
+        match key {
+            "proxyjump" | "proxycommand" | "bindaddress" | "bindinterface" => {
+                routed |= !value.eq_ignore_ascii_case("none");
             }
-        } else if let Some(value) = line.strip_prefix("hostname ") {
-            hostname.get_or_insert(value.trim());
+            "hostname" => {
+                hostname.get_or_insert(value);
+            }
+            _ => {}
         }
     }
-    hostname
-        .filter(|host| state::validate_host(host).is_ok() && !host.eq_ignore_ascii_case(alias))
-        .map(str::to_owned)
+    AliasRoute {
+        // `ssh -G` always prints a hostname; without one this is not its output.
+        direct: hostname.is_some() && !routed,
+        hostname: hostname
+            .filter(|host| state::validate_host(host).is_ok() && !host.eq_ignore_ascii_case(alias))
+            .map(str::to_owned),
+    }
 }
 /// `ssh -G` only evaluates local OpenSSH configuration; it opens no network
 /// connection and never touches known_hosts.
@@ -157,15 +177,14 @@ pub fn alias_lookup_command(config: &Config) -> Command {
     command.arg(&config.ssh_alias);
     command
 }
-/// The alias's own HostName, or None when it is unavailable or proxied. The
-/// `-G` output may describe private configuration and is never logged.
-pub fn alias_hostname(config: &Config) -> Option<String> {
-    let (success, out, _) =
-        process(alias_lookup_command(config), &[], Duration::from_secs(3)).ok()?;
-    if !success {
-        return None;
+/// The alias's HostName and routing. A failed lookup is not direct, so no
+/// candidate is prechecked and OpenSSH dials each one as before prechecks.
+/// The `-G` output may describe private configuration and is never logged.
+pub fn alias_route(config: &Config) -> AliasRoute {
+    match process(alias_lookup_command(config), &[], Duration::from_secs(3)) {
+        Ok((true, out, _)) => parse_ssh_g(&String::from_utf8_lossy(&out), &config.ssh_alias),
+        _ => AliasRoute::default(),
     }
-    parse_ssh_g(&String::from_utf8_lossy(&out), &config.ssh_alias)
 }
 /// The addresses of `host`, or None when the lookup did not finish before the
 /// deadline (or could not be started), which leaves reachability unknown.
@@ -402,6 +421,7 @@ impl Transport {
             authenticated: false,
             attempts: Vec::new(),
             remembered_head: None,
+            direct: false,
         }
     }
     fn push_attempt(&mut self, attempt: Value) {
@@ -518,8 +538,8 @@ impl Transport {
                 "Remote-only mode does not permit SSH; choose LAN-only or Both for initial setup",
             ));
         }
-        let plan = self.lan_plan(alias_hostname);
-        let hosts: Vec<Option<&str>> = plan.iter().map(|c| c.host.as_deref()).collect();
+        let plan = self.lan_plan(alias_route);
+        let hosts = self.precheck_targets(&plan);
         let port = self.config.port;
         with_precheck(&hosts, port, PRECHECK_CONNECT, PRECHECK_DEADLINE, |reach| {
             self.dial(&plan, reach, remote, |command| {
@@ -528,23 +548,37 @@ impl Transport {
         })
     }
     /// The candidate plan for the next LAN request. `alias_lookup` reads the
-    /// alias's HostName (a local `ssh -G`) and is only called when needed.
-    fn lan_plan(&mut self, alias_lookup: impl FnOnce(&Config) -> Option<String>) -> Vec<Candidate> {
+    /// alias's HostName and routing (a local `ssh -G`) and is only called
+    /// when needed; a sticky host keeps the routing seen when it was planned.
+    fn lan_plan(&mut self, alias_lookup: impl FnOnce(&Config) -> AliasRoute) -> Vec<Candidate> {
         match self.host.clone() {
             Some(sticky) => plan_candidates(Some(&sticky), &[], &[], None),
-            None if self.config.hosts.is_empty() => plan_candidates(None, &[], &[], None),
+            None if self.config.hosts.is_empty() => {
+                self.direct = false;
+                plan_candidates(None, &[], &[], None)
+            }
             None => {
                 let remembered = state::remembered_lan(&self.config);
                 self.remembered_head = remembered.fresh_head;
                 let alias = alias_lookup(&self.config);
+                self.direct = alias.direct;
                 plan_candidates(
                     None,
                     &remembered.hosts,
                     &self.config.hosts,
-                    alias.as_deref(),
+                    alias.hostname.as_deref(),
                 )
             }
         }
+    }
+    /// Addresses to precheck. When ProxyJump, ProxyCommand or a bind option
+    /// routes the alias, ssh reaches every candidate through that route, so a
+    /// direct local connect or lookup would test the wrong path (and expose
+    /// names the proxy keeps private): nothing is prechecked.
+    fn precheck_targets<'a>(&self, plan: &'a [Candidate]) -> Vec<Option<&'a str>> {
+        plan.iter()
+            .map(|c| c.host.as_deref().filter(|_| self.direct))
+            .collect()
     }
     /// Dial prechecked candidates in planned order through the pinned
     /// `command()`. Only reachability failures move to the next candidate;
@@ -924,39 +958,108 @@ mod tests {
             );
         }
     }
+    fn route(hostname: Option<&str>, direct: bool) -> AliasRoute {
+        AliasRoute {
+            hostname: hostname.map(str::to_owned),
+            direct,
+        }
+    }
     #[test]
-    fn ssh_g_parser_reads_only_hostname_and_refuses_proxies() {
+    fn ssh_g_parser_reads_hostname_and_detects_proxied_or_bound_routes() {
         let plain =
             "user owner\nhostname 192.168.1.186\nport 22\nproxycommand none\nhostkeyalias pin\n";
         let alias = "my-spark";
-        assert_eq!(parse_ssh_g(plain, alias).as_deref(), Some("192.168.1.186"));
         assert_eq!(
-            parse_ssh_g(&plain.replace('\n', "\r\n"), alias).as_deref(),
-            Some("192.168.1.186")
+            parse_ssh_g(plain, alias),
+            route(Some("192.168.1.186"), true)
+        );
+        assert_eq!(
+            parse_ssh_g(&plain.replace('\n', "\r\n"), alias),
+            route(Some("192.168.1.186"), true)
         );
         assert_eq!(
             parse_ssh_g(
                 "proxyjump none\nhostname spark.local\nhostname 192.0.2.9\n",
                 alias
-            )
-            .as_deref(),
-            Some("spark.local")
+            ),
+            route(Some("spark.local"), true)
         );
-        for refused in [
+        // A proxied or bound alias keeps its HostName (dialed through the
+        // alias's own route) but nothing may be prechecked directly.
+        for routed in [
             "hostname 192.0.2.5\nproxyjump bastion\n",
             "proxycommand ssh -W %h:%p bastion\r\nhostname 192.0.2.5\r\n",
             "hostname 192.0.2.5\nproxyjump \n",
+            "hostname 192.0.2.5\nbindaddress 198.51.100.2\n",
+            "bindinterface eth1\nhostname 192.0.2.5\n",
+        ] {
+            assert_eq!(
+                parse_ssh_g(routed, alias),
+                route(Some("192.0.2.5"), false),
+                "{routed:?}"
+            );
+        }
+        assert_eq!(
+            parse_ssh_g("hostname my-spark\nproxyjump bastion\n", alias),
+            route(None, false)
+        );
+        for unusable in [
             "hostname -oProxyCommand=x\n",
             "hostname spark;id\n",
             "hostname \n",
-            "hostnames 192.0.2.6\nxhostname 192.0.2.6\n",
             // No HostName configured: -G echoes the (lowercased) alias.
             "hostname my-spark\nport 22\n",
             "hostname MY-SPARK\n",
-            "",
         ] {
-            assert_eq!(parse_ssh_g(refused, alias), None, "{refused:?}");
+            assert_eq!(
+                parse_ssh_g(unusable, alias),
+                route(None, true),
+                "{unusable:?}"
+            );
         }
+        // Output without a hostname line is not `ssh -G` output at all.
+        for unknown in ["hostnames 192.0.2.6\nxhostname 192.0.2.6\n", ""] {
+            assert_eq!(
+                parse_ssh_g(unknown, alias),
+                route(None, false),
+                "{unknown:?}"
+            );
+        }
+        assert_eq!(AliasRoute::default(), route(None, false));
+    }
+    #[test]
+    fn a_proxied_alias_prechecks_no_candidate_and_dials_each_through_its_route() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&["192.0.2.6", "192.0.2.5"], "lan-only");
+        let plan = tr.lan_plan(|_| route(Some("192.0.2.5"), false));
+        assert_eq!(
+            plan.iter().map(|c| c.host.as_deref()).collect::<Vec<_>>(),
+            [Some("192.0.2.6"), Some("192.0.2.5")]
+        );
+        assert_eq!(tr.precheck_targets(&plan), [None, None]);
+        let mut dialed = Vec::new();
+        tr.dial(&plan, [Unchecked, Unchecked], "true", |command| {
+            assert_pinned(&command, "test-pin");
+            dialed.push(hostname_of(&command));
+            Ok((true, Vec::new(), Vec::new()))
+        })
+        .unwrap();
+        // The address goes through the alias, and so through its ProxyJump.
+        assert_eq!(dialed, [Some("192.0.2.6".to_owned())]);
+        // The sticky host keeps the proxied routing: still no direct check.
+        let sticky = tr.lan_plan(|_| panic!("a sticky host needs no alias lookup"));
+        assert_eq!(tr.precheck_targets(&sticky), [None]);
+        // A failed lookup leaves every candidate to OpenSSH, as before.
+        let mut unknown = fixture(&["192.0.2.6"], "lan-only");
+        let plan = unknown.lan_plan(|_| AliasRoute::default());
+        assert_eq!(unknown.precheck_targets(&plan), [None, None]);
+        // A direct alias prechecks every concrete address.
+        let mut direct = fixture(&["192.0.2.6"], "lan-only");
+        let plan = direct.lan_plan(|_| route(Some("192.0.2.5"), true));
+        assert_eq!(
+            direct.precheck_targets(&plan),
+            [Some("192.0.2.6"), Some("192.0.2.5")]
+        );
     }
     #[test]
     fn every_ssh_dial_keeps_the_strict_pin() {
@@ -1177,7 +1280,7 @@ mod tests {
         // Each process reads the file again; the head winning every day must
         // still be rewritten so it does not expire 30 days after first use.
         let mut tr = fixture(&hosts, "both");
-        let plan = tr.lan_plan(|_| None);
+        let plan = tr.lan_plan(|_| AliasRoute::default());
         assert_eq!(plan[0], candidate(Source::Remembered, Some("192.0.2.2")));
         tr.dial(&plan, [Open], "true", |_| {
             Ok((true, Vec::new(), Vec::new()))
@@ -1188,7 +1291,7 @@ mod tests {
         // A fresh head in the next process is not rewritten.
         let before = std::fs::read(&file).unwrap();
         let mut next = fixture(&hosts, "both");
-        let plan = next.lan_plan(|_| None);
+        let plan = next.lan_plan(|_| AliasRoute::default());
         next.dial(&plan, [Open], "true", |_| {
             Ok((true, Vec::new(), Vec::new()))
         })
