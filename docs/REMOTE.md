@@ -129,9 +129,38 @@ The watchdog depends on the running controller and is not a hardware memory quot
 
 Dependency preparation is a separate fixed job. Rust runs `cargo fetch --locked`,
 Node runs `npm ci --ignore-scripts`, and Python requires `requirements.lock` and
-`pip --require-hashes --only-binary=:all:`. Lockfile hashes must remain unchanged.
+`python3 -I -m pip --require-hashes --only-binary=:all:`. Lockfile hashes must remain unchanged.
 Npm installed trees and Python site packages are saved by lock hash; actual jobs
 restore them while remaining offline. Npm lifecycle scripts are never given egress.
+pip runs isolated, so a project file beside the lock (for example `json.py`) never
+executes in the network-attached container, and every inherited `PIP_*` and `PYTHON*`
+variable is replaced with fixed values. A site directory is built under a pending name
+and replaces the previous one only after success. Jobs put prepared site directories
+ahead of any `PYTHONPATH` the image already sets.
+
+CUDA preparation (`--runtime cuda`) runs in the CUDA image under its own
+`/usr/bin/python3` and installs `requirements-cuda.lock`: a hash-locked `--no-deps`
+closure that excludes every package the CUDA image provides. The proxy remains the
+Python image, so `status` lists `preparable_runtimes` only when the Python runtime is
+installed. The preparation gets no GPU (`NVIDIA_VISIBLE_DEVICES=void`, no `--gpus`),
+refuses to continue if any `/dev/nvidia*` device is visible, and is exempt from the
+MemAvailable watchdog, which still stops CUDA runs. Before any download it refuses
+option lines, direct URLs, `torch`, `torchvision`, `torchaudio`, `triton`,
+`pytorch-triton`, `nvidia-*-cuNN` wheels and any distribution already in the image;
+torch and the CUDA stack come only from the pinned image. After the wheel-only install,
+metadata-only checks refuse duplicate image distributions or modules, standard-library
+shadows, `sitecustomize`/`usercustomize`, and requirements that are missing from both
+the image and the lock or conflict with the lock. A conflict with the image's own
+version only warns. No staged package code runs while the network is attached.
+
+Upgrade by redeploying the controller through the setup bundle. The old CLI already
+passes `--runtime cuda`; the old MCP server still refuses it. A new CLI or MCP server
+against an old controller gets `invalid_request` and no job row; retry with the same
+request ID after upgrading. Admitted jobs keep the `worker.py` and `prepare.py` copied
+at admission. The new worker changes the run-cache key, so each runtime sees one cache
+miss. A legacy partial Python environment stays loadable until the next `prepare`
+rebuilds it. `remote/verify_cuda_dependencies.py` is the owner-run physical acceptance;
+it uses only the CLI and requires the real `--client`.
 
 Each preparation job gets an internal bridge with Docker's `isolated` gateway mode,
 which removes the host bridge address. This prevents the host-service access that

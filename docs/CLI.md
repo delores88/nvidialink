@@ -83,7 +83,7 @@ sparkdev prepare C:/work/project --runtime rust --json
 
 Sync checks every included file before network upload. Git inventory includes tracked and untracked non-ignored files. Plain directories use a guarded walk. Build outputs, symlinks/reparse points, paths outside the root, credential/key names, secret directories and recognizable credential contents are refused or excluded. Source files named `secrets.rs` are permitted; actual credential-shaped content is not. This is a conservative safety filter, not a guarantee that arbitrary unknown secret formats can be detected. Transfer uses verified SHA-256 1 MiB chunks; retries upload only missing objects. Deleted files disappear in the next immutable snapshot.
 
-`prepare` submits a fixed runtime-specific locked downloader, with the same job/wait/logs interface. It cannot run caller-supplied setup commands. Normal jobs remain network-disabled. Dependency egress uses the separately installed allowlisting proxy and fails closed if it is unavailable. See the remote controller docs for registry provisioning and supported lockfiles.
+`prepare` submits a fixed runtime-specific locked downloader, with the same job/wait/logs interface. It cannot run caller-supplied setup commands. Normal jobs remain network-disabled. Dependency egress uses the separately installed allowlisting proxy and fails closed if it is unavailable. `--runtime cuda` installs `requirements-cuda.lock` in the CUDA image without a GPU and refuses packages the image provides; `status --json` lists the Spark's `preparable_runtimes`. See the remote controller docs for registry provisioning and supported lockfiles.
 
 ## MCP
 

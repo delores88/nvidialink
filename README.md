@@ -37,7 +37,7 @@ Retain the returned job ID and log `next_offset`. Poll until terminal state and 
 
 ## Isolation and limits
 
-- Spark jobs use a closed registry of image IDs, owner-configured resource limits and no network. `prepare` uses a separate allowlisted dependency proxy with lockfiles enforced. Optional CUDA provisioning is distinct from the CPU runtime.
+- Spark jobs use a closed registry of image IDs, owner-configured resource limits and no network. `prepare` uses a separate allowlisted dependency proxy with lockfiles enforced. Optional CUDA provisioning is distinct from the CPU runtime; CUDA preparation installs `requirements-cuda.lock` without a GPU and refuses packages the CUDA image provides.
 - Default jobs use 4 CPU cores and 8 GiB; the scheduler enforces total and per-client quotas and memory headroom. Use **Resources** to save per-job, total and per-client limits plus reserved memory headroom. Saved caps govern new jobs; existing jobs keep their allocations. Legacy project overrides remain until the first policy save, then are clamped to the saved caps. Existing PhaseForge and Ollama resources are left alone.
 - Sync hashes tracked and non-ignored files into resumable content-addressed chunks. Build output, symlinks, paths outside the root and recognized credential material are excluded or rejected. Never place secrets in a submitted project or command line.
 - Successful Spark results can be reused only when source, argv and runtime match. `--no-cache` bypasses reuse. Laptop result caching is disabled because the native host has no immutable runtime digest.
