@@ -91,8 +91,12 @@ fn add_candidate(plan: &mut Vec<Candidate>, source: Source, host: &str) {
     }
 }
 /// Order LAN candidates: a sticky address from this process alone; otherwise
-/// remembered verified addresses, the configured hosts, then the SSH alias.
-/// Without configured hosts the plan stays exactly the alias, as before.
+/// remembered verified addresses, the configured hosts, then the alias's own
+/// concrete HostName. Without configured hosts the plan stays exactly the
+/// alias, resolved by OpenSSH, as before. With them the bare alias is never
+/// dialed, as before rediscovery: every candidate is a concrete address, so
+/// the same address is not dialed twice, a win is sticky and remembered, and
+/// an alias that is only a label is never resolved by DNS to another host.
 pub fn plan_candidates(
     sticky: Option<&str>,
     remembered: &[String],
@@ -105,12 +109,11 @@ pub fn plan_candidates(
             host: Some(host.into()),
         }];
     }
-    let alias = Candidate {
-        source: Source::Alias,
-        host: None,
-    };
     if configured.is_empty() {
-        return vec![alias];
+        return vec![Candidate {
+            source: Source::Alias,
+            host: None,
+        }];
     }
     let mut plan = Vec::new();
     for host in remembered.iter().take(MAX_REMEMBERED) {
@@ -119,9 +122,8 @@ pub fn plan_candidates(
     for host in configured {
         add_candidate(&mut plan, Source::Configured, host);
     }
-    match alias_hostname {
-        Some(host) => add_candidate(&mut plan, Source::Alias, host),
-        None => plan.push(alias),
+    if let Some(host) = alias_hostname {
+        add_candidate(&mut plan, Source::Alias, host);
     }
     plan.truncate(MAX_CANDIDATES);
     plan
@@ -898,13 +900,15 @@ mod tests {
             ),
             [candidate(Source::Configured, Some("Spark.Local"))]
         );
-        // An unresolvable or proxied alias is still dialed last through OpenSSH.
+        // With configured hosts, an alias without a concrete HostName is not
+        // dialed at all: not as a second, unprechecked dial of an address
+        // already planned, and not as a label OpenSSH might resolve to an
+        // unrelated host.
         assert_eq!(
             plan_candidates(None, &[], &configured, None),
             [
                 candidate(Source::Configured, Some("192.0.2.1")),
                 candidate(Source::Configured, Some("192.0.2.2")),
-                candidate(Source::Alias, None),
             ]
         );
         let remembered = strings(&[
@@ -923,7 +927,7 @@ mod tests {
                 .count(),
             MAX_REMEMBERED
         );
-        assert_eq!(only_remembered.len(), MAX_REMEMBERED + 2);
+        assert_eq!(only_remembered.len(), MAX_REMEMBERED + 1);
         let many = strings(&[
             "192.0.2.11",
             "192.0.2.12",
@@ -1028,6 +1032,36 @@ mod tests {
         assert_eq!(AliasRoute::default(), route(None, false));
     }
     #[test]
+    fn with_configured_hosts_every_candidate_is_concrete_so_a_win_sticks() {
+        let _home = state::TestHome::new();
+        // The alias is itself the LAN address, so `ssh -G` only echoes it:
+        // the address is planned and dialed once, never again as the alias.
+        let mut tr = fixture(&["192.168.1.186"], "both");
+        tr.config.ssh_alias = "192.168.1.186".into();
+        let plan = tr.lan_plan(|_| route(None, true));
+        assert_eq!(plan, [candidate(Source::Configured, Some("192.168.1.186"))]);
+        // A label alias (no HostName) is never dialed for OpenSSH to resolve.
+        let mut tr = fixture(&["192.0.2.1"], "both");
+        let plan = tr.lan_plan(|_| route(None, true));
+        assert_eq!(plan, [candidate(Source::Configured, Some("192.0.2.1"))]);
+        assert!(plan.iter().all(|c| c.host.is_some()));
+        // A concrete alias HostName wins as an address: it is sticky for the
+        // rest of the process and remembered for the next one.
+        let plan = tr.lan_plan(|_| route(Some("192.0.2.9"), true));
+        let mut dialed = Vec::new();
+        tr.dial(&plan, [Closed, Open], "true", |command| {
+            dialed.push(hostname_of(&command));
+            Ok((true, Vec::new(), Vec::new()))
+        })
+        .unwrap();
+        assert_eq!(dialed, [Some("192.0.2.9".to_owned())]);
+        assert_eq!(tr.host.as_deref(), Some("192.0.2.9"));
+        assert_eq!(tr.info()["lan_host"], "192.0.2.9");
+        assert_eq!(state::remembered_hosts(&tr.config), ["192.0.2.9"]);
+        let sticky = tr.lan_plan(|_| panic!("a sticky host needs no alias lookup"));
+        assert_eq!(sticky, [candidate(Source::Sticky, Some("192.0.2.9"))]);
+    }
+    #[test]
     fn a_proxied_alias_prechecks_no_candidate_and_dials_each_through_its_route() {
         let _home = state::TestHome::new();
         let mut tr = fixture(&["192.0.2.6", "192.0.2.5"], "lan-only");
@@ -1052,7 +1086,7 @@ mod tests {
         // A failed lookup leaves every candidate to OpenSSH, as before.
         let mut unknown = fixture(&["192.0.2.6"], "lan-only");
         let plan = unknown.lan_plan(|_| AliasRoute::default());
-        assert_eq!(unknown.precheck_targets(&plan), [None, None]);
+        assert_eq!(unknown.precheck_targets(&plan), [None]);
         // A direct alias prechecks every concrete address.
         let mut direct = fixture(&["192.0.2.6"], "lan-only");
         let plan = direct.lan_plan(|_| route(Some("192.0.2.5"), true));
@@ -1383,30 +1417,25 @@ mod tests {
             let mut tr = fixture(&hosts, mode);
             let mut dialed = Vec::new();
             let error = tr
-                .dial(
-                    &plan,
-                    [Closed, Closed, Closed, Unchecked],
-                    "true",
-                    |command| {
-                        dialed.push(hostname_of(&command));
-                        Ok((
-                            false,
-                            Vec::new(),
-                            b"ssh: Could not resolve hostname unreachable-test-fixture".to_vec(),
-                        ))
-                    },
-                )
+                .dial(&plan, [Closed, Closed, Unchecked], "true", |command| {
+                    dialed.push(hostname_of(&command));
+                    Ok((
+                        false,
+                        Vec::new(),
+                        b"ssh: Could not resolve hostname 192.0.2.2".to_vec(),
+                    ))
+                })
                 .unwrap_err();
             assert_eq!(error.code, 4);
             assert_eq!(error.message, "Configured LAN addresses are unreachable");
             assert_eq!(tr.can_fallback(&error), mode == "both");
-            assert_eq!(dialed, [None::<String>]);
+            assert_eq!(dialed, [Some("192.0.2.2".to_owned())]);
             let attempts = tr.info()["attempted_routes"].as_array().unwrap().clone();
-            assert_eq!(attempts.len(), 4);
+            assert_eq!(attempts.len(), 3);
             assert!(attempts.iter().all(|a| a["status"] == "host_unreachable"));
-            assert_eq!(attempts[3]["source"], "alias");
+            assert_eq!(attempts[2]["source"], "configured");
             assert_eq!(
-                attempts[3]["reason"],
+                attempts[2]["reason"],
                 "SSH reported connection refusal, timeout, unreachable network or DNS failure"
             );
         }
