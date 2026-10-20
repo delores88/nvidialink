@@ -11,7 +11,7 @@ fn schema(properties: Value, required: &[&str]) -> Value {
 fn tools() -> Value {
     let job = json!({"type":"string","minLength":1});
     json!([
-      {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access and known capacity; unknown capacity remains unknown. This is an observation, not a reservation.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access and known capacity; unknown capacity remains unknown. This is an observation, not a reservation. Includes the Spark's observed network link; never SSIDs or addresses.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"connection","description":"Read the owner's saved route preference and enabled/disconnected state. Does not connect, change settings or reveal SSH credentials. Existing admitted jobs retain their connections after disconnect.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
       {"name":"resources","description":"Read the authenticated Spark scheduler resource policy and detected hardware bounds. Settings apply to new requests and admissions; this tool cannot change them. Laptop native CPU and memory are not capped by Spark settings.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"plan","description":"Preview job placement and validate source and exact argv without uploading files, claiming a worktree or launching a job. Does not verify runtime availability or reserve capacity; use devices for current connectivity.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"}}), &["dir","argv"]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
@@ -417,5 +417,22 @@ mod tests {
                 .clone();
             assert_eq!(tool["annotations"]["readOnlyHint"], true);
         }
+    }
+    #[test]
+    fn devices_tool_describes_the_link_report_privacy_boundary() {
+        let devices = tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "devices")
+            .unwrap()
+            .clone();
+        assert!(
+            devices["description"]
+                .as_str()
+                .unwrap()
+                .ends_with("Includes the Spark's observed network link; never SSIDs or addresses.")
+        );
+        assert_eq!(devices["annotations"]["readOnlyHint"], true);
     }
 }

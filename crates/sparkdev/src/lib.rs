@@ -495,7 +495,7 @@ fn devices() -> Result<Value> {
         Ok(jobs) => laptop["jobs"] = jobs,
         Err(e) => laptop["state_error"] = json!({"code":e.code,"message":e.message}),
     }
-    let mut spark = json!({"id":"spark","availability":"unconfigured","reachable":false,"os":null,"architecture":null,"free_cpu":null,"free_memory_bytes":null,"transport":{"selected":"unselected","route":"none","authenticated":false,"attempted_routes":[]}});
+    let mut spark = json!({"id":"spark","availability":"unconfigured","reachable":false,"os":null,"architecture":null,"free_cpu":null,"free_memory_bytes":null,"network":null,"transport":{"selected":"unselected","route":"none","authenticated":false,"attempted_routes":[]}});
     let mut board = Value::Null;
     let mut scheduler_reachable = false;
     let mut scheduler_healthy = false;
@@ -520,6 +520,7 @@ fn devices() -> Result<Value> {
             spark["managed_limits"] = status["limits"].clone();
             spark["hardware"] = status["hardware"].clone();
             spark["runtimes"] = status["runtimes"].clone();
+            spark["network"] = spark_network(&status);
             spark["capacity_note"] = json!(
                 "Scheduler limits and recorded jobs are observations, not free hardware capacity or a reservation."
             );
@@ -544,6 +545,15 @@ fn devices() -> Result<Value> {
     Ok(
         json!({"ok":true,"observed_at":state::now(),"devices":[laptop,spark],"shared_board":board,"observation_only":true,"admission_required":true,"claimed":false}),
     )
+}
+/// The controller's sanitized link report, passed through unchanged. Additive
+/// fields keep `v:1`; only a breaking change bumps `v`, which reads as null here
+/// (as does an older controller that sends no report).
+fn spark_network(status: &Value) -> Value {
+    match status.get("network") {
+        Some(network) if network.is_object() && network["v"] == 1 => network.clone(),
+        _ => Value::Null,
+    }
 }
 fn admission_observation(reachable: bool, healthy: bool) -> Value {
     json!({"scheduler_reachable":reachable,"scheduler_healthy":healthy,"available":if reachable && healthy {"requires_request_check"} else {"unavailable"},"reservation":false,"reason":if !reachable {"Managed admission on both devices requires the Spark scheduler; offline laptop fallback is unavailable"} else if !healthy {"Scheduler status is reachable but its heartbeat is not healthy"} else {"Runtime, client quota, resources and worktree claim must be checked for the submitted request"}})
@@ -929,6 +939,26 @@ mod tests {
         let mut command = base;
         command.push("python".into());
         assert_eq!(execute(command).unwrap_err().code, 5);
+    }
+    #[test]
+    fn spark_network_passes_only_a_version_one_object() {
+        let report = json!({"v":1,"observed":true,"basis":"default_route","active":{"interface":"wlP9s9","kind":"wifi","operstate":"up","speed_mbps":null},"underlay":null,"wired":[],"wired_up":0,"wired_lan_up":0,"wifi":null,"later_additive_field":true});
+        assert_eq!(spark_network(&json!({"ok":true,"network":report})), report);
+        let unobserved = json!({"v":1,"observed":false,"basis":"unknown"});
+        assert_eq!(spark_network(&json!({"network":unobserved})), unobserved);
+        for status in [
+            json!({"ok":true}),
+            json!({"network":null}),
+            json!({"network":{"v":2,"observed":true}}),
+            json!({"network":{"v":"1","observed":true}}),
+            json!({"network":{"v":1.5}}),
+            json!({"network":{"observed":true}}),
+            json!({"network":[{"v":1}]}),
+            json!({"network":"wifi"}),
+            json!([]),
+        ] {
+            assert_eq!(spark_network(&status), Value::Null, "{status}");
+        }
     }
     #[test]
     fn scheduler_observation_never_claims_reserved_or_free_capacity() {
