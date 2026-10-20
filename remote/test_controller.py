@@ -19,6 +19,8 @@ CUDA_IMAGE = "sha256:" + "c" * 64
 PROJECT = "b" * 64
 # Existing tests never probe the host network; link tests use their own fixtures.
 NO_LINK = lambda: {"observed": False}
+# Existing tests never depend on the host disk; disk guards have their own tests.
+PLENTY_DISK = lambda: (1 << 50, 1 << 50)
 
 
 class FakeDocker:
@@ -67,7 +69,7 @@ class ControllerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name) / "state"
         self.docker = FakeDocker()
-        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK)
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK, disk_probe=PLENTY_DISK)
         (self.root.parent / "runtimes.json").write_text(json.dumps({"v": 1, "runtimes": {"python": {"image": IMAGE, "provenance": "test fixture"}}}))
 
     def tearDown(self):
@@ -160,7 +162,7 @@ class ControllerTests(unittest.TestCase):
         self.c.tick()
         self.assertEqual(self.c.get_job(first["job"])["state"], "running")
         self.c.db.close()
-        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK)
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK, disk_probe=PLENTY_DISK)
         self.c.tick()
         self.assertEqual(sum(call[0] == "create" for call in self.docker.calls), 1)
         self.assertEqual(sum(call[0] == "start" for call in self.docker.calls), 1)
@@ -260,7 +262,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(saved["limits"], limits)
         self.assertTrue(saved["policy_saved"])
         self.c.db.close()
-        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK)
+        self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK, disk_probe=PLENTY_DISK)
         self.assertEqual(self.rpc("status")["limits"], limits)
         for key, value in (("cpu_per_job", 21), ("cpu_per_job", 13), ("client_cpu", 19),
                            ("cpu_total", 0), ("memory_gb_total", 100), ("memory_gb_per_job", 81),
