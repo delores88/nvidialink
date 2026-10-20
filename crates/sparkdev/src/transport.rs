@@ -55,6 +55,8 @@ pub struct Candidate {
     pub host: Option<String>,
 }
 pub const MAX_REMEMBERED: usize = 4;
+/// Plan size beyond which the alias's HostName is no longer added. Configured
+/// hosts are never dropped: every one of them was dialed before rediscovery.
 pub const MAX_CANDIDATES: usize = 8;
 pub const PRECHECK_CONNECT: Duration = Duration::from_millis(1500);
 pub const PRECHECK_DEADLINE: Duration = Duration::from_secs(2);
@@ -92,11 +94,14 @@ fn add_candidate(plan: &mut Vec<Candidate>, source: Source, host: &str) {
 }
 /// Order LAN candidates: a sticky address from this process alone; otherwise
 /// remembered verified addresses, the configured hosts, then the alias's own
-/// concrete HostName. Without configured hosts the plan stays exactly the
-/// alias, resolved by OpenSSH, as before. With them the bare alias is never
-/// dialed, as before rediscovery: every candidate is a concrete address, so
-/// the same address is not dialed twice, a win is sticky and remembered, and
-/// an alias that is only a label is never resolved by DNS to another host.
+/// concrete HostName. Remembered addresses only reorder that current set: an
+/// address no longer configured (nor the alias's HostName) is never dialed,
+/// so changing `--host` or the HostName takes effect at once. Without
+/// configured hosts the plan stays exactly the alias, resolved by OpenSSH, as
+/// before. With them the bare alias is never dialed, as before rediscovery:
+/// every candidate is a concrete address, so the same address is not dialed
+/// twice, a win is sticky and remembered, and an alias that is only a label
+/// is never resolved by DNS to another host.
 pub fn plan_candidates(
     sticky: Option<&str>,
     remembered: &[String],
@@ -115,17 +120,27 @@ pub fn plan_candidates(
             host: None,
         }];
     }
+    let current = |host: &str| {
+        configured
+            .iter()
+            .map(String::as_str)
+            .chain(alias_hostname)
+            .any(|c| c.eq_ignore_ascii_case(host))
+    };
     let mut plan = Vec::new();
-    for host in remembered.iter().take(MAX_REMEMBERED) {
+    for host in remembered
+        .iter()
+        .filter(|host| current(host))
+        .take(MAX_REMEMBERED)
+    {
         add_candidate(&mut plan, Source::Remembered, host);
     }
     for host in configured {
         add_candidate(&mut plan, Source::Configured, host);
     }
-    if let Some(host) = alias_hostname {
+    if let Some(host) = alias_hostname.filter(|_| plan.len() < MAX_CANDIDATES) {
         add_candidate(&mut plan, Source::Alias, host);
     }
-    plan.truncate(MAX_CANDIDATES);
     plan
 }
 /// What the alias's local OpenSSH configuration says about reaching it.
@@ -863,22 +878,29 @@ mod tests {
     fn plan_orders_remembered_configured_then_alias_with_dedup_and_caps() {
         let configured = strings(&["192.0.2.1", "192.0.2.2"]);
         assert_eq!(
-            plan_candidates(
-                None,
-                &strings(&["198.51.100.9", "198.51.100.8"]),
-                &configured,
-                Some("192.0.2.3")
-            ),
+            plan_candidates(None, &[], &configured, Some("192.0.2.3")),
             [
-                candidate(Source::Remembered, Some("198.51.100.9")),
-                candidate(Source::Remembered, Some("198.51.100.8")),
                 candidate(Source::Configured, Some("192.0.2.1")),
                 candidate(Source::Configured, Some("192.0.2.2")),
                 candidate(Source::Alias, Some("192.0.2.3")),
             ]
         );
-        // A remembered configured address keeps its earlier remembered slot,
-        // and an alias HostName already planned is not dialed twice.
+        // Remembered addresses move current ones forward, newest first; a
+        // remembered configured address or alias HostName keeps that earlier
+        // slot and is not dialed twice.
+        assert_eq!(
+            plan_candidates(
+                None,
+                &strings(&["192.0.2.3", "192.0.2.2"]),
+                &configured,
+                Some("192.0.2.3")
+            ),
+            [
+                candidate(Source::Remembered, Some("192.0.2.3")),
+                candidate(Source::Remembered, Some("192.0.2.2")),
+                candidate(Source::Configured, Some("192.0.2.1")),
+            ]
+        );
         assert_eq!(
             plan_candidates(
                 None,
@@ -894,11 +916,11 @@ mod tests {
         assert_eq!(
             plan_candidates(
                 None,
-                &[],
+                &strings(&["SPARK.LOCAL"]),
                 &strings(&["Spark.Local", "spark.local"]),
                 Some("SPARK.LOCAL")
             ),
-            [candidate(Source::Configured, Some("Spark.Local"))]
+            [candidate(Source::Remembered, Some("SPARK.LOCAL"))]
         );
         // With configured hosts, an alias without a concrete HostName is not
         // dialed at all: not as a second, unprechecked dial of an address
@@ -911,24 +933,22 @@ mod tests {
                 candidate(Source::Configured, Some("192.0.2.2")),
             ]
         );
-        let remembered = strings(&[
-            "198.51.100.1",
-            "198.51.100.2",
-            "198.51.100.3",
-            "198.51.100.4",
-            "198.51.100.5",
-            "198.51.100.6",
-        ]);
-        let only_remembered = plan_candidates(None, &remembered, &strings(&["192.0.2.1"]), None);
+        // An address the configuration no longer names (an old --host or a
+        // previous HostName) is never planned, however recently verified.
         assert_eq!(
-            only_remembered
-                .iter()
-                .filter(|c| c.source == Source::Remembered)
-                .count(),
-            MAX_REMEMBERED
+            plan_candidates(
+                None,
+                &strings(&["198.51.100.9", "192.0.2.2", "198.51.100.8"]),
+                &configured,
+                Some("192.0.2.3")
+            ),
+            [
+                candidate(Source::Remembered, Some("192.0.2.2")),
+                candidate(Source::Configured, Some("192.0.2.1")),
+                candidate(Source::Alias, Some("192.0.2.3")),
+            ]
         );
-        assert_eq!(only_remembered.len(), MAX_REMEMBERED + 1);
-        let many = strings(&[
+        let six = strings(&[
             "192.0.2.11",
             "192.0.2.12",
             "192.0.2.13",
@@ -936,13 +956,61 @@ mod tests {
             "192.0.2.15",
             "192.0.2.16",
         ]);
-        let capped = plan_candidates(None, &remembered, &many, Some("192.0.2.3"));
-        assert_eq!(capped.len(), MAX_CANDIDATES);
+        let mut newest_first = six.clone();
+        newest_first.reverse();
+        let reordered = plan_candidates(None, &newest_first, &six, None);
         assert_eq!(
-            capped[0],
-            candidate(Source::Remembered, Some("198.51.100.1"))
+            reordered
+                .iter()
+                .filter(|c| c.source == Source::Remembered)
+                .count(),
+            MAX_REMEMBERED
         );
-        assert_eq!(capped[7], candidate(Source::Configured, Some("192.0.2.14")));
+        assert_eq!(reordered.len(), 6);
+        assert_eq!(
+            reordered[0],
+            candidate(Source::Remembered, Some("192.0.2.16"))
+        );
+        assert_eq!(
+            reordered[4],
+            candidate(Source::Configured, Some("192.0.2.11"))
+        );
+        // Configured hosts are never truncated; only the alias addition stops
+        // at the cap.
+        let nine: Vec<String> = (1..=9).map(|n| format!("192.0.2.{}", 20 + n)).collect();
+        let all = plan_candidates(None, &strings(&["192.0.2.29"]), &nine, Some("192.0.2.3"));
+        assert_eq!(all.len(), 9);
+        assert_eq!(all[0], candidate(Source::Remembered, Some("192.0.2.29")));
+        assert_eq!(all[8], candidate(Source::Configured, Some("192.0.2.28")));
+        assert!(all.iter().all(|c| c.source != Source::Alias));
+        let seven = &nine[..7];
+        let with_alias = plan_candidates(None, &[], seven, Some("192.0.2.3"));
+        assert_eq!(with_alias.len(), MAX_CANDIDATES);
+        assert_eq!(with_alias[7], candidate(Source::Alias, Some("192.0.2.3")));
+    }
+    #[test]
+    fn a_re_saved_address_replaces_the_remembered_one_at_once() {
+        let home = state::TestHome::new();
+        // .40 authenticated before the Spark moved; the owner saved .50.
+        let before = fixture(&["192.0.2.40"], "both");
+        state::remember_host(&before.config, "192.0.2.40").unwrap();
+        let mut tr = fixture(&["192.0.2.50"], "both");
+        assert_eq!(
+            state::lan_binding(&tr.config),
+            state::lan_binding(&before.config)
+        );
+        let plan = tr.lan_plan(|_| route(None, true));
+        assert_eq!(plan, [candidate(Source::Configured, Some("192.0.2.50"))]);
+        // An old address is still planned while the alias's HostName names it.
+        let plan = tr.lan_plan(|_| route(Some("192.0.2.40"), true));
+        assert_eq!(
+            plan,
+            [
+                candidate(Source::Remembered, Some("192.0.2.40")),
+                candidate(Source::Configured, Some("192.0.2.50")),
+            ]
+        );
+        assert!(home.path.join("lan-route.json").exists());
     }
     #[test]
     fn plan_sticky_is_exclusive_and_empty_hosts_are_unchanged() {
@@ -1223,11 +1291,11 @@ mod tests {
         let mut tr = fixture(&["192.0.2.1", "192.0.2.2"], "both");
         let plan = plan_candidates(
             None,
-            &strings(&["198.51.100.7"]),
+            &strings(&["192.0.2.3"]),
             &tr.config.hosts.clone(),
             Some("192.0.2.3"),
         );
-        let open = [Closed, Open, Open, Open];
+        let open = [Closed, Open, Open];
         let mut dialed = Vec::new();
         let out = tr
             .dial(&plan, open, "true", |command| {
@@ -1250,7 +1318,7 @@ mod tests {
         assert_eq!(attempts.len(), 3);
         assert_eq!(
             attempts[0],
-            json!({"route":"lan_ssh","attempted":true,"status":"host_unreachable","reason":CLOSED_REASON,"target_index":null,"source":"remembered","host":"198.51.100.7"})
+            json!({"route":"lan_ssh","attempted":true,"status":"host_unreachable","reason":CLOSED_REASON,"target_index":null,"source":"remembered","host":"192.0.2.3"})
         );
         assert_eq!(attempts[1]["status"], "host_unreachable");
         assert_eq!(attempts[1]["source"], "configured");
@@ -1339,14 +1407,19 @@ mod tests {
         let hosts = ["192.0.2.1", "192.0.2.2"];
         // A remembered address that fails the pin is forgotten; no fallback.
         let mut tr = fixture(&hosts, "both");
-        state::remember_host(&tr.config, "198.51.100.8").unwrap();
-        state::remember_host(&tr.config, "198.51.100.9").unwrap();
-        let remembered = state::remembered_hosts(&tr.config);
-        let plan = plan_candidates(None, &remembered, &tr.config.hosts.clone(), None);
-        let open = [Open, Open, Open, Open, Unchecked];
+        state::remember_host(&tr.config, "192.0.2.1").unwrap();
+        state::remember_host(&tr.config, "192.0.2.2").unwrap();
+        let plan = tr.lan_plan(|_| AliasRoute::default());
+        assert_eq!(
+            plan,
+            [
+                candidate(Source::Remembered, Some("192.0.2.2")),
+                candidate(Source::Remembered, Some("192.0.2.1")),
+            ]
+        );
         let mut dialed = 0;
         let error = tr
-            .dial(&plan, open, "true", |_| {
+            .dial(&plan, [Open, Open], "true", |_| {
                 dialed += 1;
                 Ok((
                     false,
@@ -1363,33 +1436,36 @@ mod tests {
             tr.info()["attempted_routes"][0]["status"],
             "authentication_failed"
         );
-        assert_eq!(state::remembered_hosts(&tr.config), ["198.51.100.8"]);
+        assert_eq!(state::remembered_hosts(&tr.config), ["192.0.2.1"]);
         // A configured address failing authentication fails closed but does
         // not erase remembered addresses.
         let mut tr = fixture(&hosts, "both");
-        let plan = plan_candidates(
-            None,
-            &strings(&["198.51.100.8"]),
-            &tr.config.hosts.clone(),
-            None,
+        let plan = tr.lan_plan(|_| AliasRoute::default());
+        assert_eq!(
+            plan,
+            [
+                candidate(Source::Remembered, Some("192.0.2.1")),
+                candidate(Source::Configured, Some("192.0.2.2")),
+            ]
         );
         let error = tr
-            .dial(&plan, [Closed, Open, Open, Unchecked], "true", |_| {
+            .dial(&plan, [Closed, Open], "true", |_| {
                 Ok((
                     false,
                     Vec::new(),
-                    b"owner@192.0.2.1: Permission denied (publickey).".to_vec(),
+                    b"owner@192.0.2.2: Permission denied (publickey).".to_vec(),
                 ))
             })
             .unwrap_err();
         assert_eq!(error.code, 7);
         assert_eq!(tr.info()["attempted_routes"].as_array().unwrap().len(), 2);
-        assert_eq!(state::remembered_hosts(&tr.config), ["198.51.100.8"]);
+        assert_eq!(tr.info()["attempted_routes"][1]["source"], "configured");
+        assert_eq!(state::remembered_hosts(&tr.config), ["192.0.2.1"]);
         // A service failure on an answering host stops without fallback.
         let mut tr = fixture(&hosts, "both");
         let mut dialed = 0;
         let error = tr
-            .dial(&plan, [Open, Open, Open, Unchecked], "true", |_| {
+            .dial(&plan, [Open, Open], "true", |_| {
                 dialed += 1;
                 Ok((false, Vec::new(), b"python3: command not found".to_vec()))
             })
@@ -1403,7 +1479,7 @@ mod tests {
         // A local process failure is returned as-is.
         let mut tr = fixture(&hosts, "both");
         let error = tr
-            .dial(&plan, [Open, Open, Open, Unchecked], "true", |_| {
+            .dial(&plan, [Open, Open], "true", |_| {
                 Err(AppError::new(4, "Transport timeout; request may have completed remotely. Retry using the same request ID."))
             })
             .unwrap_err();
@@ -1417,7 +1493,7 @@ mod tests {
             let mut tr = fixture(&hosts, mode);
             let mut dialed = Vec::new();
             let error = tr
-                .dial(&plan, [Closed, Closed, Unchecked], "true", |command| {
+                .dial(&plan, [Closed, Unchecked], "true", |command| {
                     dialed.push(hostname_of(&command));
                     Ok((
                         false,
@@ -1431,17 +1507,17 @@ mod tests {
             assert_eq!(tr.can_fallback(&error), mode == "both");
             assert_eq!(dialed, [Some("192.0.2.2".to_owned())]);
             let attempts = tr.info()["attempted_routes"].as_array().unwrap().clone();
-            assert_eq!(attempts.len(), 3);
+            assert_eq!(attempts.len(), 2);
             assert!(attempts.iter().all(|a| a["status"] == "host_unreachable"));
-            assert_eq!(attempts[2]["source"], "configured");
+            assert_eq!(attempts[1]["source"], "configured");
             assert_eq!(
-                attempts[2]["reason"],
+                attempts[1]["reason"],
                 "SSH reported connection refusal, timeout, unreachable network or DNS failure"
             );
         }
         assert_eq!(
             state::remembered_hosts(&fixture(&hosts, "both").config),
-            ["198.51.100.8"]
+            ["192.0.2.1"]
         );
     }
     #[test]
