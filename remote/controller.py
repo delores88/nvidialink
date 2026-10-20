@@ -176,6 +176,10 @@ def reserved_memory(row):
     return row["memory"] + (PROXY_MEMORY_GB if row["proxy_image"] else 0)
 
 
+def is_preparation(row):
+    return json.loads(row["request"])["op"] == "prepare"
+
+
 class Docker:
     def call(self, args, timeout=30):
         result = subprocess.run(["docker", *args], capture_output=True, timeout=timeout, check=False)
@@ -559,7 +563,7 @@ class Controller:
 
     def prepare(self, request):
         fields(request, ("v", "op", "project", "manifest_id", "runtime", "client", "request_id"))
-        if request["runtime"] not in ("rust", "node", "python"):
+        if request["runtime"] not in ("rust", "node", "python", "cuda"):
             reject("invalid_request", "This runtime has no dependency preparation")
         return self.run({**request, "argv": ["/usr/bin/python3", "/sparkdev-prepare.py", request["runtime"]], "no_cache": True})
 
@@ -702,6 +706,7 @@ class Controller:
         if "all" in request and type(request["all"]) is not bool:
             reject("invalid_request", "all must be boolean")
         policy = self.resource_policy()
+        registry = self.registry()
         jobs = [self.job_status(r) for r in self.db.execute("SELECT * FROM jobs ORDER BY created DESC LIMIT 200")]
         for job in jobs:
             if job["state"] == "queued" and policy["policy_saved"] and (job["reserved_cpu"] > policy["limits"]["cpu_per_job"] or job["reserved_memory_gb"] > policy["limits"]["memory_gb_per_job"]):
@@ -711,7 +716,9 @@ class Controller:
                          "state": "lease_lost" if row["state"] == "running" and row["expires"] < time.time() else row["state"],
                          "exit_code": row["exit_code"], "created_at": row["created"], "expires_at": row["expires"], "next_offset": row["log_offset"]})
         last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()
-        return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(self.registry()),
+        # Every preparation, whatever its runtime, needs the Python image for its proxy.
+        return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(registry),
+                "preparable_runtimes": list(registry) if "python" in registry else [],
                 "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": bool(last and time.time() - float(last[0]) < 15)},
                 **policy, "dependency_preparation": "isolated_allowlist_proxy"}
 
@@ -775,7 +782,7 @@ class Controller:
         cache.mkdir(parents=True, exist_ok=True, mode=0o700)
         uid = os.getuid() if hasattr(os, "getuid") else 1000
         gid = os.getgid() if hasattr(os, "getgid") else 1000
-        preparing = json.loads(row["request"])["op"] == "prepare"
+        preparing = is_preparation(row)
         args = ["create", "--name", self.container_name(row["id"]), "--pull", "never", "--network", "sparkdev-fetch-" + row["id"] if preparing else "none", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}",
                 "--cpus", str(row["cpu"]), "--cpu-shares", "256", "--memory", f"{row['memory']}g", "--memory-swap", f"{row['memory']}g",
@@ -797,7 +804,12 @@ class Controller:
             args += ["--env", value]
         for name in ("RAYON_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "CARGO_BUILD_JOBS"):
             args += ["--env", name + "=" + str(max(1, int(row["cpu"])))]
-        if row["runtime"] == "cuda":
+        if row["runtime"] == "cuda" and preparing:
+            # A network-attached preparation never gets a GPU. "void" also overrides an image
+            # NVIDIA_VISIBLE_DEVICES under a default NVIDIA runtime; prepare.py re-checks /dev.
+            # No "--runtime runc": a failing create would raise out of reconcile() and stall tick().
+            args += ["--env", "NVIDIA_VISIBLE_DEVICES=void"]
+        elif row["runtime"] == "cuda":
             args += ["--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics"]
         if preparing:
             args += ["--mount", f"type=bind,src={root / 'prepare.py'},dst=/sparkdev-prepare.py,readonly"]
@@ -876,7 +888,8 @@ class Controller:
                     reject("docker_unavailable", "Created container cannot be inspected")
             self.container_matches(info, row)
             state = info["State"]["Status"]
-            if row["cancel"] or (row["runtime"] == "cuda" and self.memory_probe() < row["headroom_gb"]):
+            # Preparation has no GPU, so only CUDA runs need the unified-memory watchdog.
+            if row["cancel"] or (row["runtime"] == "cuda" and not is_preparation(row) and self.memory_probe() < row["headroom_gb"]):
                 if state in ("running", "restarting", "paused"):
                     self.docker.call(["stop", "--time", "5", name], timeout=15)
                 self.finish(row, "cancelled" if row["cancel"] else "failed", 130 if row["cancel"] else 137,

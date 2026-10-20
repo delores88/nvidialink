@@ -9,6 +9,7 @@ import unittest
 from controller import Controller, Rejected, canonical, sha, CHUNK, SECRET
 
 IMAGE = "sha256:" + "a" * 64
+CUDA_IMAGE = "sha256:" + "c" * 64
 PROJECT = "b" * 64
 
 
@@ -32,7 +33,8 @@ class FakeDocker:
                 raise Rejected("already_exists", "Container already exists")
             labels = dict(a.split("=", 1) for i, a in enumerate(args) if i and args[i-1] == "--label")
             network = args[args.index("--network")+1]
-            self.containers[name] = {"Image": IMAGE, "Config": {"Labels": labels}, "State": {"Status": "created", "ExitCode": 0}, "NetworkSettings": {"Networks": {network: {}}}}
+            # Job and proxy creates both end with IMAGE ENTRYPOINT-SCRIPT; record the real image.
+            self.containers[name] = {"Image": args[-2], "Config": {"Labels": labels}, "State": {"Status": "created", "ExitCode": 0}, "NetworkSettings": {"Networks": {network: {}}}}
         elif args[0] == "start":
             self.containers[args[1]]["State"]["Status"] = "running"
         elif args[0] == "stop":
@@ -398,6 +400,89 @@ class ControllerTests(unittest.TestCase):
         row = self.c.get_job(job["job"])
         self.assertEqual((row["state"], row["error"]), ("failed", "memory_watchdog"))
         self.assertEqual([c[-1] for c in self.docker.calls if c[0] == "stop"], ["sparkdev-job-" + job["job"]])
+
+    def cuda_registry(self, python=True):
+        runtimes = {"cuda": {"image": CUDA_IMAGE, "gpu": True, "provenance": "test CUDA fixture"}}
+        if python:
+            runtimes["python"] = {"image": IMAGE, "provenance": "test fixture"}
+        (self.root.parent / "runtimes.json").write_text(json.dumps({"v": 1, "runtimes": runtimes}))
+
+    def test_cuda_preparation_uses_cuda_image_python_proxy_and_no_gpu(self):
+        self.cuda_registry()
+        mid = self.snapshot()
+        job = self.rpc("prepare", project=PROJECT, manifest_id=mid, runtime="cuda", client="claude", request_id="cuda-prepare")
+        self.assertEqual(job["runtime_digest"], CUDA_IMAGE)
+        row = self.c.get_job(job["job"])
+        self.assertEqual((row["image"], row["proxy_image"]), (CUDA_IMAGE, IMAGE))
+        self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["state"], "running")
+        proxy, worker = [c for c in self.docker.calls if c[0] == "create"]
+        self.assertEqual(proxy[-2:], [IMAGE, "/sparkdev-proxy.py"])
+        self.assertEqual(self.docker.containers["sparkdev-proxy-" + job["job"]]["Image"], IMAGE)
+        self.assertEqual(worker[-2:], [CUDA_IMAGE, "/sparkdev-worker.py"])
+        self.assertEqual(self.docker.containers["sparkdev-job-" + job["job"]]["Image"], CUDA_IMAGE)
+        self.assertNotIn("--gpus", worker)
+        self.assertIn("NVIDIA_VISIBLE_DEVICES=void", worker)
+        self.assertNotIn("NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics", worker)
+        self.assertNotIn("--runtime", worker)
+        self.assertIn("HTTPS_PROXY=http://sparkdev-proxy:3128", worker)
+        self.assertEqual(worker[worker.index("--network") + 1], "sparkdev-fetch-" + job["job"])
+        pip = self.root / "caches" / PROJECT / CUDA_IMAGE.split(":", 1)[1] / "pip"
+        self.assertIn(f"type=bind,src={pip},dst=/pip-cache", worker)
+        self.assertTrue(pip.is_dir())
+        argv = (self.root / "jobs" / job["job"] / "argv.json").read_bytes()
+        self.assertEqual(argv, canonical(["/usr/bin/python3", "/sparkdev-prepare.py", "cuda"]))
+        self.assertTrue((self.root / "jobs" / job["job"] / "prepare.py").is_file())
+
+    def test_cuda_preparation_requires_python_proxy_image(self):
+        self.cuda_registry(python=False)
+        mid = self.snapshot()
+        result = self.c.rpc({"v": 1, "op": "prepare", "project": PROJECT, "manifest_id": mid, "runtime": "cuda",
+                             "client": "claude", "request_id": "cuda-only"})
+        self.assertEqual(result["error"]["code"], "runtime_unavailable")
+        self.assertEqual(self.c.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0], 0)
+        self.assertEqual(self.c.rpc({"v": 1, "op": "prepare", "project": PROJECT, "manifest_id": mid, "runtime": "go",
+                                     "client": "claude", "request_id": "go"})["error"]["code"], "invalid_request")
+
+    def test_cuda_run_keeps_gpu_and_no_network(self):
+        self.cuda_registry()
+        mid = self.snapshot()
+        job = self.rpc("run", project=PROJECT, manifest_id=mid, runtime="cuda", client="claude", request_id="cuda-run", argv=["python3", "main.py"])
+        self.assertIsNone(self.c.get_job(job["job"])["proxy_image"])
+        argv = self.c.create_args(self.c.get_job(job["job"]))
+        self.assertEqual(argv[argv.index("--gpus") + 1], "all")
+        self.assertEqual(argv[argv.index("--network") + 1], "none")
+        self.assertIn("NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics", argv)
+        self.assertNotIn("NVIDIA_VISIBLE_DEVICES=void", argv)
+        self.assertNotIn("HTTPS_PROXY=http://sparkdev-proxy:3128", argv)
+
+    def test_watchdog_spares_cuda_preparation_and_stops_cuda_run(self):
+        self.cuda_registry()
+        prepared = self.rpc("prepare", project=PROJECT, manifest_id=self.snapshot(), runtime="cuda", client="claude", request_id="cuda-prepare")
+        other = sha(b"cuda-run")
+        run = self.rpc("run", project=other, manifest_id=self.snapshot(project=other), runtime="cuda", client="codex",
+                       request_id="cuda-run", argv=["python3", "main.py"])
+        for _ in range(3):
+            self.c.tick()
+        self.assertEqual([self.c.get_job(j["job"])["state"] for j in (prepared, run)], ["running", "running"])
+        self.c.memory_probe = lambda: 20
+        self.c.tick()
+        self.assertEqual(self.c.get_job(prepared["job"])["state"], "running")
+        row = self.c.get_job(run["job"])
+        self.assertEqual((row["state"], row["exit_code"], row["error"]), ("failed", 137, "memory_watchdog"))
+        self.assertEqual([c[-1] for c in self.docker.calls if c[0] == "stop"], ["sparkdev-job-" + run["job"]])
+
+    def test_preparable_runtimes_require_the_python_proxy_image(self):
+        self.assertEqual(self.rpc("status")["preparable_runtimes"], ["python"])
+        self.cuda_registry()
+        status = self.rpc("status")
+        self.assertEqual(sorted(status["preparable_runtimes"]), ["cuda", "python"])
+        self.assertEqual(sorted(status["runtimes"]), ["cuda", "python"])
+        self.cuda_registry(python=False)
+        status = self.rpc("status")
+        self.assertEqual((status["runtimes"], status["preparable_runtimes"]), (["cuda"], []))
+        (self.root.parent / "runtimes.json").unlink()
+        self.assertEqual(self.rpc("status")["preparable_runtimes"], [])
 
     def test_docker_unavailability_never_means_missing(self):
         job, _ = self.run_job()
