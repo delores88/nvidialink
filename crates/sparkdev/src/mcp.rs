@@ -310,6 +310,29 @@ mod tests {
         assert!(cli_args("devices", &json!({"where":"spark"}), "claude").is_err());
     }
     #[test]
+    fn find_my_spark_is_not_an_mcp_tool() {
+        // Owner-only: no tool, and no argument of another tool, reaches it.
+        for client in ["claude", "codex", "human"] {
+            assert_eq!(
+                cli_args("discover", &json!({}), client).unwrap_err(),
+                "Unknown tool"
+            );
+            assert_eq!(
+                cli_args("discover", &json!({"save":"192.0.2.40"}), client).unwrap_err(),
+                "Unknown tool"
+            );
+        }
+        assert!(
+            tools()
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tool| !tool.to_string().contains("discover"))
+        );
+        assert!(cli_args("devices", &json!({"save":"192.0.2.40"}), "human").is_err());
+        assert!(cli_args("connection", &json!({"discover":true}), "human").is_err());
+    }
+    #[test]
     fn preparation_accepts_only_fixed_runtime_jobs() {
         let args = cli_args(
             "prepare",

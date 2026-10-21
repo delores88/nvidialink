@@ -178,6 +178,12 @@ enum Commands {
         job: String,
     },
     Pair,
+    /// Find my Spark: search this laptop's own network for the pinned Spark,
+    /// or save one address it found. Owner only.
+    Discover {
+        #[arg(long)]
+        save: Option<String>,
+    },
     #[command(hide = true)]
     Mcp,
 }
@@ -194,9 +200,34 @@ pub fn mcp_client(args: &[String]) -> Option<String> {
         None
     }
 }
+/// Find my Spark runs only for the owner: exactly one `--client X` or
+/// `--client=X` token before any `--`, naming `human`, and clap's parsed
+/// client agrees. A bare call (clap's default), an agent label or a
+/// duplicate flag that clap would resolve to `human` is refused.
+fn owner_only(raw: &[String], parsed: Client) -> Result<()> {
+    let mut named = Vec::new();
+    let mut tokens = raw.iter();
+    while let Some(token) = tokens.next() {
+        if token == "--" {
+            break;
+        }
+        if token == "--client" {
+            named.push(tokens.next().map(String::as_str));
+        } else if let Some(value) = token.strip_prefix("--client=") {
+            named.push(Some(value));
+        }
+    }
+    if named == [Some("human")] && matches!(parsed, Client::Human) {
+        Ok(())
+    } else {
+        Err(AppError::new(2, discover::OWNER_ONLY))
+    }
+}
 pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) -> Result<Value> {
+    let raw = args.clone();
     let cli = Cli::try_parse_from(std::iter::once("sparkdev".into()).chain(args))
         .map_err(|e| AppError::new(if e.use_stderr() { 2 } else { 0 }, e.to_string()))?;
+    let parsed_client = cli.client;
     let client = cli.client.name();
     match cli.command {
         Commands::Setup {
@@ -465,6 +496,15 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             2,
             "Use the desktop Link Spark action for the private SSH bootstrap and QR approval",
         )),
+        Commands::Discover { save } => {
+            owner_only(&raw, parsed_client)?;
+            let config = state::config()?;
+            let deps = discover::Deps::system();
+            match save {
+                Some(host) => discover::save(&config, &host, &deps),
+                None => discover::search(&config, &deps),
+            }
+        }
         Commands::Mcp => Err(AppError::new(2, "MCP stdio must run as a process")),
     }
 }
@@ -898,6 +938,97 @@ mod tests {
             mcp_client(&["--client".into(), "codex".into(), "mcp".into()]),
             Some("codex".into())
         )
+    }
+    fn tokens(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+    /// The gate's verdict, or None when clap itself refuses the arguments.
+    fn gate(values: &[&str]) -> Option<Result<()>> {
+        let raw = tokens(values);
+        let cli =
+            Cli::try_parse_from(std::iter::once("sparkdev".to_string()).chain(raw.clone())).ok()?;
+        Some(owner_only(&raw, cli.client))
+    }
+    #[test]
+    fn find_my_spark_runs_only_for_one_explicit_human_client() {
+        for refused in [
+            &["discover"][..],
+            &["--client", "claude", "discover"],
+            &["--client", "codex", "discover"],
+            &[
+                "--json",
+                "--client=codex",
+                "discover",
+                "--save",
+                "192.0.2.40",
+            ],
+            &["--client", "human", "--client", "human", "discover"],
+            &["--client", "claude", "discover", "--client", "human"],
+            &["--client=claude", "discover", "--client=human"],
+            &["--client", "human", "discover", "--client=human"],
+        ] {
+            match gate(refused) {
+                Some(verdict) => {
+                    let error = verdict.unwrap_err();
+                    assert_eq!(
+                        (error.code, error.message.as_str()),
+                        (2, discover::OWNER_ONLY),
+                        "{refused:?}"
+                    );
+                }
+                None => eprintln!("clap refused {refused:?}"),
+            }
+            assert_eq!(execute(tokens(refused)).unwrap_err().code, 2, "{refused:?}");
+        }
+        // clap resolves a global flag repeated after the subcommand to its
+        // last value, so this reaches the gate as human and only the token
+        // count refuses it.
+        let cli = Cli::try_parse_from([
+            "sparkdev", "--client", "claude", "discover", "--client", "human",
+        ])
+        .unwrap();
+        assert!(matches!(cli.client, Client::Human));
+        for allowed in [
+            &["--json", "--client", "human", "discover"][..],
+            &[
+                "--json",
+                "--client",
+                "human",
+                "discover",
+                "--save",
+                "192.0.2.40",
+            ],
+            &["discover", "--client", "human"],
+            &[
+                "discover",
+                "--save",
+                "192.0.2.40",
+                "--json",
+                "--client",
+                "human",
+            ],
+            &["--client=human", "discover"],
+        ] {
+            assert!(matches!(gate(allowed), Some(Ok(()))), "{allowed:?}");
+        }
+        // Tokens after the delimiter are not flags.
+        assert!(
+            owner_only(
+                &tokens(&["--client", "human", "discover", "--", "--client", "claude"]),
+                Client::Human
+            )
+            .is_ok()
+        );
+        // The command arm checks the gate before it reads any configuration.
+        let home = state::TestHome::new();
+        let error = execute(tokens(&["--client", "claude", "discover"])).unwrap_err();
+        assert_eq!(error.message, discover::OWNER_ONLY);
+        let error = execute(tokens(&["--json", "--client", "human", "discover"])).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (3, "Run sparkdev setup before connecting")
+        );
+        assert_eq!(fs::read_dir(&home.path).unwrap().count(), 0);
     }
     #[test]
     fn plan_preserves_argv_and_has_no_submission_or_reservation() {
