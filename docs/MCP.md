@@ -37,6 +37,8 @@ The `run` tool takes the same planning arguments plus optional `request_id` and 
 
 An agent can submit Linux-capable work to the Spark and Windows-specific work to the laptop. Agents see the same board. A client label alone does not authenticate a particular model or prove a Claude/Codex session made the call. CodaClauda, a separate product, owns agent-to-agent conversations and delegation; this server owns compute jobs only.
 
+Find my Spark (`sparkdev discover`) is an owner-only desktop action. It is not an MCP tool, no tool argument reaches it, and agents must not run it.
+
 `prepare`, `status`, remote `wait` and remote `logs` also deliver cancellations previously queued by the owner when they reconnect. Their tool annotations disclose this mutating effect; they do not request new cancellations. `logs` saves captured output locally. `devices` and `plan` are the observation tools and do not deliver queued cancellations.
 
 For first-time dependency preparation call `prepare` with `dir`, `runtime` (`rust`, `node` or `python`) and an optional stable `request_id`, retain its job ID and poll it to success. Preparation accepts no arbitrary commands or laptop placement. Jobs execute without network. Preparation uses fixed lockfile commands through the domain allowlist. The equivalent CLI is `prepare DIR --runtime rust|node|python --json`. See [CLI.md](CLI.md) for setup and errors.

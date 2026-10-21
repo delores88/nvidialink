@@ -6,6 +6,8 @@ Read `docs/DESIGN.md` before implementation. Use small reviewed commits. Record 
 
 Local cargo builds/tests must run through `python -I D:/PhaseForge-claude/scripts/buildlock.py -- cargo ...`. Keep build artifacts on C: (D: has limited free space). Do not start unrestricted Spark jobs: use separate sparkdev resources and caps. Never sudo.
 
+Never run `sparkdev discover`: Find my Spark is an owner-only action in the desktop app and not an MCP tool.
+
 Receipt claims must distinguish unit tests, real Spark runs, installed Windows behavior, remote hotspot verification and Marketplace admission. Never fabricate a Claude Code run by setting `--client claude` yourself.
 
 For agent jobs, use `sparkdev --client codex --json status --all`, then `sparkdev --client codex --json run DIR --where auto --detach --request-id RETAINED_ID -- COMMAND ARGS`. Retain the returned job ID, poll `wait JOB --timeout 20`, and consume `logs JOB --since OFFSET` using its next byte offset. Inspect the final workload exit code. Retry an uncertain submission with the same request ID instead of duplicating it. Prepare locked dependencies before offline execution; see docs/CLI.md and docs/MCP.md. Keep Windows-only jobs on the laptop through the unchanged build gate.
