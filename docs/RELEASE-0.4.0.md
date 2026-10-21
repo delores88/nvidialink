@@ -1,6 +1,6 @@
 # DGXBridge 0.4.0
 
-Status: release candidate. Publication, the Spark bridge update, installation and Marketplace admission are recorded below only once they happen.
+Status: release candidate. The owner's Spark already runs the 0.4.0 bridge: controller, worker and preparation files were updated with the bridge's own bootstrap while no jobs were active. The pairing link and resource policy were unchanged and the scheduler is healthy. The live link report shows Wi-Fi 2.4 GHz, channel 11, 20 MHz, 143/287 Mbps and no cable. Publication, installation and Marketplace admission are recorded below once they happen.
 
 ## What's new
 
@@ -23,6 +23,8 @@ Internet access for Spark jobs, a shared model cache and long-lived model server
 ## Verification
 
 Measured on the merged source:
-- Rust (`sparkdev`) unit tests, Python Spark-side tests and UI model tests: counts recorded at tagging.
+- `sparkdev` Rust unit tests: 115 passed, 0 failed. They ran as a DGXBridge job on the Spark (Linux aarch64), outside the laptop build gate.
+- Python Spark-side tests: 145 passed with 3 platform skips. UI model tests: 22/22.
+- The Windows CLI, app and installer were built through the unchanged laptop build gate.
 - Each feature branch passed an adversarial review in which every confirmed finding was fixed. The auto-discovery and connection-handling fixes were independently re-verified.
 - Everything uses fakes and fixtures. Real-Spark checks are recorded below after the bridge update.
