@@ -147,16 +147,20 @@ async fn launch(
         })
 }
 
-#[tauri::command]
-async fn cli(app: tauri::AppHandle, args: Vec<String>) -> Result<Value, String> {
-    if args.first().map(String::as_str) == Some("setup")
-        && app.state::<PairState>().running.load(Ordering::SeqCst)
-    {
+/// The CLI operations the desktop may run as the owner. Setup and a Find my
+/// Spark save both change the saved SSH connection, so neither runs while
+/// phone pairing is in progress; a Find my Spark search only reads.
+fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
+    let operation = args.first().map(String::as_str);
+    let changes_connection = operation == Some("setup")
+        || (operation == Some("discover")
+            && args.iter().any(|a| a == "--save" || a.starts_with("--save=")));
+    if pairing && changes_connection {
         return Err(
             "Finish or cancel the current pairing before changing the SSH connection.".into(),
         );
     }
-    let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect"];
+    let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect", "discover"];
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
         || args.len() > 24
@@ -164,9 +168,48 @@ async fn cli(app: tauri::AppHandle, args: Vec<String>) -> Result<Value, String> 
     {
         return Err("Unsupported desktop operation".into());
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn cli(app: tauri::AppHandle, args: Vec<String>) -> Result<Value, String> {
+    desktop_args_allowed(&args, app.state::<PairState>().running.load(Ordering::SeqCst))?;
     let mut full = vec!["--json".into(), "--client".into(), "human".into()];
     full.extend(args);
     launch(app, "sparkdev", full, None, 40).await
+}
+
+#[cfg(test)]
+mod desktop_args_tests {
+    use super::desktop_args_allowed;
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+    const PAIRING: &str = "Finish or cancel the current pairing before changing the SSH connection.";
+
+    #[test]
+    fn find_my_spark_is_allowed_and_its_save_waits_for_pairing() {
+        for allowed in [&["discover"][..], &["discover", "--save", "192.0.2.40"], &["devices"], &["setup", "--ssh-alias", "spark"]] {
+            assert_eq!(desktop_args_allowed(&args(allowed), false), Ok(()), "{allowed:?}");
+        }
+        // A search only reads; a save changes the connection.
+        assert_eq!(desktop_args_allowed(&args(&["discover"]), true), Ok(()));
+        for saving in [&["discover", "--save", "192.0.2.40"][..], &["discover", "--save=192.0.2.40"], &["setup", "--ssh-alias", "spark"]] {
+            assert_eq!(desktop_args_allowed(&args(saving), true).unwrap_err(), PAIRING, "{saving:?}");
+        }
+    }
+
+    #[test]
+    fn other_operations_and_oversized_or_nul_arguments_stay_refused() {
+        for refused in [&[][..], &["mcp"], &["run", "."], &["resources"], &["connection", "--mode", "both"], &["discover\0"], &["discover", "--save", "192.0.2.40\0"]] {
+            assert_eq!(desktop_args_allowed(&args(refused), false).unwrap_err(), "Unsupported desktop operation", "{refused:?}");
+        }
+        let mut long = args(&["discover"]);
+        long.extend(std::iter::repeat_n("--json".to_string(), 24));
+        assert!(desktop_args_allowed(&long, false).is_err());
+        long.truncate(24);
+        assert_eq!(desktop_args_allowed(&long, false), Ok(()));
+    }
 }
 
 #[tauri::command]
