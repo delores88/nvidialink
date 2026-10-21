@@ -247,7 +247,11 @@ pip runs isolated, so a project file beside the lock (for example `json.py`) nev
 executes in the network-attached container, and every inherited `PIP_*` and `PYTHON*`
 variable is replaced with fixed values. A site directory is built under a pending name
 and replaces the previous one only after success. Jobs put prepared site directories
-ahead of any `PYTHONPATH` the image already sets.
+ahead of any `PYTHONPATH` the image already sets, in the sorted lock order preparation
+uses. Because every prepared environment of a runtime shares that one `PYTHONPATH`, a
+lock that pins a distribution at a different version than an earlier lock, or ships a
+module an earlier lock's environment already provides from a different distribution or
+version, is refused; identical copies and merging namespace packages are allowed.
 
 CUDA preparation (`--runtime cuda`) runs in the CUDA image under its own
 `/usr/bin/python3` and installs `requirements-cuda.lock`: a hash-locked `--no-deps`

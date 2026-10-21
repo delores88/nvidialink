@@ -11,7 +11,7 @@ import hashlib
 import importlib.machinery
 import importlib.metadata
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -354,6 +354,60 @@ def unmet(staging, image):
     return refusals, warnings
 
 
+def providers(staging):
+    """Relative path parts -> {(distribution, version)} whose RECORD lists a file at or below them."""
+    owners = {}
+    for dist in importlib.metadata.distributions(path=[str(staging)]):
+        name = dist_name(dist)
+        try:
+            version, files = dist.version or "", dist.files or ()
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+        if name is None:
+            continue
+        for file in files:
+            parts = PurePosixPath(str(file)).parts
+            for depth in range(1, len(parts) + 1):
+                owners.setdefault(parts[:depth], set()).add((name, version))
+    return owners
+
+
+def clashes(here, there, prefix, mine, theirs, label, other):
+    hits = []
+    for entry, module in modules(here.joinpath(*prefix), not prefix):
+        fullname = ".".join(prefix + (module,))
+        spec = importlib.machinery.PathFinder.find_spec(fullname, [str(there.joinpath(*prefix))])
+        if spec is None:
+            continue
+        if entry.is_dir() and not regular_package(entry) and spec.loader is None and spec.submodule_search_locations is not None:
+            # Both sides are namespace portions: they merge, so compare their children.
+            hits += clashes(here, there, prefix + (module,), mine, theirs, label, other)
+            continue
+        # A package is keyed by its directory, a module by its file.
+        found = module if spec.submodule_search_locations is not None else Path(spec.origin or "").name
+        owner = mine.get(prefix + (entry.name,))
+        if not owner or owner != theirs.get(prefix + (found,)):
+            hits.append("sparkdev: refused: " + fullname + " in " + label + " shadows the same module in " + other)
+    return hits
+
+
+def collisions(staging, label, earlier):
+    """Refuse a lock whose env differs from an env this run prepared earlier.
+
+    Every prepared env of a runtime goes on one PYTHONPATH, where the first one wins an
+    import, so a distribution or module may repeat across locks only as an identical copy.
+    """
+    hits, mine, owned = [], versions([staging]), providers(staging)
+    for other, env in earlier:
+        theirs = versions([env])
+        for name in sorted(mine.keys() & theirs.keys()):
+            if mine[name] != theirs[name]:
+                hits.append("sparkdev: refused: " + label + " pins " + name + " " + mine[name] + "; " + other + " pins " +
+                            theirs[name])
+        hits += clashes(Path(staging), Path(env), (), owned, providers(env), label, other)
+    return hits
+
+
 def checks(staging, image):
     hits = overlap(staging, image)
     try:
@@ -407,10 +461,12 @@ def main():
         remove(TMP)
     image = image_path() if runtime == "cuda" else []
     provided = set(versions(image)) if runtime == "cuda" else set()
+    published = []  # (lock, env) prepared earlier in this run; jobs load them all, in this order.
     for cwd, argv, lock in actions:
         raw = lock.read_bytes()
         original = hashlib.sha256(raw).hexdigest()
-        say("sparkdev: preparing " + lock.relative_to(WORK).as_posix())
+        label = lock.relative_to(WORK).as_posix()
+        say("sparkdev: preparing " + label)
         pending = Path(argv[argv.index("--target") + 1]) if runtime in LOCKS else None
         if pending is not None and pending.name != ".pending-" + original:
             say("sparkdev: lockfile changed; preparation refused")
@@ -442,8 +498,16 @@ def main():
                     say(line)
                 if hits:
                     return 65
+            if pending is not None:
+                hits = collisions(pending, label, published)
+                for hit in hits:
+                    say(hit)
+                if hits:
+                    return 65
             if pending is not None and not publish(pending, ENVS / original, ENVS / (".old-" + original)):
                 return 65
+            if pending is not None:
+                published.append((label, ENVS / original))
             if runtime == "node":
                 tree = Path("/npm-cache/trees") / original
                 tree.parent.mkdir(parents=True, exist_ok=True)

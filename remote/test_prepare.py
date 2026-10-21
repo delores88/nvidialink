@@ -31,10 +31,15 @@ def write(root, relative, text=""):
     return path
 
 
-def dist(root, name, version, requires=()):
+def dist(root, name, version, requires=(), files=()):
+    """A dist-info; `files` are written too and listed in its RECORD, as pip --target does."""
     lines = ["Metadata-Version: 2.1", "Name: " + name, "Version: " + version]
-    write(root, name.replace("-", "_") + "-" + version + ".dist-info/METADATA",
-          "\n".join(lines + ["Requires-Dist: " + r for r in requires]) + "\n")
+    info = name.replace("-", "_") + "-" + version + ".dist-info"
+    write(root, info + "/METADATA", "\n".join(lines + ["Requires-Dist: " + r for r in requires]) + "\n")
+    for relative in files:
+        write(root, relative)
+    if files:
+        write(root, info + "/RECORD", "".join(f + ",,\n" for f in (*files, info + "/METADATA", info + "/RECORD")))
 
 
 def digest(path):
@@ -355,6 +360,79 @@ class UnmetTests(Sandbox):
         dist(self.staging, "lib-f", "1.0", ['foo; platform_release >= "5"', 'bar; python_version ~= "abc"'])
         with mock.patch.object(platform, "release", return_value="6.8.0-1015-nvidia"):
             self.assertEqual(self.unmet(), (["sparkdev: refused: lib-f has an unevaluable requirement marker"] * 2, []))
+
+
+class CrossLockTests(Sandbox):
+    """Every prepared env of a runtime lands on one PYTHONPATH, so locks must agree."""
+
+    def prepare(self, runtime, layout):
+        """layout: lock directory -> dists as (name, version, requires, files); each lock pins its dists."""
+        for directory, dists in layout.items():
+            write(self.work, directory + "/" + prepare.LOCKS[runtime], "".join(d[0] + "==" + d[1] + HASH + "\n" for d in dists))
+
+        def run(argv, cwd=None, stdin=None, env=None, check=False):
+            directory = Path(argv[argv.index("-r") + 1]).parent.relative_to(self.work).as_posix()
+            self.calls.append(directory)
+            target = Path(argv[argv.index("--target") + 1])
+            target.mkdir(parents=True, exist_ok=True)
+            for name, version, requires, files in layout[directory]:
+                dist(target, name, version, requires, files)
+            return subprocess.CompletedProcess(argv, 0)
+        with mock.patch.object(prepare.subprocess, "run", side_effect=run):
+            return self.main(runtime)
+
+    def env(self, runtime, directory):
+        return self.envs / digest(self.work / directory / prepare.LOCKS[runtime])
+
+    HELPER_1 = ("helper", "1.0", (), ("helper/__init__.py",))
+    HELPER_2 = ("helper", "2.1", (), ("helper/__init__.py",))
+    LIB = ("lib", "1.0", ("helper>=2",), ("lib/__init__.py",))
+
+    def test_a_pin_that_differs_from_an_earlier_lock_is_refused(self):
+        for runtime in ("python", "cuda"):
+            with self.subTest(runtime=runtime):
+                if runtime == "cuda" and not HAVE_PIP:
+                    continue
+                code, output = self.prepare(runtime, {"a": [self.HELPER_1], "b": [self.LIB, self.HELPER_2]})
+                lock = prepare.LOCKS[runtime]
+                self.assertEqual(code, 65, output)
+                self.assertIn(f"sparkdev: refused: b/{lock} pins helper 2.1; a/{lock} pins 1.0", output)
+                self.assertIn(f"sparkdev: refused: helper in b/{lock} shadows the same module in a/{lock}", output)
+                self.assertTrue(self.env(runtime, "a").is_dir())
+                self.assertFalse(self.env(runtime, "b").exists())
+                self.assertEqual(self.leftovers(), [])
+
+    def test_identical_copies_and_merging_namespaces_are_allowed(self):
+        google_auth = ("google-auth", "2.38.0", (), ("google/auth/__init__.py",))
+        protobuf = ("protobuf", "5.29.3", (), ("google/protobuf/__init__.py",))
+        code, output = self.prepare("python", {"a": [self.HELPER_2, google_auth], "b": [self.LIB, self.HELPER_2, protobuf]})
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.env("python", "a").is_dir() and self.env("python", "b").is_dir())
+
+    def test_a_module_from_a_different_distribution_is_refused(self):
+        code, output = self.prepare("python", {"a": [("opencv-python", "4.10.0.84", (), ("cv2/__init__.py",))],
+                                               "b": [("opencv-python-headless", "4.10.0.84", (), ("cv2/__init__.py",))]})
+        self.assertEqual(code, 65)
+        self.assertIn("sparkdev: refused: cv2 in b/requirements.lock shadows the same module in a/requirements.lock", output)
+        # A namespace child repeated by a different distribution is refused too.
+        for directory in ("a", "b"):
+            (self.work / directory / "requirements.lock").unlink()
+        code, output = self.prepare("python", {"c": [("google-auth", "2.38.0", (), ("google/auth/__init__.py",))],
+                                               "d": [("google-auth-fork", "1.0", (), ("google/auth/__init__.py",))]})
+        self.assertEqual(code, 65)
+        self.assertIn("sparkdev: refused: google.auth in d/requirements.lock shadows the same module in c/requirements.lock", output)
+
+    def test_jobs_load_envs_in_the_order_preparation_checked_them(self):
+        import worker
+        names = ("a-b", "a", "z", "a/c")  # Path order puts a before a-b; string order would not.
+        for directory in names:
+            write(self.work, directory + "/requirements.lock", directory)
+            self.env("python", directory).mkdir(parents=True)
+        order = [str(self.env("python", lock.parent.relative_to(self.work).as_posix()))
+                 for lock in prepare.files(self.work, "requirements.lock")]
+        self.assertEqual(worker.env_paths("python", self.work, self.envs), order)
+        # Part-wise order: a/c and a before a-b, where plain string order would put a-b first.
+        self.assertEqual(order[:3], [str(self.env("python", d)) for d in ("a/c", "a", "a-b")])
 
 
 class PublishTests(Sandbox):

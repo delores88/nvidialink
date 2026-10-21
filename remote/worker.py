@@ -16,18 +16,23 @@ LOCKS = {"python": "requirements.lock", "cuda": "requirements-cuda.lock"}
 
 
 def env_paths(runtime, root, envs):
-    """Prepared site directories for this runtime's lockfiles, in walk order."""
+    """Prepared site directories for this runtime's lockfiles, in prepare.py's sorted lock order.
+
+    Never directory-listing order: which env wins an import must not depend on the filesystem.
+    """
     name = LOCKS.get(runtime)
-    paths = []
     if name is None:
-        return paths
+        return []
+    locks = []
     for directory, names, filenames in os.walk(root, followlinks=False):
         names[:] = [n for n in names if n not in SKIP]
         if name in filenames:
-            lock = Path(directory) / name
-            cache = Path(envs) / hashlib.sha256(lock.read_bytes()).hexdigest()
-            if cache.is_dir():
-                paths.append(str(cache))
+            locks.append(Path(directory) / name)
+    paths = []
+    for lock in sorted(locks):
+        cache = str(Path(envs) / hashlib.sha256(lock.read_bytes()).hexdigest())
+        if os.path.isdir(cache) and cache not in paths:
+            paths.append(cache)
     return paths
 
 
