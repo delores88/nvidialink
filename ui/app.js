@@ -138,10 +138,14 @@ function renderJobDetail(){
   const started=Number(job.started_at),finished=Number(job.finished_at),cpu=job.reserved_cpu??job.cpu,memory=job.reserved_memory_gb??job.memory_gb;
   const service=serviceView(job);
   const facts=[['Result',service?service.state:outcome.label,`fact-outcome outcome-${outcome.kind}`],['Submitted by',`${clientLabel(job.client)} (self-declared)`],['Runs on',runner==='laptop'?'This laptop':'Spark'],['Tools',TOOL_LABELS[job.runtime]||job.runtime||'Not reported'],['Set aside',cpu!=null?`${cpu} cores · ${memory??'—'} GiB`:runner==='laptop'?'No enforced limits':'Not reported'],['Internet',jobInternet(job)],['Downloaded',formatGiB(job.internet_use?.bytes_down)],['Queued',relativeTime(job.created_at,now)],['Run time',Number.isFinite(started)&&started>0?duration((Number.isFinite(finished)&&finished>0?finished:now)-started)+(isActiveJob(job)?' so far':''):'Not started']];
+  if(job.return_status==='complete')facts.push(['Results',`Results returned to ${job.results_folder}`]);
+  else if(job.return_status==='retrying')facts.push(['Results',job.return_error||'Return paused; the bridge will retry.']);
+  else if(job.state==='returning')facts.push(['Results','Returning and verifying files on this laptop�']);
+  if(job.returned?.some(file=>file.status==='conflict'))facts.push(['Local edits','Preserved. Spark versions were saved beside conflicting files.']);
   renderFacts($('detail-facts'),facts);
   const more=[['Job ID',jobId(job)],['Request ID',job.request_id||'Not reported'],['Reported state',job.state||'Unknown']];if(job.cached_from)more.push(['Reused job',String(job.cached_from)]);if(job.error)more.push(['Reported error',typeof job.error==='string'?job.error:job.error.message||job.error.code]);if(job.internet_reason)more.push(['Internet report',job.internet_reason]);if(job.stop_reason)more.push(['Stop reason',job.stop_reason]);renderFacts($('detail-more'),more);
   $('service-note').hidden=!service;$('service-note').textContent=service?[service.reason,service.note].filter(Boolean).join('. '):'';
-  const cancellable=isActiveJob(job)&&!job.cancel_requested;$('cancel-job').hidden=!cancellable;$('cancel-job').querySelector('span').textContent=cancelArmed===jobId(job)?'Confirm cancel':service?'Stop server':'Cancel job';$('cancel-job').classList.toggle('armed',cancelArmed===jobId(job));
+  const cancellable=isActiveJob(job)&&job.state!=='returning'&&!job.cancel_requested;$('cancel-job').hidden=!cancellable;$('cancel-job').querySelector('span').textContent=cancelArmed===jobId(job)?'Confirm cancel':service?'Stop server':'Cancel job';$('cancel-job').classList.toggle('armed',cancelArmed===jobId(job));
   renderLog();
   if(isActiveJob(job))startLogFollow();else stopLogFollow();
 }

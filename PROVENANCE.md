@@ -19,3 +19,7 @@ The connection visuals use owner-authorized PhaseForge code at exact commit `7a6
 | `frontend/src/components/settings/SparkLinkVisuals.module.css` | `a566bdf77d35f5ec63e17cc0b35fcfcb9558cc53a4ede97fdd030e1b9f3099c0` |
 
 The drawer updater placement follows `frontend/src/components/shared/DesktopUpdate.jsx` and its stylesheet at the same pin. Native authorization and installer implementation provenance is recorded in [UPDATER-PROVENANCE.md](docs/UPDATER-PROVENANCE.md); it uses the current signed Marketplace contract and its own app identity. All first-party adaptations remain MIT under Ben Van Dorn / DeloresAI copyright.
+
+## 0.5.0 Blender runtime
+
+The read-only PhaseForge Blender 4.5.9 image and the owner-authorized recipe/support-file reuse, exact upstream commits, file hashes and third-party license boundaries are recorded in [PROVENANCE-REMOTE.md](PROVENANCE-REMOTE.md). DGXBridge uses a distinct runtime image and never changes the upstream image, repository or service.

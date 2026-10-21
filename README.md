@@ -2,7 +2,7 @@
 
 A Windows desktop app and agent CLI for running Linux builds, tests and compute on your own NVIDIA DGX Spark, while Windows work stays on your laptop. Claude Code, Codex and humans share job status, worktree claims and retained logs. First-party source is MIT licensed; this is an independent DeloresAI utility.
 
-**0.4.2:** replaces the vulnerable Pillow packages in both Spark runtimes with hash-locked Pillow 13.0.0. It includes the 0.4.1 features: public internet access for Spark jobs, shared saved downloads, named HTTP model services, automatic selection of verified wired Spark addresses, and the laptop's own link speed. Internet is on by default with private addresses blocked. These features require the matching CLI and Spark controller. See the [release notes and verification limits](docs/RELEASE-0.4.2.md).
+**0.5.0 candidate:** automatically returns files created or changed on the Spark to the laptop, adds GPU media and Blender 4.5.9, and prepares hash-locked system packages in project-specific images. Background return survives the submitting agent exiting. Source checks are passing; physical Spark, Windows installation and Marketplace acceptance are recorded separately in [release verification](docs/RELEASE-0.5.0.md). The current published installer below remains 0.4.2 until 0.5.0 completes verification.
 
 ## Connect your Spark
 
@@ -29,11 +29,11 @@ sparkdev --client codex --json logs JOB_ID --since 0
 sparkdev --client codex --json status --all
 ```
 
-Retain the returned job ID and log `next_offset`. Poll until terminal state and inspect `exit_code`. Retry an ambiguous submission with the same request ID. `--argv-json file.json` accepts an exact array of arguments without shell quoting ambiguity. `cancel JOB_ID` queues cancellation when disconnected. The CLI remains the primary interface; `sparkdev --client codex mcp` and `sparkdev --client claude mcp` expose devices/plan/prepare/run/wait/logs/status/cancel over stdio.
+Retain the returned job ID and log `next_offset`. Poll through `returning` until terminal state and inspect `exit_code`, `returned` and `return_error`. New and modified `/work` files return to their original project paths; local edits are preserved with a `.spark-JOB` sibling conflict. `/sparkdev-output` files land under `results_folder`. No download button or fetch command is required; the background worker handles detached callers and reconnects. `--no-return` is the explicit opt-out. Retry an ambiguous submission with the same request ID. `--argv-json file.json` accepts an exact array of arguments without shell quoting ambiguity. `cancel JOB_ID` queues cancellation when disconnected. The CLI remains the primary interface; `sparkdev --client codex mcp` and `sparkdev --client claude mcp` expose devices/plan/prepare/run/wait/logs/status/cancel over stdio.
 
 `devices` distinguishes reachable Spark, failed authentication, unavailable transport and missing configuration, with LAN SSH versus paired iroh routing and attempted-route reasons. Direct versus relayed iroh traffic is not inferred. `plan` previews placement without upload, claim or submission. Laptop hardware can be available while new managed jobs are unavailable: both runners currently require Spark's shared scheduler. Capacity observations are not reservations.
 
-`--where auto` detects explicit Windows/MSVC targets, PowerShell/cmd, NSIS and Tauri installers. Linux-capable commands use the Spark. Use an explicit placement for scripts whose platform needs cannot be inferred. A single compile is never split between architectures. Independent worktrees can use both machines concurrently.
+`--where auto` detects explicit Windows/MSVC targets, PowerShell/cmd, NSIS and Tauri installers. Linux-capable commands use the Spark, including media, rendering, ML and Python. Direct `ffmpeg` and `blender` commands select the Spark GPU runtime; use `--runtime cuda` for GPU Python. Use an explicit placement for scripts whose platform needs cannot be inferred. A single compile is never split between architectures. Independent worktrees can use both machines concurrently.
 
 ## Isolation and limits
 
@@ -63,7 +63,7 @@ python scripts/collect-notices.py
 python -I D:/PhaseForge-claude/scripts/buildlock.py -- cargo auditable build --manifest-path src-tauri/Cargo.toml --release --locked
 ```
 
-Before preparing the bundle, copy the independently built ARM64 link binary to `dist/linux-arm64/sparkdev-link` and the Windows CLI/link release binaries to `dist/bin/`. Keep build targets outside source. Bundle the existing desktop release with the Tauri NSIS bundler. No release should omit the link binary, notices or dependency inventory. Do not modify any PhaseForge checkout to build this project.
+Before preparing the bundle, copy the independently built ARM64 link binary to `dist/linux-arm64/sparkdev-link` and the Windows CLI/link/return-worker release binaries to `dist/bin/`. Keep build targets outside source. Bundle the existing desktop release with the Tauri NSIS bundler. No release should omit the link binary, notices or dependency inventory. Do not modify any PhaseForge checkout to build this project.
 
 ## License
 

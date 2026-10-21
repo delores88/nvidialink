@@ -37,12 +37,16 @@ def main():
     print(json.dumps({'tool': 'cargo-auditable', 'archive_sha256': archive_hash,
                       'executable_sha256': tool_hash}), flush=True)
     subprocess.run(['cargo', 'auditable', 'build', '--workspace', '--release',
-                    '--locked', '--offline'], check=True)
+                    '--locked', '--offline', '-j', '2'], check=True)
     subprocess.run(['/target/release/sparkdev', '--version'], check=True)
-    for name in ('sparkdev', 'sparkdev-link'):
+    for name in ('sparkdev', 'sparkdev-link', 'sparkdev-return'):
         binary = Path('/target/release') / name
         raw = binary.read_bytes()
         assert raw[:6] == b'\x7fELF\x02\x01'
+        destination = Path('/sparkdev-output/bin') / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(raw)
+        destination.chmod(0o700)
         print(json.dumps({'artifact': name, 'bytes': len(raw),
                           'sha256': hashlib.sha256(raw).hexdigest()}), flush=True)
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,plainReason,internetView,downloadsView,serviceView,jobFlags,jobInternet,laptopLink,sparkLink,
-  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses} from '../ui/model.mjs';
+  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome} from '../ui/model.mjs';
 import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
 import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
@@ -287,5 +287,15 @@ test('agent prompts are compact, safe snapshots and cover real internet, cache a
   for(const agent of ['codex','claude']){
     const text=agentPrompt({agent,path:'C:/Program Files/DGXBridge/bin/sparkdev.exe',stateRoot:'C:/Users/Example/AppData/Local/SparkDevBridge',config:{hosts:['192.0.2.10'],identity_file:'C:/keys/spark',connection_mode:'both'},limits:valid});
     assert.ok(text.length<5000);assert.match(text,/Snapshot from when this was copied/);assert.match(text,/Use a NEW ID to rerun a failed job/);assert.match(text,/materializing/);assert.match(text,/--no-cache reruns work but keeps saved downloads/);assert.match(text,/preparable_runtimes/);assert.match(text,/call NAME --input FILE --request-id CALL_ID/);assert.doesNotMatch(text,/Wi-Fi|2\.4 GHz/);
+  }
+});
+
+test('returning work stays active and agent prompts explain automatic delivery',()=>{
+  assert.equal(isActiveJob({state:'returning'}),true);
+  assert.match(jobOutcome({state:'returning'}).label,/Returning/i);
+  for(const agent of ['codex','claude']) {
+    const text=agentPrompt({agent,config:{}});
+    assert.match(text,/return automatically/);assert.match(text,/No fetch command is needed/);
+    assert.match(text,/--no-return/);assert.match(text,/--runtime cuda/);
   }
 });

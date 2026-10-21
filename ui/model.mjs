@@ -1,6 +1,6 @@
 // Presentation and copy helpers; never include complete backend objects in agent prompts.
 export const MODE_LABELS = Object.freeze({'lan-only':'Same network only','remote-only':'Remote only',both:'Automatic'});
-export const TOOL_LABELS = Object.freeze({rust:'Rust tools',node:'Node.js tools',python:'Python tools',cuda:'GPU tools'});
+export const TOOL_LABELS = Object.freeze({rust:'Rust tools',node:'Node.js tools',python:'Python tools',cuda:'Spark GPU'});
 export const RESOURCE_FIELDS = Object.freeze([
   ['cpu_per_job','CPU cores per job','cores'], ['memory_gb_per_job','Memory per job','GiB'],
   ['cpu_total','Total CPU budget','cores'], ['memory_gb_total','Total memory budget','GiB'],
@@ -143,9 +143,11 @@ ${resourceLines.join('\n')}
 
 RUN: --client ${client} --json run PROJECT_DIR --where auto --detach --request-id RETAINED_ID -- COMMAND ARGS. Save ID and exact arguments before submitting. Reuse the same ID only to recover an uncertain submission or materializing response. Use a NEW ID to rerun a failed job. Retain job ID; poll wait JOB_ID --timeout 20 and logs JOB_ID --since OFFSET, continuing from next_offset. Inspect final workload exit_code. Use --argv-json FILE for exact arguments. --no-cache reruns work but keeps saved downloads.
 
-WHERE: Linux work on Spark; Windows/MSVC, installers and Windows tests on laptop. Native laptop jobs have no enforced CPU or memory cap. Local Cargo must use the saved build gate unchanged. Do not split one compile across OS/architecture.
+RESULTS: New and changed /work files return automatically to the source project; /sparkdev-output files return to results_folder. No fetch command is needed. Keep polling while state is returning; terminal wait means hash-verified local delivery. Inspect returned and return_error. Local edits stay intact and Spark conflicts land beside them. The background worker continues after this agent exits or reconnects. --no-return is the explicit opt-out. outputs JOB_ID reports quota and retention.
 
-DEPENDENCIES: prepare PROJECT_DIR --runtime rust|node|python before offline work. Use cuda preparation only if preparable_runtimes lists it; requirements-cuda.lock excludes torch, triton and nvidia-* wheels. On insufficient_disk report it and delete nothing.
+WHERE: Offload Linux builds, media, render, ML and Python work to Spark by default; Windows/MSVC, installers and Windows tests stay on laptop. ffmpeg and blender select the Spark GPU runtime automatically; pass --runtime cuda for GPU Python. Native laptop jobs have no enforced CPU or memory cap. Local Cargo must use the saved build gate unchanged. Do not split one compile across OS/architecture.
+
+DEPENDENCIES: prepare PROJECT_DIR --runtime rust|node|python before offline work. Use cuda preparation only if preparable_runtimes lists it; requirements-cuda.lock excludes torch, triton and nvidia-* wheels. For system tools, resolve a sparkdev-system.lock with /sparkdev-system.py lock in a fresh scratch project using the same runtime; then prepare the target project to build its pinned derived image. See docs/CLI.md. Run remains non-root. On insufficient_disk report it and delete nothing.
 
 INTERNET: When enabled and available, new Spark jobs get public HTTP/HTTPS; this is not proof of a successful download. Keep HTTP_PROXY/HTTPS_PROXY and supplied cache variables. DNS errors may mean a tool ignores them. Private networks and Spark addresses are blocked. If internet.guard reports observed_public_egress_blocked, the detected public address is also blocked; extra router addresses or routes may not be detected. Checks are periodic, not instant. Jobs can send data out. Don't change the owner's policy.
 
@@ -158,7 +160,7 @@ SHARING: Before heavy work read status --all. Inspect others' results by job ID;
 
 // Job board presentation. Every label is derived from recorded job fields; nothing is inferred
 // about live hardware usage, the launching process, or whether an agent is still polling.
-export const ACTIVE_STATES = Object.freeze(['queued','starting','preparing','running']);
+export const ACTIVE_STATES = Object.freeze(['queued','starting','preparing','running','returning']);
 export const CLIENT_LABELS = Object.freeze({codex:'Codex',claude:'Claude Code',human:'You'});
 export const isActiveJob = job => ACTIVE_STATES.includes(job?.state);
 export const jobId = job => String(job?.job || job?.job_id || '');
@@ -170,7 +172,7 @@ export function jobRunner(job) {
 export function jobOutcome(job) {
   if (job?.cache_hit) return {kind:'cached',label:'Reused result'};
   if (job?.state === 'cancelled') return {kind:'cancelled',label:'Cancelled'};
-  if (isActiveJob(job)) return {kind:'pending',label:job.state==='queued'?'Waiting':'Running'};
+  if (isActiveJob(job)) return {kind:'pending',label:job.state==='queued'?'Waiting':job.state==='returning'?'Returning results':'Running'};
   if (Number.isInteger(job?.exit_code)) return job.exit_code === 0 ? {kind:'ok',label:'Succeeded'} : {kind:'fail',label:`Failed (exit ${job.exit_code})`};
   return job?.state === 'failed' ? {kind:'fail',label:'Failed'} : {kind:'unknown',label:'No result'};
 }
