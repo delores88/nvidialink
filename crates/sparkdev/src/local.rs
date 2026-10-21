@@ -110,6 +110,11 @@ pub fn submit(
 }
 #[cfg(windows)]
 fn spawn_worker(job: &str) -> Result<()> {
+    state::validate_id(job)?;
+    spawn_detached("__worker", Some(job))
+}
+#[cfg(windows)]
+pub(crate) fn spawn_detached(mode: &str, job: Option<&str>) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::{
         Foundation::CloseHandle,
@@ -118,13 +123,18 @@ fn spawn_worker(job: &str) -> Result<()> {
             STARTUPINFOW,
         },
     };
-    state::validate_id(job)?;
-    let exe = std::env::current_exe()?;
+    let current = std::env::current_exe()?;
+    let exe = if mode == "__return_worker" {
+        let worker = current.with_file_name("sparkdev-return.exe");
+        if !worker.is_file() { return Err(AppError::new(3, "The automatic result worker is missing; reinstall DGXBridge")); }
+        worker
+    } else { current };
     let application: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut line = std::ffi::OsString::from("\"");
     line.push(&exe);
-    line.push("\" __worker ");
-    line.push(job);
+    line.push("\" ");
+    line.push(mode);
+    if let Some(job) = job { line.push(" "); line.push(job); }
     let mut line: Vec<u16> = line.encode_wide().chain(Some(0)).collect();
     let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
     startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
@@ -159,8 +169,22 @@ fn spawn_worker(job: &str) -> Result<()> {
 }
 #[cfg(not(windows))]
 fn spawn_worker(job: &str) -> Result<()> {
-    Command::new(std::env::current_exe()?)
-        .args(["__worker", job])
+    spawn_detached("__worker", Some(job))
+}
+#[cfg(not(windows))]
+pub(crate) fn spawn_detached(mode: &str, job: Option<&str>) -> Result<()> {
+    let mut command = Command::new(std::env::current_exe()?);
+    command.arg(mode);
+    if let Some(job) = job { command.arg(job); }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Only the async-signal-safe setsid syscall runs between fork and exec.
+        unsafe { command.pre_exec(|| {
+            if libc::setsid() == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
+        }); }
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

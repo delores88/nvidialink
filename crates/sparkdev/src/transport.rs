@@ -147,7 +147,8 @@ pub fn repeat_for(request: &Value) -> Repeat {
     match request["op"].as_str() {
         Some(
             "missing" | "put" | "put_many" | "sync" | "status" | "logs" | "wait" | "doctor"
-            | "cancel" | "heartbeat" | "release" | "lan_routes" | "reply",
+            | "cancel" | "heartbeat" | "release" | "lan_routes" | "reply"
+            | "outputs" | "output_chunk" | "outputs_ack",
         ) => Repeat::Idempotent,
         Some("resources")
             if request.get("limits").is_none() && request.get("internet").is_none() =>

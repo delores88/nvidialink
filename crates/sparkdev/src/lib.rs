@@ -4,6 +4,7 @@ pub mod lan_learn;
 pub mod laptop_network;
 pub mod local;
 pub mod mcp;
+pub mod returns;
 mod servers;
 pub mod state;
 pub mod transport;
@@ -136,6 +137,9 @@ enum Commands {
         r#where: Placement,
         #[arg(long)]
         no_cache: bool,
+        /// Leave results on the Spark instead of returning them automatically.
+        #[arg(long)]
+        no_return: bool,
         #[arg(last = true)]
         command: Vec<String>,
     },
@@ -237,6 +241,7 @@ enum Commands {
         #[arg(long, default_value_t = 1048576)]
         limit: usize,
     },
+    Outputs { job: String },
     Wait {
         job: String,
         #[arg(long,default_value_t=30,value_parser=clap::value_parser!(u64).range(0..=60))]
@@ -305,6 +310,10 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
     .map_err(|e| AppError::new(if e.use_stderr() { 2 } else { 0 }, e.to_string()))?;
     let parsed_client = cli.client;
     let client = cli.client.name();
+    // A normal CLI/app startup recovers delivery after a laptop restart.
+    if matches!(&cli.command, Commands::Run { .. } | Commands::Status { .. } | Commands::Devices | Commands::Connect | Commands::Logs { .. } | Commands::Wait { .. } | Commands::Outputs { .. }) {
+        let _ = returns::ensure_worker();
+    }
     match cli.command {
         Commands::Setup {
             ssh_alias,
@@ -529,6 +538,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             request_id,
             r#where,
             no_cache,
+            no_return,
             command,
         } => {
             let argv = load_argv(command, argv_json)?;
@@ -543,14 +553,14 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             let runtime = runtime.unwrap_or_else(|| default_runtime(&argv).into());
             let request_id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             state::validate_id(&request_id)?;
-            let mut request = json!({"v":1,"op":"run","project":inv.project,"manifest_id":inv.manifest_id,"argv":argv,"runtime":runtime,"client":client,"request_id":request_id,"no_cache":no_cache});
+            let mut request = json!({"v":1,"op":"run","project":inv.project,"manifest_id":inv.manifest_id,"argv":argv,"runtime":runtime,"client":client,"request_id":request_id,"no_cache":no_cache,"no_return":no_return});
             // Persist the immutable request before submission, so an ambiguous disconnect is recoverable.
             let saved_request = json!({"placement":format!("{where_:?}"),"request":request});
             state::save_request(&request_id, &saved_request)?;
             let mut out = if where_ == Placement::Laptop {
                 local::submit(&inv, &argv, client, &request_id, &reason)?
             } else {
-                let submitted = || -> Result<Value> {
+                let mut submitted = || -> Result<Value> {
                     let mut tr = transport::Transport::new()?;
                     flush_cancels(&mut tr);
                     let synced = sync(&inv, &mut tr)?;
@@ -559,7 +569,12 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                     if !Rpc::connection_enabled(&tr) {
                         return Err(disconnected());
                     }
-                    let mut value = tr.rpc(request)?;
+                    returns::register(&inv, &request, no_return)?;
+                    // The detached process is the single submission owner. It
+                    // persists the response even if this caller exits mid-RPC.
+                    returns::ensure_worker()?;
+                    let mut value = returns::submission(&request_id, Duration::from_secs(90))?;
+                    returns::decorate(&mut value)?;
                     value["transport"] = tr.info();
                     Ok(value)
                 };
@@ -611,6 +626,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                 Ok(mut v) => {
                     lan_learn::learn_if_needed(&mut tr, &v);
                     v["transport"] = tr.info();
+                    returns::decorate(&mut v)?;
                     if all {
                         v["laptop_jobs"] = local;
                     }
@@ -631,6 +647,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             Ok(v)
         }
         Commands::Logs { job, since, limit } => logs(&job, since, limit.min(inventory::CHUNK)),
+        Commands::Outputs { job } => returns::outputs(&job),
         Commands::Wait { job, timeout } => {
             state::validate_id(&job)?;
             if job.starts_with("laptop-") {
@@ -638,7 +655,9 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             } else {
                 let mut tr = transport::Transport::new()?;
                 flush_cancels(&mut tr);
-                tr.rpc(json!({"v":1,"op":"wait","job":job,"timeout":timeout}))
+                let mut value = tr.rpc(json!({"v":1,"op":"wait","job":job,"timeout":timeout}))?;
+                returns::decorate(&mut value)?;
+                Ok(value)
             }
         }
         Commands::Cancel { job } => {
@@ -794,13 +813,15 @@ fn devices() -> Result<Value> {
         Err(e) => Err(e),
     };
     match observation {
-        Ok(status) => {
+        Ok(mut status) => {
+            returns::decorate(&mut status)?;
             spark["reachable"] = json!(true);
             spark["availability"] = json!("reachable");
             spark["scheduler"] = status["scheduler"].clone();
             spark["managed_limits"] = status["limits"].clone();
             spark["hardware"] = status["hardware"].clone();
             spark["runtimes"] = status["runtimes"].clone();
+            spark["gpu_video"] = status["gpu_video"].clone();
             spark["network"] = spark_network(&status);
             spark["internet"] = status
                 .get("internet")
@@ -932,6 +953,7 @@ fn default_runtime(argv: &[String]) -> &'static str {
     match name {
         "cargo" | "rustc" | "rustup" => "rust",
         "node" | "npm" | "npx" => "node",
+        "blender" | "ffmpeg" => "cuda",
         _ => "python",
     }
 }
@@ -1507,13 +1529,14 @@ fn flush_cancels(tr: &mut transport::Transport) {
 }
 pub fn logs(job: &str, since: u64, limit: usize) -> Result<Value> {
     state::validate_id(job)?;
-    let out = if job.starts_with("laptop-") {
+    let mut out = if job.starts_with("laptop-") {
         local::logs(job, since, limit)?
     } else {
         let mut tr = transport::Transport::new()?;
         flush_cancels(&mut tr);
         tr.rpc(json!({"v":1,"op":"logs","job":job,"since":since,"limit":limit}))?
     };
+    returns::decorate(&mut out)?;
     if let Some(data) = out["data"].as_str() {
         let bytes = STANDARD
             .decode(data)

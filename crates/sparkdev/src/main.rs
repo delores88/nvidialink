@@ -1,5 +1,8 @@
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "__return_worker") {
+        std::process::exit(if sparkdev::returns::worker().is_ok() { 0 } else { 1 });
+    }
     if args.first().is_some_and(|a| a == "__worker") {
         let result = args
             .get(1)

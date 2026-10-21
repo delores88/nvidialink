@@ -741,7 +741,7 @@ dependencies = [
 
 [[package]]
 name = "dgxbridge"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3404,11 +3404,12 @@ dependencies = [
 
 [[package]]
 name = "sparkdev"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
  "fs2",
+ "libc",
  "regex",
  "serde",
  "serde_json",

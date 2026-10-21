@@ -148,6 +148,9 @@ pub fn path_policy(path: &str) -> Result<bool> {
         return Ok(false);
     }
     let name = parts.last().unwrap().to_ascii_lowercase();
+    if name.contains(".spark-original-") || name.starts_with(".spark-return-") {
+        return Ok(false);
+    }
     let ext = Path::new(&name)
         .extension()
         .and_then(|s| s.to_str())
