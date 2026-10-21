@@ -59,6 +59,12 @@ class Compatibility(unittest.TestCase):
         self.assertEqual(r['runtimes'], ['Microsoft Edge WebView2'])
         self.assertNotIn('testedHost', r)
 
+    def test_filesystem_disclosures_fit_marketplace_contract(self):
+        # Manifest schema v1 caps each entry at 200 characters. The 0.4.0
+        # shared-cache disclosure previously exceeded that admission limit.
+        for entry in manifest.manifest(release_input(), [])['permissions']['filesystem']:
+            self.assertLessEqual(len(entry), 200)
+
 
 class DraftValidation(unittest.TestCase):
     def setUp(self):
