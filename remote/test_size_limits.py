@@ -2,6 +2,7 @@
 import base64
 import contextlib
 import errno
+import io
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from controller import CHUNK, GIB, Controller, Rejected, canonical, sha
 from test_controller import IMAGE, NO_LINK, PROJECT, FakeDocker
 
 PLENTY = 1 << 50
+MATERIALIZE_SLACK = 20
 RESERVE = controller.DISK_RESERVE
 
 
@@ -190,6 +192,36 @@ class SizeLimitTests(unittest.TestCase):
         self.assertEqual((self.root / "snapshots" / mid / "big.txt").read_bytes(), big)
         for name in os.listdir(self.root / "snapshots"):
             self.assertFalse(name.startswith((".pending-", ".partial-")), name)
+
+    def test_the_wait_counts_from_process_start_and_fits_the_cli_timeout(self):
+        # transport.rs gives a request without `timeout` 0 + 30 s, and sync accepts no timeout field.
+        cli_sync_timeout = 30
+        # Left for ssh or sidecar setup, Python startup and resending a 4 MiB paired-route manifest.
+        self.assertLessEqual(controller.MATERIALIZE_WAIT + MATERIALIZE_SLACK, cli_sync_timeout)
+        big = large(20)
+        self.upload(big)
+        self.now = 100.0
+        result = self.c.rpc({"v": 1, "op": "sync", "project": PROJECT, "manifest": [entry("big.bin", big)]},
+                            started=100.0 - controller.MATERIALIZE_WAIT + 1)  # Reading the request took most of it.
+        self.assertEqual(result["error"]["code"], "materializing")
+        self.assertLessEqual(self.now - 100.0, 1 + controller.MATERIALIZE_POLL)
+        seen, made = [], []
+
+        def construct(*args, **kwargs):
+            made.append(Controller(*args, **kwargs))
+            return made[-1]
+        try:
+            with mock.patch.object(controller.time, "monotonic", return_value=42.0), \
+                 mock.patch.object(controller, "Controller", construct), \
+                 mock.patch.object(Controller, "rpc", lambda s, request, started=None: seen.append(started) or {"ok": True}), \
+                 mock.patch.object(controller.sys, "argv", ["controller.py", "rpc", "--state", str(self.root)]), \
+                 mock.patch.object(controller.sys, "stdin", mock.Mock(buffer=io.BytesIO(b'{"v":1,"op":"status"}'))), \
+                 mock.patch.object(controller.sys, "stdout", mock.Mock(buffer=io.BytesIO())):
+                self.assertEqual(controller.main(), 0)
+        finally:
+            for instance in made:
+                instance.db.close()
+        self.assertEqual(seen, [42.0])  # main() passes its own start, taken before the stdin read.
 
     def test_background_completion_is_seen_by_the_waiting_rpc(self):
         big = large(1)

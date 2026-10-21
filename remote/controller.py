@@ -43,7 +43,10 @@ JOB_FILE_LIMIT = 4 * GIB  # Largest file a job may write (--ulimit fsize).
 DISK_RESERVE = 64 * GIB  # Free state-filesystem space kept back; below it syncs and admissions wait.
 PUT_MANY_BODY = 12 * CHUNK
 INLINE_BYTES = 512 * CHUNK  # Snapshots needing at most this many new bytes assemble inside the RPC.
-MATERIALIZE_WAIT = 20  # Seconds a sync RPC waits for a background snapshot.
+# Seconds a sync RPC waits for a background snapshot, counted from controller process start.
+# The CLI gives a sync 30 s from spawning ssh or the sidecar, and every poll resends the whole
+# manifest, so connection setup and that upload must fit in what the wait leaves.
+MATERIALIZE_WAIT = 10
 MATERIALIZE_POLL = 0.25
 MAX_PENDING = 4
 MISSING_BATCH = 10000
@@ -1831,8 +1834,9 @@ class Controller:
             pass
         return result
 
-    def rpc(self, request):
-        self.started = self.clock()  # A sync's background wait is bounded from the start of its RPC.
+    def rpc(self, request, started=None):
+        # A sync's background wait is bounded from process start when main() passes it.
+        self.started = self.clock() if started is None else started
         try:
             if not isinstance(request, dict) or type(request.get("v")) is not int or request["v"] != 1:
                 reject("version_unsupported", "Protocol version 1 is required")
@@ -2133,6 +2137,7 @@ class Controller:
 
 
 def main():
+    started = time.monotonic()  # Before argument parsing, state setup and reading the request.
     os.umask(0o077)
     parser = argparse.ArgumentParser()
     # `materialize` is the detached snapshot builder; it is not an RPC operation.
@@ -2149,7 +2154,7 @@ def main():
             if len(raw) > MAX_REQUEST:
                 reject("size_limit", "Request exceeds the protocol body limit")
             request = json.loads(raw)
-            response = controller.rpc(request)
+            response = controller.rpc(request, started=started)
         except (ValueError, Rejected) as error:
             response = {"ok": False, "error": {"code": error.code if isinstance(error, Rejected) else "invalid_json", "message": "Request could not be read"}}
         sys.stdout.buffer.write(canonical(response) + b"\n")
