@@ -795,15 +795,24 @@ pub fn save(config: &Config, host: &str, deps: &Deps) -> Result<Value> {
             }
             hosts.push(entry.clone());
         }
-        // Without hosts the bare alias was dialed and resolved by OpenSSH.
-        // Keep that path only when ssh -G shows no HostName of its own.
-        if previous.is_empty()
-            && lookup
+        // Without hosts the bare alias was dialed and resolved by OpenSSH,
+        // and a rejection there refused the fallback. Its route stays a
+        // configured host after the saved address, so it keeps that meaning
+        // and its own dial: the alias itself when ssh -G shows no HostName of
+        // its own, otherwise that validated HostName. A HostName that is not
+        // a plain host is never brought back as the label.
+        if previous.is_empty() {
+            let echoed = lookup
                 .raw_hostname
                 .as_deref()
-                .is_some_and(|raw| raw.eq_ignore_ascii_case(&fresh.ssh_alias))
-        {
-            hosts.push(fresh.ssh_alias.clone());
+                .is_some_and(|raw| raw.eq_ignore_ascii_case(&fresh.ssh_alias));
+            if echoed {
+                hosts.push(fresh.ssh_alias.clone());
+            } else if let Some(own) = lookup.route.hostname.as_deref().filter(|own| {
+                !own.eq_ignore_ascii_case(&canonical) && own.parse::<Ipv4Addr>().ok() != Some(ip)
+            }) {
+                hosts.push(own.to_owned());
+            }
         }
         fresh.hosts = hosts;
     })?;
@@ -2009,7 +2018,7 @@ pub(crate) mod tests {
         assert_eq!(out["removed"], json!([]));
     }
     #[test]
-    fn save_keeps_the_bare_alias_only_when_ssh_shows_no_hostname_of_its_own() {
+    fn a_first_save_keeps_the_route_the_alias_had_as_a_configured_host() {
         let home = state::TestHome::new();
         let fixture = config(&[]);
         for (ssh_g, hosts) in [
@@ -2021,7 +2030,17 @@ pub(crate) mod tests {
                 "hostname FIXTURE-SPARK\nport 22\n",
                 vec!["192.0.2.40", "fixture-spark"],
             ),
-            ("hostname 192.0.2.99\nport 22\n", vec!["192.0.2.40"]),
+            // The alias's own HostName stays, after the saved address.
+            (
+                "hostname 192.0.2.99\nport 22\n",
+                vec!["192.0.2.40", "192.0.2.99"],
+            ),
+            (
+                "hostname spark.example\nport 22\n",
+                vec!["192.0.2.40", "spark.example"],
+            ),
+            // The HostName is the saved address itself: listed once.
+            ("hostname 192.0.2.40\nport 22\n", vec!["192.0.2.40"]),
             // A HostName that is not a plain host is dropped by parse_ssh_g,
             // and must not bring the label back as a DNS name.
             ("hostname spark;name\nport 22\n", vec!["192.0.2.40"]),
@@ -2036,6 +2055,24 @@ pub(crate) mod tests {
                 "{ssh_g}"
             );
         }
+        // That HostName is now planned as a configured host, not as the
+        // alias's HostName: it is dialed even when the precheck misses it,
+        // and a rejection there still refuses the fallback, as it did while
+        // the alias was the only route.
+        let mut fake = Fake::new().reply("192.0.2.40", 0, "");
+        fake.ssh_g = Some("hostname 192.0.2.99\nport 22\n".into());
+        write_config(&home, &fixture);
+        let (deps, _) = fake.build();
+        save(&fixture, "192.0.2.40", &deps).unwrap();
+        let next = saved(&home);
+        let plan = transport::plan_candidates(None, &[], &next.hosts, Some("192.0.2.99"));
+        assert_eq!(
+            plan,
+            ["192.0.2.40", "192.0.2.99"].map(|host| transport::Candidate {
+                source: transport::Source::Configured,
+                host: Some(host.into()),
+            })
+        );
         // With hosts already configured the alias is never added.
         let fixture = config(&["192.0.2.20"]);
         write_config(&home, &fixture);
