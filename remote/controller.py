@@ -45,8 +45,9 @@ PUT_MANY_BODY = 12 * CHUNK
 INLINE_BYTES = 512 * CHUNK  # Snapshots needing at most this many new bytes assemble inside the RPC.
 # Seconds a sync RPC waits for a background snapshot, counted from controller process start.
 # The CLI gives a sync 30 s from spawning ssh or the sidecar, and every poll resends the whole
-# manifest, so connection setup and that upload must fit in what the wait leaves.
-MATERIALIZE_WAIT = 10
+# manifest. On the paired route the sidecar may take 12 s to connect and the Spark daemon 10 s
+# to read that frame before this process starts, which leaves 8.
+MATERIALIZE_WAIT = 8
 MATERIALIZE_POLL = 0.25
 MAX_PENDING = 4
 SCHEDULER_FRESH = 15  # Seconds since its last heartbeat for the scheduler to count as alive.

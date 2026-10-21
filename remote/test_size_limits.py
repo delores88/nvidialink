@@ -18,7 +18,8 @@ from controller import CHUNK, GIB, Controller, Rejected, canonical, sha
 from test_controller import IMAGE, NO_LINK, PROJECT, FakeDocker
 
 PLENTY = 1 << 50
-MATERIALIZE_SLACK = 20
+# Paired route before the controller starts: sidecar connect (12 s) and the daemon's frame read (10 s).
+MATERIALIZE_SLACK = 12 + 10
 RESERVE = controller.DISK_RESERVE
 
 
@@ -197,7 +198,7 @@ class SizeLimitTests(unittest.TestCase):
     def test_the_wait_counts_from_process_start_and_fits_the_cli_timeout(self):
         # transport.rs gives a request without `timeout` 0 + 30 s, and sync accepts no timeout field.
         cli_sync_timeout = 30
-        # Left for ssh or sidecar setup, Python startup and resending a 4 MiB paired-route manifest.
+        # What the wait leaves covers connection setup and resending the whole manifest.
         self.assertLessEqual(controller.MATERIALIZE_WAIT + MATERIALIZE_SLACK, cli_sync_timeout)
         big = large(20)
         self.upload(big)

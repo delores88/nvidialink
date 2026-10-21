@@ -116,10 +116,11 @@ materializer (`controller.py materialize`, started with stdio closed in its own
 session), which holds a single global lock and processes the queue oldest first; at
 most four such snapshots may be queued. Every builder, in an RPC or in the background,
 holds an exclusive lock on the snapshot's queue record, so one snapshot is never built
-twice at once. A sync waits until 10 seconds after its controller process started
+twice at once. A sync waits until 8 seconds after its controller process started
 (reading the resent manifest counts), then answers `materializing` with progress
-("X of Y MiB"), so connection setup and a 4 MiB manifest upload fit the CLI's fixed
-30-second sync timeout on a slow link; running the same command again
+("X of Y MiB"). That leaves the rest of the CLI's fixed 30-second sync timeout for
+connection setup and the manifest upload: on the paired route, up to 12 seconds for the
+sidecar to connect and 10 for the Spark daemon to read the frame. Running the same command again
 continues where it left off. A sync never forks the materializer while the scheduler
 is alive: the scheduler's next tick, about a second later, starts it whenever work is
 queued and none holds the lock, so it runs inside `sparkdev-controller.service`, whose
