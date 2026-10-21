@@ -69,6 +69,9 @@ DENY_NAMES = re.compile(r"^(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)
 SECRET = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-\d|(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}")
 # Network link report. A leading letter or digit keeps a name from reading as an iw/nmcli option.
 IFNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$")
+# systemd's MAC naming policy (Ubuntu's 73-usb-net-by-mac.rules for USB adapters) embeds the MAC.
+MAC_NAME = re.compile(r"^(en|wl|ww|ib|sl)x[0-9a-f]{12}$", re.I)
+MAC_ALIASES = {"en": "usb-ethernet", "wl": "usb-wifi", "ww": "usb-wwan", "ib": "usb-ib", "sl": "usb-slip"}
 DRIVER = re.compile(r"^[a-z0-9_-]{1,32}$")
 IW_PATHS = ("/usr/sbin/iw", "/sbin/iw")
 NMCLI_PATHS = ("/usr/bin/nmcli",)
@@ -701,8 +704,26 @@ def network_view(raw):
     if not isinstance(raw, dict) or raw.get("observed") is not True:
         return {"v": 1, "observed": False, "basis": "unknown"}
 
+    def mapping(value):
+        return value if isinstance(value, dict) else {}
+
+    ports = raw.get("wired")
+    ports = ports[:MAX_IFACES] if isinstance(ports, list) else []
+    active_raw, radio = mapping(raw.get("active")), mapping(raw.get("wifi"))
+    # A MAC-derived name (enx<MAC>, wlx<MAC>) becomes a kind-and-index alias, numbered in
+    # sorted name order and identical in every field; probe argv still uses the real name.
+    names = [active_raw.get("interface"), active_raw.get("egress_interface"), mapping(raw.get("underlay")).get("interface"),
+             radio.get("interface"), *(mapping(item).get("interface") for item in ports)]
+    aliases, counts = {}, {}
+    for value in sorted({v for v in names if isinstance(v, str) and IFNAME.fullmatch(v) and MAC_NAME.fullmatch(v)}):
+        prefix = MAC_NAME.fullmatch(value).group(1).lower()
+        counts[prefix] = counts.get(prefix, 0) + 1
+        aliases[value] = f"{MAC_ALIASES[prefix]}-{counts[prefix]}"
+
     def name(value):
-        return value if isinstance(value, str) and IFNAME.fullmatch(value) else None
+        if not isinstance(value, str) or not IFNAME.fullmatch(value):
+            return None
+        return aliases.get(value) if MAC_NAME.fullmatch(value) else value
 
     def bounded(value, low, high, real=False):
         if type(value) is int or (real and type(value) is float and math.isfinite(value)):
@@ -711,9 +732,6 @@ def network_view(raw):
 
     def choice(value, options):
         return value if isinstance(value, str) and value in options else None
-
-    def mapping(value):
-        return value if isinstance(value, dict) else {}
 
     def link(value, detailed):
         value = mapping(value)
@@ -729,8 +747,7 @@ def network_view(raw):
         return view
 
     wired = []
-    ports = raw.get("wired")
-    for item in ports if isinstance(ports, list) else ():
+    for item in ports:
         item = mapping(item)
         interface = name(item.get("interface"))
         if interface is None:
@@ -744,10 +761,9 @@ def network_view(raw):
             break
     wired_up = bounded(raw.get("wired_up"), 0, MAX_IFACES)
     wired_lan_up = bounded(raw.get("wired_lan_up"), 0, MAX_IFACES)
-    radio = mapping(raw.get("wifi"))
     wifi = None
     if name(radio.get("interface")):
-        wifi = {"interface": radio["interface"], "band": choice(radio.get("band"), WIFI_BANDS),
+        wifi = {"interface": name(radio.get("interface")), "band": choice(radio.get("band"), WIFI_BANDS),
                 "channel": bounded(radio.get("channel"), 1, 233), "frequency_mhz": bounded(radio.get("frequency_mhz"), 2400, 7200),
                 "width_mhz": radio.get("width_mhz") if type(radio.get("width_mhz")) is int and radio.get("width_mhz") in WIFI_WIDTHS else None,
                 "tx_bitrate_mbps": bounded(radio.get("tx_bitrate_mbps"), 0, 50000, real=True),

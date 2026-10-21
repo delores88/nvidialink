@@ -158,7 +158,11 @@ timeout per call and a 2.5-second overall deadline. Signal falls back to
 `/proc/net/wireless`. It never scans and never requests SSID or BSSID fields. Raw
 tool output is parsed in memory and discarded, never logged. A single sanitizer
 rebuilds the object from whitelisted, bounded fields, so it holds no SSID, BSSID,
-MAC or IP address; the probe never reads an interface `address` file.
+MAC or IP address; the probe never reads an interface `address` file. An interface
+name derived from a MAC address (`enx<MAC>`, `wlx<MAC>`, `wwx`, `ibx`, `slx`: Ubuntu
+names USB network adapters this way) is reported as `usb-ethernet-N`, `usb-wifi-N`,
+`usb-wwan-N`, `usb-ib-N` or `usb-slip-N`, numbered in sorted name order and identical in
+every field; the real name is used only in the probe tools' argv.
 
 ```json
 {"v":1,"observed":true,"basis":"ssh_session",

@@ -3,6 +3,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -1034,6 +1035,42 @@ class NetworkLinkTests(unittest.TestCase):
         self.assertEqual(network_view({"observed": True, "basis": "ssh_session", "active": {"interface": "<img>"}})["basis"], "unknown")
         for invalid in (None, [], "observed", {"observed": "true"}, {"observed": 1}, {}):
             self.assertEqual(network_view(invalid), {"v": 1, "observed": False, "basis": "unknown"})
+
+    def test_mac_derived_names_are_replaced_by_stable_aliases(self):
+        f = self.f
+        macs = ("00e04c680123", "00e04c680000", "001122334455")
+        f.iface("enx00e04c680123", "wired", carrier=True, operstate="up", speed=2500, driver="r8152", ipv4=WIRED_IP)
+        f.iface("enx00e04c680000", "wired", carrier=False, driver="r8152")
+        f.iface("enP7s7", "wired", carrier=False, driver="r8127")
+        f.iface("wlx001122334455", "wifi", carrier=True, operstate="up", ipv4=SPARK_IP)
+        f.route("enx00e04c680123", ANY, ANY, gateway=GATEWAY, metric=100)
+        f.route("enx00e04c680123", "192.168.1.0", MASK24, metric=100)
+        f.route("wlx001122334455", ANY, ANY, gateway=GATEWAY, metric=600)
+        f.session(CLIENT_IP, 51234, WIRED_IP, 22)
+        status, doctor = self.reports(f.probe)
+        view = status["network"]
+        self.assertEqual(view["active"], {"interface": "usb-ethernet-2", "kind": "wired", "operstate": "up", "speed_mbps": 2500})
+        self.assertEqual([p["interface"] for p in view["wired"]], ["usb-ethernet-2", "enP7s7", "usb-ethernet-1"])
+        # The same Spark seen over its USB Wi-Fi: one alias in every field.
+        f.files["tcp"].clear()
+        f.session(CLIENT_IP, 51235, SPARK_IP, 22)
+        f.outputs.update(link=IW_LINK, info=IW_INFO)
+        wifi_view = f.view()
+        self.assertEqual(wifi_view["active"], {"interface": "usb-wifi-1", "kind": "wifi", "operstate": "up", "speed_mbps": None,
+                                               "egress_interface": "usb-ethernet-2"})
+        self.assertEqual((wifi_view["wifi"]["interface"], wifi_view["wifi"]["band"]), ("usb-wifi-1", "2.4"))
+        self.assertIn((IW_PATHS[0], "dev", "wlx001122334455", "link"), {tuple(argv) for argv, _ in f.calls})  # Real name in argv only.
+        for report in (status, doctor, wifi_view):
+            encoded = canonical(report)
+            for mac in macs:
+                self.assertNotIn(mac.encode(), encoded)
+        for report in (view, wifi_view):
+            self.assertIsNone(re.search(rb"[0-9A-Fa-f]{12}", canonical(report)))
+        # The sanitizer aliases whatever raw object it is given.
+        self.assertEqual(network_view({"observed": True, "active": {"interface": "ENX00E04C680123", "kind": "wired"}})["active"]["interface"],
+                         "usb-ethernet-1")
+        self.assertEqual(network_view({"observed": True, "underlay": {"interface": "wwx00e04c680123", "kind": "wired"}})["underlay"],
+                         {"interface": "usb-wwan-1", "kind": "wired"})
 
     def test_failing_or_unsupported_probe_still_reports_status(self):
         def broken():
