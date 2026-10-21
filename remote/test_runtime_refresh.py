@@ -201,7 +201,7 @@ class RefreshTests(unittest.TestCase):
         self.assertFalse(any(args[0] == "systemd-run" for args in self.calls))
 
     def test_new_modules_are_required_and_hash_checked(self):
-        for name in ("model_cache.py", "model_server.py"):
+        for name in ("model_cache.py", "model_server.py", "bootstrap.py"):
             envelope = {**self.envelope, "files": {key: value for key, value in self.envelope["files"].items() if key != name}}
             with self.setup_context(), self.assertRaisesRegex(ValueError, "file set"):
                 bootstrap.install(envelope)
@@ -209,6 +209,16 @@ class RefreshTests(unittest.TestCase):
         envelope["files"]["model_cache.py"]["sha256"] = "0" * 64
         with self.setup_context(), self.assertRaisesRegex(ValueError, "digest mismatch"):
             bootstrap.install(envelope)
+
+    def test_missing_bootstrap_refuses_before_replacing_installed_helpers(self):
+        marker = self.root / "bootstrap.py"
+        marker.write_bytes(b"installed bootstrap helpers")
+        envelope = {**self.envelope, "files": {key: value for key, value in self.envelope["files"].items() if key != "bootstrap.py"}}
+        with self.setup_context(), self.assertRaisesRegex(ValueError, "file set"):
+            bootstrap.install(envelope)
+        self.assertEqual(marker.read_bytes(), b"installed bootstrap helpers")
+        self.assertFalse((self.root / "install-runtime.py").exists())
+        self.assertFalse(self.calls)
 
     def source_files(self):
         for name in bootstrap.RUNTIME_SOURCES:
@@ -250,6 +260,22 @@ class RefreshTests(unittest.TestCase):
         build = next(args for args in self.calls if args[:2] == ["docker", "build"])
         self.assertEqual(build[-1], str(self.root / "runtime-build-inputs" / self.digest))
         self.assertIn("site.ENABLE_USER_SITE", probe.call_args_list[-1].args[0][-1])
+
+    def test_post_registration_receipt_failure_never_claims_not_started(self):
+        self.source_files()
+        self.registry()
+        outputs = [json.dumps([{"Id": IMAGE, "Architecture": "arm64"}]).encode(), b"fixture runtime verified\n"]
+        publish = installer.publish_runtime_status
+        def fail_success_receipt(root, receipt, attempt_id=None):
+            if receipt["state"] == "succeeded":
+                raise OSError("fixture receipt write failed")
+            return publish(root, receipt, attempt_id)
+        with mock.patch.object(installer.subprocess, "run", side_effect=self.fake_run), mock.patch.object(installer.subprocess, "check_output", side_effect=outputs), mock.patch.object(installer, "register_runtimes") as register, mock.patch.object(installer, "publish_runtime_status", side_effect=fail_success_receipt), mock.patch("builtins.print"):
+            self.assertEqual(installer.build_runtime(self.root, self.digest, "c" * 32), 1)
+        register.assert_called_once()
+        receipt = json.loads((self.root / "runtime-build.json").read_text())
+        self.assertEqual(receipt["state"], "failed")
+        self.assertEqual(receipt["image"], IMAGE)
 
 
 if __name__ == "__main__":

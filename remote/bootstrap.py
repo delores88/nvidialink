@@ -22,7 +22,7 @@ import uuid
 
 ALLOWED = {"controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "install-runtime.py", "install-cuda.py", "bootstrap.py",
            "runtime/Dockerfile", "runtime/Dockerfile.cuda", "runtime/requirements.txt", "sparkdev-controller.service", "sparkdev-link.service", "bin/sparkdev-link"}
-REQUIRED = {"controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "install-runtime.py",
+REQUIRED = {"controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "bootstrap.py", "install-runtime.py",
             "runtime/Dockerfile", "runtime/requirements.txt", "sparkdev-controller.service"}
 
 
