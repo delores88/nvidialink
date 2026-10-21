@@ -1149,7 +1149,8 @@ class NetworkLinkTests(unittest.TestCase):
         argv = [IW_PATHS[0], "dev", "wlP9s9", "link"]
         for unkillable in (False, True):
             process = self.tool(hangs=True, unkillable=unkillable)
-            with mock.patch.object(controller.subprocess, "Popen", return_value=process),                  self.assertRaises(subprocess.TimeoutExpired):
+            with mock.patch.object(controller.subprocess, "Popen", return_value=process), \
+                 self.assertRaises(subprocess.TimeoutExpired):
                 run_tool(argv, 0.75)
             process.kill.assert_called_once_with()
             process.wait.assert_called_once_with(timeout=controller.REAP_WAIT)
