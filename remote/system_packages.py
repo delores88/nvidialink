@@ -311,7 +311,10 @@ def parse_uris(raw):
         if not line.startswith("'"):
             continue
         parts = shlex.split(line)
-        if len(parts) != 4 or not parts[2].isdigit() or not 1 <= int(parts[2]) <= DEB_LIMIT:
+        # Some authenticated Debian security indices omit the legacy printed
+        # checksum. APT still verifies the download; generate_lock hashes the
+        # actual archive with SHA-256 rather than trusting this optional token.
+        if len(parts) not in (3, 4) or not parts[2].isdigit() or not 1 <= int(parts[2]) <= DEB_LIMIT:
             raise Invalid("APT download plan has an invalid record")
         address, filename = url(parts[0]), parts[1]
         if Path(filename).name != filename or "/" in filename or "\\" in filename or not filename.endswith(".deb") or filename in result:

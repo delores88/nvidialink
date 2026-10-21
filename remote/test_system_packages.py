@@ -152,8 +152,41 @@ class BoundaryTests(unittest.TestCase):
 
     def test_uri_plan_refuses_paths_duplicates_and_unbounded_downloads(self):
         for raw in (b"'https://deb.debian.org/a.deb' ../a.deb 12 MD5:x", b"'http://deb.debian.org/a.deb' a.deb 12 MD5:x",
-                    b"'https://deb.debian.org/a.deb' a.deb 999999999999 MD5:x"):
+                    b"'https://deb.debian.org/a.deb' a.deb 999999999999 MD5:x",
+                    b"'https://deb.debian.org/a.deb' a.deb", b"'https://deb.debian.org/a.deb' a.deb 12 MD5:x extra",
+                    b"'https://deb.debian.org/a.deb' a.deb 0", b"'https://deb.debian.org/a.deb' a.deb invalid",
+                    b"'https://deb.debian.org/a.deb' a.deb 12\n'https://deb.debian.org/b.deb' a.deb 12"):
             with self.assertRaises(sp.Invalid): sp.parse_uris(raw)
+
+    def test_debian_security_uri_plan_without_printed_checksum(self):
+        # Physical Spark diagnostic d8d4b70b98534ad4b494572f23a6733a, Debian 13.
+        address = "https://security.debian.org/debian-security/pool/updates/main/libp/libpng1.6/libpng16-16t64_1.6.48-1%2bdeb13u6_arm64.deb"
+        filename = "libpng16-16t64_1.6.48-1+deb13u6_arm64.deb"
+        raw = (f"'{address}' {filename} 275220 \n"
+               "'https://deb.debian.org/other.deb' other.deb 19 SHA256:printed\n").encode()
+        self.assertEqual(sp.parse_uris(raw), {filename: (address, 275220),
+                                            "other.deb": ("https://deb.debian.org/other.deb", 19)})
+
+    def test_generator_hashes_actual_archive_without_printed_checksum(self):
+        calls = []
+        def command(args, **kwargs):
+            calls.append(args)
+            if "--print-uris" in args:
+                return b"'https://deb.debian.org/fonts-example.deb' fonts-example.deb 19 \n"
+            if "--download-only" in args:
+                archives = next(s.split("=", 1)[1] for s in args if s.startswith("Dir::Cache::archives="))
+                (Path(archives) / "fonts-example.deb").write_bytes(DEB)
+            return b""
+        with mock.patch.object(sp.os, "geteuid", return_value=1000, create=True), mock.patch.object(sp, "MARKER", self.root / "missing"), \
+                mock.patch.object(sp, "platform", return_value=({"id": "debian", "version_id": "13"}, "arm64")), \
+                mock.patch.object(sp, "run", side_effect=command), \
+                mock.patch.object(sp, "deb_metadata", return_value=["fonts-example", "1:2.3-4ubuntu1", "all"]):
+            result = sp.generate_lock(["fonts-example"], self.root / sp.LOCK, BASE)
+        self.assertEqual(result["packages"][0]["sha256"], sp.sha(DEB))
+        self.assertEqual(result["packages"][0]["bytes"], len(DEB))
+        self.assertTrue(all("APT::Get::AllowUnauthenticated=false" in args for args in calls))
+        self.assertTrue(all("Acquire::AllowInsecureRepositories=false" in args for args in calls))
+        self.assertTrue(all("Acquire::AllowDowngradeToInsecureRepositories=false" in args for args in calls))
 
     def test_offline_install_verifies_entire_package_delta(self):
         result = lock(); marker = self.root / "system-image.json"
