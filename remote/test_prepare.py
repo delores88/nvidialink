@@ -350,6 +350,12 @@ class UnmetTests(Sandbox):
         dist(self.staging, "lib-e", "1.0", ['absent-pkg; python_version < "3"', 'pytest; extra == "test"'])
         self.assertEqual(self.unmet(), ([], []))
 
+    def test_unevaluable_marker_is_a_fixed_refusal(self):
+        import platform
+        dist(self.staging, "lib-f", "1.0", ['foo; platform_release >= "5"', 'bar; python_version ~= "abc"'])
+        with mock.patch.object(platform, "release", return_value="6.8.0-1015-nvidia"):
+            self.assertEqual(self.unmet(), (["sparkdev: refused: lib-f has an unevaluable requirement marker"] * 2, []))
+
 
 class PublishTests(Sandbox):
     def lock(self, runtime, text="tinylib==1.0" + HASH + "\n"):
@@ -419,6 +425,16 @@ class PublishTests(Sandbox):
             code, output = self.main("cuda")
         self.assertEqual(code, 65)
         self.assertIn("sparkdev: refused: tinylib requires absent-pkg, missing from requirements-cuda.lock", output)
+        self.assertFalse(self.final.exists())
+        self.assertEqual(self.leftovers(), [])
+
+    @unittest.skipUnless(HAVE_PIP, "pip's vendored packaging is not importable")
+    def test_cuda_unevaluable_marker_exits_65_without_publishing(self):
+        self.lock("cuda")
+        with self.pip(dists=(("tinylib", "1.0", ('bar; python_version ~= "abc"',)),)):
+            code, output = self.main("cuda")
+        self.assertEqual(code, 65)
+        self.assertIn("sparkdev: refused: tinylib has an unevaluable requirement marker", output)
         self.assertFalse(self.final.exists())
         self.assertEqual(self.leftovers(), [])
 

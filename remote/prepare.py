@@ -331,7 +331,13 @@ def unmet(staging, image):
             except InvalidRequirement:
                 refusals.append("sparkdev: refused: " + owner + " has an unreadable requirement")
                 continue
-            if requirement.marker is not None and not requirement.marker.evaluate({"extra": ""}):
+            try:
+                # A valid marker can still fail to evaluate here, for example `platform_release >= "5"`
+                # against "6.8.0-1015-nvidia" (InvalidVersion) or `~=` with a non-version (UndefinedComparison).
+                if requirement.marker is not None and not requirement.marker.evaluate({"extra": ""}):
+                    continue
+            except (ValueError, TypeError):
+                refusals.append("sparkdev: refused: " + owner + " has an unevaluable requirement marker")
                 continue
             name = normalize(requirement.name)
             if name in staged:
