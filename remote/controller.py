@@ -40,7 +40,7 @@ MAX_SMALL_TREE = 8 * GIB
 LARGE_FILE = 512 * CHUNK
 # Controller only.
 JOB_FILE_LIMIT = 4 * GIB  # Largest file a job may write (--ulimit fsize).
-DISK_RESERVE = 64 * GIB  # Free state-filesystem space kept back; below it syncs and admissions wait.
+DISK_RESERVE = 64 * GIB  # Free state-filesystem space kept back; syncs and uploads into it are refused, admissions wait.
 PUT_MANY_BODY = 12 * CHUNK
 INLINE_BYTES = 512 * CHUNK  # Snapshots needing at most this many new bytes assemble inside the RPC.
 # Seconds a sync RPC waits for a background snapshot, counted from controller process start.

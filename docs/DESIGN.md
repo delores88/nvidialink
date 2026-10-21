@@ -69,6 +69,8 @@ Persist `connection_mode` as `lan-only`, `remote-only`, or `both`, and `connecti
 
 Connect enables the saved route and checks it. Disconnect prevents new requests and admissions without deleting credentials/pairing or cancelling jobs. Already admitted independent jobs continue; an existing laptop worker retains its admitted transport snapshot for lease heartbeats. Fresh CLI/MCP processes honor the saved disconnected state. Configuration remains editable while disconnected; SSH bootstrap is a separate deliberate operation, not a prerequisite to every Connect click.
 
+The Spark's network link report (`status.network`, the `devices` Spark `network`) is observation only: it never changes route choice, fallback, admission or retry classification, and it carries no SSID, BSSID, MAC or IP address.
+
 ### Resource controls
 
 The resource pane exposes Spark per-job cores/memory, total CPU/memory, memory headroom, and per-client job/CPU quotas. The authenticated controller owns and persists the effective policy; clients read it back after saving. Detect physical CPU/memory bounds and validate all relationships. Defaults are starting values, not hidden immutable caps. Updated policy controls new requests/admissions; never kill running jobs to enforce a lower cap. Existing job resource snapshots remain inspectable. Disclose legacy project overrides and make explicitly saved per-job caps authoritative for subsequent jobs.
