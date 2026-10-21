@@ -1,6 +1,6 @@
 # Named model services
 
-The 0.4.0 candidate lets an agent load a model once on the Spark and call a named
+The 0.4.1 candidate lets an agent load a model once on the Spark and call a named
 HTTP service repeatedly. It does not publish a TCP port. Calls travel over the
 authenticated DGXBridge route and a private per-service request/reply spool.
 This page describes the candidate source contract, not a published installer,
@@ -82,6 +82,16 @@ per-client quotas do not block them. Build caches are read-only in a service.
 CUDA unified memory still needs the controller's memory watchdog; a container
 memory limit alone does not establish a hard GPU memory cap on the Spark.
 
+In a bounded physical GB10 test on 2026-10-21, a service reserved 8 GiB and its
+cgroup reported an 8 GiB limit, yet CUDA allocated and filled a 16 GiB tensor.
+PyTorch reported 16 GiB allocated and reserved while cgroup memory usage was
+about 391 MiB. Host `MemAvailable` fell from about 115.33 GiB to 98.54 GiB.
+The service was explicitly cancelled and reached terminal `cancelled` (exit 130);
+available memory recovered to 115.34 GiB. This confirms that Docker's RAM limit
+is not a hard GPU allocation limit on this host. The host-headroom watchdog is
+still required; this test did not force or verify a low-headroom watchdog kill.
+It used a CUDA tensor and a small HTTP adapter, not an LLM or TTS model.
+
 The default idle stop is 30 minutes, configurable with `--idle-minutes` from 5 to
 240. Idle requires no waiting calls. Lifetime is eight hours and startup is capped
 at 30 minutes. The worker also terminates its process group after lifetime plus
@@ -116,5 +126,7 @@ installed Spark without a corresponding physical receipt.
 
 Physical acceptance still needs first/repeat TTS latency over LAN and the paired
 route, private-network probes, large downloads, cache/token placement and the GB10
-memory-pressure test. Local fake-Docker and Linux filesystem tests are separate
+low-headroom watchdog termination test. The physical 16 GiB allocation above
+establishes the memory-cap limitation, not watchdog termination. Local fake-Docker
+and Linux filesystem tests are separate
 evidence; no speedup or remote-network success is implied by this implementation.

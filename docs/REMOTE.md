@@ -6,7 +6,7 @@ with one JSON request on stdin, then closes stdin. Responses are flat objects wi
 `ok:true`, or `ok:false,error:{code,message}`. Requests have `v:1`. The authenticated
 iroh adapter invokes this same fixed command. This program opens no network listener.
 
-Public job internet, shared downloads and named services below refer to the 0.4.0
+Public job internet, shared downloads and named services below refer to the 0.4.1
 development candidate. They need the matching Spark redeploy; source documentation
 is not evidence that a new installed or published release has these features.
 
@@ -87,7 +87,7 @@ images are only pulled/built during explicit owner provisioning, never job submi
 | `release` | `lease` | terminal laptop claim |
 
 A project ID is SHA-256 of the caller's canonical worktree path. Different worktrees
-have independent build caches and prepared environments. The 0.4.0 model/package
+have independent build caches and prepared environments. The 0.4.1 model/package
 download cache is shared by all worktrees in one owner trust domain. A manifest is a list of
 `{path,size,sha256,mode,chunks:[{sha256,size}]}`. Entries are path-sorted, then encoded
 as UTF-8 JSON with sorted object keys, no insignificant whitespace, and unescaped
@@ -278,6 +278,12 @@ does not isolate those files or make mutually untrusted projects safe to share i
 CUDA uses the same limits plus an active `MemAvailable` watchdog; on GB10 this is
 necessary because CUDA unified-memory allocations can evade the cgroup RAM limit.
 The watchdog depends on the running controller and is not a hardware memory quota.
+A bounded physical service test on 2026-10-21 allocated and filled a 16 GiB CUDA
+tensor under an 8 GiB cgroup limit: PyTorch reported 16 GiB allocated/reserved,
+but cgroup memory usage was about 391 MiB. The service was explicitly cancelled
+and memory recovered. Docker's memory cap therefore did not enforce a hard GPU
+allocation cap on this GB10. The test left ample host headroom and did not verify
+a watchdog kill under memory pressure; see [named services](SERVERS.md).
 
 Dependency preparation is a separate fixed job. Rust runs `cargo fetch --locked`,
 Node runs `npm ci --ignore-scripts`, and Python requires `requirements.lock` and
@@ -340,7 +346,7 @@ The scheduler removes only its own proxy/network when the preparation job termin
 
 ### Public job internet
 
-The 0.4.0 owner policy defaults to enabled when no `internet_policy` setting exists.
+The 0.4.1 owner policy defaults to enabled when no `internet_policy` setting exists.
 Normal jobs and services get their own internal Docker network, a Python-image
 public proxy and a deny file covering connected IPv4 prefixes and the Spark's
 local addresses. The proxy resolves a destination once, rejects the entire DNS

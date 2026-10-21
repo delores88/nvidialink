@@ -1,6 +1,6 @@
 # DGXBridge 0.4.0 backend handoff
 
-Candidate source handoff, 2026-10-20. The owner approved job internet, shared downloads, model servers and the Spark half of fastest-route together in 0.4.0; this supersedes the older specs' proposed deferrals. **This is not a deployment, release, installed-app or Marketplace acceptance receipt.**
+Historical backend handoff, 2026-10-20; integrated into the complete 0.4.1 candidate on 2026-10-21. The owner approved job internet, shared downloads, model servers and the Spark half of fastest-route together in 0.4.0; this supersedes the older specs' proposed deferrals. **This is not a deployment, release, installed-app or Marketplace acceptance receipt.**
 
 ## Scope and integration ownership
 
