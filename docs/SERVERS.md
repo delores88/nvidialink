@@ -26,8 +26,9 @@ interface. The `serve` command returns without waiting for model initialization.
 Retain start and call request IDs. After a connection interruption, repeat the
 same request with the same ID and payload; changing a known ID's input is an
 idempotency error. `call` polls in bounded requests up to its CLI timeout (default
-300 seconds); the MCP tool waits at most 45 seconds and can return a waiting
-request ID. A timeout is not permission to submit the same inference again under
+300 seconds); the MCP polling loop is capped at 45 seconds and can return a
+waiting request ID. Connection setup and individual transport overhead are
+additional. A timeout is not permission to submit the same inference again under
 a new ID. Responses are hash-checked, saved in local application state under
 `replies/<name>/`, and optionally copied to `--save`. Small JSON can also appear
 inline. CLI exit 0 means a 2xx application response; inspect other HTTP statuses
