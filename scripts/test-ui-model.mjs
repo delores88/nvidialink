@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,
+import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,plainReason,internetView,downloadsView,serviceView,jobFlags,jobInternet,laptopLink,sparkLink,
   FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses} from '../ui/model.mjs';
 import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
 import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
@@ -10,7 +10,7 @@ const lan={ok:true,devices:[{id:'spark',reachable:true,transport:{route:'lan_ssh
 test('connection is never claimed from reachability without authentication',()=>{
   const forged=structuredClone(lan);forged.devices[0].transport.authenticated=false;
   assert.equal(connectionView(forged,{}).connected,false);
-  assert.equal(connectionView(lan,{}).route,'Pinned SSH · LAN');
+  assert.equal(connectionView(lan,{}).route,'Same network');
 });
 test('address used names the dialed host and its configured position whatever its source',()=>{
   const config={ssh_alias:'my-spark',hosts:['192.0.2.186','192.0.2.187']};
@@ -41,11 +41,11 @@ test('disconnection wins over a stale successful observation and legacy mode mig
 });
 test('paired routing does not invent relay or hotspot proof',()=>{
   const remote=structuredClone(lan);remote.devices[0].transport.route='paired_iroh';
-  assert.equal(connectionView(remote,{connection_mode:'both'}).route,'Paired connection · path unknown');
+  assert.equal(connectionView(remote,{connection_mode:'both'}).route,'Remote link');
 });
 test('changing mode invalidates a previously observed forbidden route during refresh',()=>{
   const state=connectionView(lan,{connection_mode:'remote-only'});
-  assert.equal(state.connected,false);assert.equal(state.state,'error');assert.match(state.reason,/fresh connection check/);assert.notEqual(state.route,'Pinned SSH · LAN');
+  assert.equal(state.connected,false);assert.equal(state.state,'error');assert.match(state.reason,/Checking again/);assert.notEqual(state.route,'Same network');
   assert.equal(connectionView(null,{connection_mode:'remote-only'},true).state,'connecting');
   const remote=structuredClone(lan);remote.devices[0].transport.route='paired_iroh';
   assert.equal(connectionView(remote,{connection_mode:'lan-only'}).connected,false);
@@ -66,7 +66,7 @@ test('resource editor rejects impossible budgets and missing fields before calli
   assert.throws(()=>resourcePolicy(form({...valid,cpu_total:2.5})),/whole/);
   assert.throws(()=>resourcePolicy(new Map()),/whole/);
   assert.throws(()=>resourcePolicy(form(valid),{cpu_count:12,memory_gb:119}),/12 CPU cores/);
-  assert.throws(()=>resourcePolicy(form({...valid,headroom_gb:60}),{cpu_count:20,memory_gb:119}),/plus headroom/);
+  assert.throws(()=>resourcePolicy(form({...valid,headroom_gb:60}),{cpu_count:20,memory_gb:119}),/plus memory kept free/);
 });
 test('Builds first has the reviewed Spark budget and presets scale down within observed hardware',()=>{
   assert.deepEqual(resourcePreset('builds-first',{cpu_count:20,memory_gb:119}),{cpu_per_job:16,memory_gb_per_job:32,cpu_total:18,memory_gb_total:80,client_jobs:4,client_cpu:16,headroom_gb:32});
@@ -134,7 +134,7 @@ test('Find my Spark is offered only when an owner search can run, and suggested 
   const config={ssh_alias:'fixture-spark',hosts:['192.0.2.20'],connection_mode:'both',connection_enabled:true};
   const ready=findSparkControl({config,connection:connectionView(lan,config)});
   assert.deepEqual(ready,{disabled:false,reason:'',suggested:false});
-  for(const [state,pattern] of [[{config:null},/Save your SSH connection/],[{config:{...config,connection_enabled:false}},/Connect first/],[{config:{...config,connection_mode:'remote-only'}},/LAN only or Both/]]){
+  for(const [state,pattern] of [[{config:null},/Save your SSH connection/],[{config:{...config,connection_enabled:false}},/Connect first/],[{config:{...config,connection_mode:'remote-only'}},/Same network only or Automatic/]]){
     const control=findSparkControl(state);assert.equal(control.disabled,true);assert.match(control.reason,pattern);assert.equal(control.suggested,false);
   }
   assert.equal(findSparkControl({config,connecting:true}).disabled,true);
@@ -165,7 +165,7 @@ test('Find my Spark results show only sanitized found addresses, plain notes and
   const view=discoveryView(result,config);
   assert.deepEqual(view.rows.map(row=>[row.host,row.adapterLabel,row.mediumLabel,row.configuredIndex,row.alreadyFirst]),[['192.0.2.41','Ethernet','wired',1,false],['192.0.2.40','network adapter','Wi-Fi',null,false]]);
   assert.match(view.rows[0].detail,/this laptop's Ethernet \(wired\) · saved as LAN address 2/);
-  assert.match(view.summary,/2 addresses/);assert.match(view.summary,/cannot yet tell which one is the Spark's wired connection/);
+  assert.match(view.summary,/2 addresses/);assert.match(view.summary,/connection type is not reported/);
   assert.deepEqual(view.conflicts,['192.0.2.20']);assert.equal(view.loginRejected,2);assert.equal(view.localKeyError,1);assert.equal(view.pinHint,false);assert.equal(view.emptyReason,'');
   const notes=view.notes.join('\n');
   assert.match(notes,/192\.0\.2\.20 now answers as a different SSH device/);assert.match(notes,/2 addresses refused the SSH login/);assert.match(notes,/file permissions/);assert.match(notes,/3 other SSH devices answered and were left alone/);assert.match(notes,/4 addresses could not be checked in time/);assert.match(notes,/1 more address answered but was not checked/);
@@ -250,4 +250,42 @@ test('Spark link: slow 2.4 GHz Wi-Fi warns, wired and missing reports do not', a
   assert.equal(wired.slow, false); assert.equal(wired.label, 'Wired · 10 Gbps'); assert.equal(wired.warning, '');
   assert.equal(sparkLink(obs(null)), null); assert.equal(sparkLink(obs({v: 2})), null);
   assert.equal(sparkLink(obs({v: 1, observed: false, basis: 'unknown'})).warning, '');
+});
+
+test('stale status is reconnecting briefly, never connected, and authentication failures stop immediately',()=>{
+  const health={failures:1,lastGoodAt:Date.now()/1000};
+  assert.equal(connectionView(lan,{},false,health).state,'reconnecting');assert.equal(connectionView(lan,{},false,health).connected,false);
+  assert.equal(connectionView(lan,{},false,{...health,failures:2}).state,'error');
+  assert.equal(connectionView({error:{code:7,message:'pin mismatch'}},{},false,health).state,'error');
+  const attempts={transport:{attempted_routes:[{route:'lan_ssh',attempted:true,status:'host_unreachable'},{route:'paired_iroh',attempted:true,status:'authentication_failed'}]}};
+  const reason=plainReason({spark:attempts});assert.match(reason.text,/stopped to keep you safe/);assert.equal(reason.action,null);
+});
+test('internet and saved downloads distinguish old bridges, saved settings, unavailable tools and queued cleanup',()=>{
+  assert.equal(internetView(null).known,false);assert.equal(internetView({v:2,enabled:true,available:true}).known,false);
+  assert.equal(internetView({enabled:true,available:false}).enabled,true);assert.match(internetView({enabled:true,available:false}).label,/unavailable/);
+  assert.equal(internetView({enabled:false,available:true}).label,'Off');assert.equal(jobInternet({internet:'cut_by_owner'}),'Turned off by owner');
+  assert.equal(downloadsView({v:1,used_bytes:null}).label,'Measuring…');assert.equal(downloadsView({v:1,used_bytes:0}).label,'No saved downloads');
+  assert.match(downloadsView({v:1,used_bytes:1024,clear_pending:true}).note,/queued/);assert.match(downloadsView({v:1,free_bytes:1,floor_bytes:2}).note,/Low disk space/);
+});
+test('named services stay distinct from slow batch jobs, and a queue does not claim memory as its only cause',()=>{
+  const job={job:'j1',kind:'service',name:'speech',state:'running',service_state:'ready',created_at:1,started_at:2,idle_seconds:300};
+  assert.equal(serviceView(job).state,'Ready');assert.match(serviceView(job).note,/5 minutes/);assert.equal(jobFlags(job,90000).some(f=>f.label==='Active for a long time'),false);
+  assert.equal(serviceView({...job,state:'queued',service_state:'waiting for memory'}).state,'Waiting');
+  assert.match(serviceView({...job,state:'cancelled',stop_reason:'manual'}).reason,/request/);
+});
+test('Spark and laptop link rates keep distinct provenance and actionable cable warnings',()=>{
+  const observation={devices:[{id:'spark',transport:{route:'lan_ssh',authenticated:true,lan_path:{kind:'wifi',speed_mbps:72,faster_unanswered:true}}},{id:'laptop',network:{available:true,route_known:true,interface:{kind:'wired',transmit_link_speed_mbps:2500},speed_is_link_rate:true}}]};
+  assert.match(sparkLink(observation).warning,/did not answer/);assert.equal(sparkLink(observation).action,'find');
+  assert.match(laptopLink(observation).label,/Wired.*2.5 Gbps link rate/);assert.match(laptopLink(observation).note,/not measured upload speed/);
+  observation.devices[0].transport.lan_path={kind:'wifi',cable_elsewhere:true};assert.match(sparkLink(observation).warning,/different network/);
+  assert.equal(laptopLink({}).label,'Not reported');
+  observation.devices[1].network.interface={kind:'wired',transmit_link_speed_mbps:100,usb_adapter_hint:true};observation.devices[1].network.usb_advice='Windows does not report the negotiated USB generation.';assert.match(laptopLink(observation).label,/USB Ethernet.*100 Mbps/);assert.equal(laptopLink(observation).slow,true);assert.match(laptopLink(observation).note,/may limit uploads/);assert.match(laptopLink(observation).note,/does not report/);
+  observation.devices[1].network.interface.transmit_link_speed_mbps=2500;assert.equal(laptopLink(observation).slow,false);assert.doesNotMatch(laptopLink(observation).note,/may limit uploads/);
+  const found=discoveryView({found:[{host:'192.0.2.41',adapter:'Laptop Wi-Fi',medium:'wifi',spark_kind:'wired',speed_mbps:1000,preselected:true},{host:'192.0.2.42',adapter:'Laptop Wi-Fi',medium:'wifi',spark_kind:'wifi',speed_mbps:72,preselected:false}]});assert.equal(found.rows[0].recommended,true);assert.match(found.rows[0].detail,/laptop's Laptop Wi-Fi.*Spark wired/);assert.match(found.summary,/recent authenticated report/);assert.doesNotMatch(found.summary,/cannot yet tell/);
+});
+test('agent prompts are compact, safe snapshots and cover real internet, cache and service contracts',()=>{
+  for(const agent of ['codex','claude']){
+    const text=agentPrompt({agent,path:'C:/Program Files/DGXBridge/bin/sparkdev.exe',stateRoot:'C:/Users/Example/AppData/Local/SparkDevBridge',config:{hosts:['192.0.2.10'],identity_file:'C:/keys/spark',connection_mode:'both'},limits:valid});
+    assert.ok(text.length<5000);assert.match(text,/Snapshot from when this was copied/);assert.match(text,/Use a NEW ID to rerun a failed job/);assert.match(text,/materializing/);assert.match(text,/--no-cache reruns work but keeps saved downloads/);assert.match(text,/preparable_runtimes/);assert.match(text,/call NAME --input FILE --request-id CALL_ID/);assert.doesNotMatch(text,/Wi-Fi|2\.4 GHz/);
+  }
 });

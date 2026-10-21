@@ -28,7 +28,7 @@ export function createConnectionVisual(host) {
       if(previous==='offline'&&health==='online')reconnectedAt=now;
       previous=health;
       // No throughput, latency, GPU utilization, transfer position or relay claim is synthesized.
-      input={health,path:connection.connected&&connection.route==='Pinned SSH · LAN'?'lan':null,reduced};
+      input={health,path:connection.connected?connection.path:null,reduced};
       const snapping=health==='offline'&&lostAt!==null&&now-lostAt<1800;
       const active=!reduced&&(health==='online'||snapping);
       host.dataset.motion=active?'live':'static';host.dataset.state=health;

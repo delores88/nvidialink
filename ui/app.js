@@ -2,7 +2,7 @@ import {qrArt,eyeRing,eyePupil,alignRing,alignDot,sparkPath,checkPoints} from '.
 import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vendor/sparkParticles.mjs';
 import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
   isActiveJob,jobId,jobRunner,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
-  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,ROUTE_WORDS} from './model.mjs';
+  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,plainError,TOOL_LABELS,serviceView,INTERNET_COPY,internetView,downloadsView,jobInternet,formatGiB,laptopLink} from './model.mjs';
 import {createConnectionVisual} from './connection-visual.mjs';
 const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__.core.invoke(name,args);
@@ -15,12 +15,16 @@ let resourceHardware=null,resourceDirty=false,resourceBusy=false,resourceReady=f
 let boardJobs=[],pageIndex=0,jobFilter='all',jobQuery='',selectedJob=null,logState=null,logTimer=null,cancelArmed=null;
 let updateTimer=null,updateBusy=false,update={status:'idle'},messageTimer=null;
 let findBusy=false,findMessage=null;
+let refreshPromise=null,refreshAgain=false,lastGoodObservation=null,lastFailure=null,health={failures:0,lastGoodAt:0};
+let internet=null,downloads=null,extrasEpoch=0,downloadsBusy=false,clearArmed=false,downloadsDirty=false,internetBusy=false,internetMessage='',downloadsMessage='';
+const logCache=new Map(),jobCache=new Map();
 const visuals=[createConnectionVisual($('connection-visual'))];
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!=null)node.textContent=text;return node;}
 function message(text){clearTimeout(messageTimer);$('message').textContent=text||'';$('message').hidden=!text;if(text)messageTimer=setTimeout(()=>{$('message').hidden=true;},7000);}
-function requireOk(value){if(value?.ok===false)throw new Error(value.error?.message||value.message||'The operation did not complete.');return value;}
+function requireOk(value){if(value?.ok===false){const error=new Error(value.error?.message||value.message||'The operation did not complete.');error.code=value.error?.code??value.code;error.kind=value.error?.kind??value.kind;throw error;}return value;}
 async function command(args){return requireOk(await invoke('cli',{args}));}
-const failure=error=>String(error?.message||error||'The operation did not complete.');
+const failure=plainError;
+const connectionState=()=>connectionView(lastFailure||observation,savedConfig,connecting,health);
 async function busy(button,action){if(button.disabled)return;button.disabled=true;try{await action();}catch(error){message(failure(error));}finally{button.disabled=false;}}
 
 // Theme follows CodaClauda: dark by default, remembered per viewer when storage is available.
@@ -28,42 +32,66 @@ function applyTheme(theme){document.documentElement.dataset.theme=theme;const li
 try{applyTheme(localStorage.getItem('dgxbridge-theme')==='light'?'light':'dark');}catch{applyTheme('dark');}
 $('theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';applyTheme(next);try{localStorage.setItem('dgxbridge-theme',next);}catch{}});
 
-const TITLES={overview:'Jobs',connection:'Spark connection',resources:'Build limits',agents:'Agent setup'};
-function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits)readResources();if(name==='connection')readPairState();}
+const TITLES={overview:'Jobs',connection:'Spark connection',resources:'Job settings',agents:'Agent setup'};
+function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name==='connection')readPairState();}
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.agentChoice){agent=button.dataset.agentChoice;renderAgents();}view(button.dataset.view);}));
 
 // Connection
-const STATE_LABELS={connected:'Spark connected',disconnected:'Disconnected',connecting:'Connecting…',error:'Needs attention',unavailable:'Spark unavailable'};
+const STATE_LABELS={connected:'Spark connected',disconnected:'Disconnected',connecting:'Connecting…',reconnecting:'Reconnecting…',error:'Needs attention',unavailable:'Spark unavailable'};
 function renderConnection(){
-  const state=connectionView(observation,savedConfig,connecting),spark=observation?.devices?.find(device=>device.id==='spark'),used=routeAddress(observation,savedConfig);
+  const state=connectionState(),spark=observation?.devices?.find(device=>device.id==='spark'),used=routeAddress(observation,savedConfig);
   const unconfigured=!savedConfig&&state.state==='error',shown=unconfigured?'unavailable':state.state,label=unconfigured?'Spark not set up':STATE_LABELS[state.state];
   document.querySelectorAll('[data-connection-state]').forEach(el=>el.textContent=label);
   document.querySelectorAll('[data-connection-dot]').forEach(el=>el.dataset.state=shown);
   document.querySelectorAll('[data-connection-link]').forEach(el=>el.dataset.state=shown);
   document.querySelectorAll('[data-mode-label]').forEach(el=>el.textContent=MODE_LABELS[state.mode]);
   document.querySelectorAll('[data-spark-name]').forEach(el=>el.textContent=savedConfig?.ssh_alias||'Your Spark');
-  const routeText=state.connected?(used?`${state.route} · ${used.address}`:state.route):unconfigured?'Save an SSH connection to start':label;
+  const routeText=state.connected?state.route:unconfigured?'Set up your Spark to start':label;
   document.querySelectorAll('[data-connection-route]').forEach(el=>el.textContent=routeText);
-  const note=!state.enabled?'New requests are paused. Running jobs and the saved pairing are unchanged.':state.connected?(state.schedulerHealthy?'Authenticated, and the shared scheduler is responding.':'Authenticated, but the scheduler did not report healthy. New jobs may not be admitted.'):(state.reason||'Save your SSH connection, then connect.');
-  const linkNow=sparkLink(observation),fullNote=linkNow?.warning?`${note} ${linkNow.warning}`:note;
+  const note=!state.enabled?'New requests are paused. Running jobs and the saved pairing are unchanged.':state.connected?(state.schedulerHealthy?'Your Spark is connected and ready for jobs.':'Connected, but the Spark job service is not responding. New jobs may have to wait.'):(state.reason||'Set up your Spark, then connect.');
+  const fullNote=health.failures&&lastGoodObservation?`${note} Last successful check: ${relativeTime(health.lastGoodAt)}.`:note;
   document.querySelectorAll('[data-connection-note]').forEach(el=>el.textContent=fullNote);
   $('connection-toggle').textContent=state.enabled?'Disconnect':'Connect';$('connection-toggle').className=`button ${state.enabled?'secondary':'primary'}`;$('connection-toggle').disabled=connecting||!savedConfig;
-  const transport=spark?.transport||{},heartbeat=Number(spark?.scheduler?.last_heartbeat),hardware=spark?.hardware;
+  const heartbeat=Number(spark?.scheduler?.last_heartbeat),hardware=spark?.hardware;
   const link=sparkLink(observation);
-  const facts=[['Connected through',state.connected?(ROUTE_WORDS[state.route]||state.route):'Not connected'],['Spark network',link?link.label:'Update the Spark bridge to see this'],['Address used',routeAddressLabel(used)],['Job service',spark?.scheduler?(spark.scheduler.healthy?'Running':'Not responding'):'Not checked'],['Last heard from',Number.isFinite(heartbeat)&&heartbeat>0?relativeTime(heartbeat,observation?.observed_at):'—'],['Spark hardware',hardware?.cpu_count?`${hardware.cpu_count} CPU cores · ${hardware.memory_gb} GiB`:'Not observed'],['Last check',observation?.observed_at?relativeTime(observation.observed_at):'Not checked']];
-  if(transport.reason&&!state.connected)facts.push(['Reason',transport.reason]);
-  renderFacts($('route-facts'),facts);
+  const laptopNetwork=laptopLink(observation);
+  const facts=[['Connected through',state.route],['Spark network',state.connected&&link?link.label:state.connected?'Not reported':'Not connected'],['Laptop network',laptopNetwork.label],['Job service',state.connected&&spark?.scheduler?(spark.scheduler.healthy?'Running':'Not responding'):'Not checked'],['Spark hardware',hardware?.cpu_count?`${hardware.cpu_count} CPU cores · ${hardware.memory_gb} GiB`:'Not observed'],['Last successful check',health.lastGoodAt?relativeTime(health.lastGoodAt):'Not checked']];
+  renderFacts($('route-facts'),facts);$('laptop-network-note').textContent=laptopNetwork.note;$('laptop-network-note').classList.toggle('link-warning',laptopNetwork.slow===true);
+  renderFacts($('route-details'),[['Address used',routeAddressLabel(used)],['Last heard from',Number.isFinite(heartbeat)&&heartbeat>0?relativeTime(heartbeat,observation?.observed_at):'Not reported'],...state.details]);
+  $('spark-network-warn').hidden=!state.connected||!link?.warning;$('spark-network-text').textContent=link?.warning||'';$('check-cable').hidden=link?.action!=='find';
+  $('network-note').hidden=state.connected||!state.action;$('network-note-text').textContent=state.action==='find'?"Can't reach your Spark here. Find it on this network?":state.reason;
+  $('connection-help').textContent={find:'Find my Spark',repair:'Open repair',setup:'Set up connection',pair:'Pair this laptop',connect:'Connect'}[state.action]||'Check connection';
+  const iv=internetView(internet),dv=downloadsView(downloads);$('spark-extras').replaceChildren(element('span',null,`Job internet: ${iv.label}`),element('span',null,`Saved downloads: ${dv.label}`));
   visuals.forEach(visual=>visual.render(state,reduced));renderAgents();renderFindControls();
 }
 function renderFacts(list,facts){list.replaceChildren(...facts.flatMap(([term,value,className])=>{const wrap=element('div',className||'');wrap.append(element('dt',null,term),element('dd',null,value));return [wrap];}));}
-async function refresh(){if(refreshing)return;refreshing=true;$('refresh').disabled=true;$('refresh').classList.add('spinning');try{observation=await command(['devices']);boardJobs=jobsFrom(observation);$('connection-detail').textContent=JSON.stringify(observation,null,2);}catch(error){observation={ok:false,error:{message:failure(error)}};$('connection-detail').textContent=failure(error);}finally{refreshing=false;$('refresh').disabled=false;$('refresh').classList.remove('spinning');renderConnection();renderBoard();}}
+function acceptExtras(result){const spark=result?.devices?.find(d=>d.id==='spark');if(spark){internet=spark.internet??null;downloads=spark.downloads??null;}else{if(Object.hasOwn(result||{},'internet'))internet=result.internet;if(Object.hasOwn(result||{},'downloads'))downloads=result.downloads;}renderExtras();}
+async function refresh(){
+  if(refreshPromise){refreshAgain=true;return refreshPromise;}
+  refreshPromise=(async()=>{do{
+    refreshAgain=false;const generation=resourceGeneration,epoch=extrasEpoch;refreshing=true;$('refresh').disabled=true;$('refresh').classList.add('spinning');
+    try{
+      const result=await command(['devices']);if(generation!==resourceGeneration){refreshAgain=true;continue;}
+      const spark=result?.devices?.find(d=>d.id==='spark'),good=spark?.reachable===true&&spark.transport?.authenticated===true;
+      if(!good&&savedConfig?.connection_enabled!==false&&lastGoodObservation){lastFailure=result;health.failures++;observation=lastGoodObservation;}
+      else{observation=result;lastFailure=null;boardJobs=jobsFrom(result);for(const job of boardJobs)jobCache.set(jobId(job),job);if(good){lastGoodObservation=result;health={failures:0,lastGoodAt:Date.now()/1000};}else health={failures:0,lastGoodAt:0};}
+      if(epoch===extrasEpoch&&!resourceBusy&&!downloadsBusy&&good)acceptExtras(result);
+      $('connection-detail').textContent=JSON.stringify(result,null,2);
+    }catch(error){if(generation!==resourceGeneration){refreshAgain=true;continue;}health.failures++;lastFailure={ok:false,error:{message:error.message||String(error),code:error.code,kind:error.kind}};observation=lastGoodObservation||lastFailure;$('connection-detail').textContent=error.message||String(error);}
+    finally{renderConnection();renderBoard();renderExtras();}
+  }while(refreshAgain);})().finally(()=>{refreshPromise=null;refreshing=false;$('refresh').disabled=false;$('refresh').classList.remove('spinning');});
+  return refreshPromise;
+}
+$('connection-help').addEventListener('click',()=>{const action=connectionState().action;if(action==='find')$('find-spark').click();else if(action==='connect')$('connection-toggle').click();else if(action==='setup'){$('ssh-settings').open=true;$('ssh-settings').scrollIntoView({block:'start'});}else if(action==='repair')$('bootstrap').scrollIntoView({block:'center'});else if(action==='pair')$('start-pair').scrollIntoView({block:'center'});});
+$('check-cable').addEventListener('click',()=>busy($('check-cable'),async()=>{await refresh();await refresh();message(connectionState().connected?'Connection choices checked. The displayed route is the one that answered.':"The Spark didn't confirm a connection. Check the status above before trying again.");}));
 $('refresh').addEventListener('click',refresh);
 
 // Jobs
 function renderBoard(){
-  const summary=boardSummary(observation,boardJobs),state=connectionView(observation,savedConfig,connecting),active=summary.sparkRunning+summary.sparkQueued+summary.laptopActive;
-  $('activity-label').textContent=active?`${active} active ${active===1?'job':'jobs'}`:'No active jobs';$('activity-dot').dataset.active=String(active>0);
+  const summary=boardSummary(observation,boardJobs),state=connectionState(),active=summary.sparkRunning+summary.sparkQueued+summary.laptopActive;
+  $('activity-label').textContent=(health.failures?'Last seen: ':'')+(active?`${active} active ${active===1?'job':'jobs'}`:health.failures?'no active jobs':observation?.ok===false?'Jobs unavailable':'No active jobs');$('activity-dot').dataset.active=String(active>0);
   $('nav-active').hidden=!active;$('nav-active').textContent=active>9?'9+':String(active);
+  $('laptop-network').textContent=laptopLink(observation).label;
   $('laptop-jobs').textContent=`${summary.laptopActive} active`;
   const slots=summary.laptopLimit;$('laptop-meter-fill').style.width=`${slots?Math.min(100,summary.laptopActive/slots*100):0}%`;$('laptop-meter').setAttribute('aria-label',slots?`${summary.laptopActive} of ${slots} laptop job slots in use`:'Laptop job slots not reported');
   $('laptop-foot').textContent=slots?`${summary.laptopActive} of ${slots} job slots in use${summary.laptopThreads?` · ${summary.laptopThreads} logical CPUs`:''} · no enforced caps`:'Native jobs run as you, without enforced CPU or memory caps.';
@@ -71,7 +99,7 @@ function renderBoard(){
   const budget=summary.cpuBudget;$('spark-meter-fill').style.width=`${budget?Math.min(100,summary.reservedCpu/budget*100):0}%`;$('spark-meter').setAttribute('aria-label',budget?`${summary.reservedCpu} of ${budget} budgeted CPU cores reserved by running jobs`:'Spark CPU budget not observed');
   const slowLink=sparkLink(observation);
   if(state.connected&&slowLink?.warning){$('spark-foot').textContent=slowLink.warning;$('spark-foot').dataset.warn='true';}else{delete $('spark-foot').dataset.warn;
-  $('spark-foot').textContent=!state.connected?'Linux builds, tests and compute. Connect to see the scheduler.':budget?`Reserved ${summary.reservedCpu}/${budget} cores · ${summary.reservedMemory}/${summary.memoryBudget??'—'} GiB by running jobs${summary.heartbeatAge!=null?` · scheduler seen ${relativeTime(Number(observation.observed_at)-summary.heartbeatAge,observation.observed_at)}`:''}`:'Scheduler responding. Budgets not reported.';}
+  $('spark-foot').textContent=!state.connected?'Linux builds, tests and compute. Connect to see the scheduler.':budget?`Running jobs have ${summary.reservedCpu} of ${budget} cores and ${summary.reservedMemory} of ${summary.memoryBudget??'—'} GiB set aside${summary.heartbeatAge!=null?` · scheduler seen ${relativeTime(Number(observation.observed_at)-summary.heartbeatAge,observation.observed_at)}`:''}`:'Scheduler responding. Budgets not reported.';}
   renderJobs();
 }
 function stateLabel(state){return state?state[0].toUpperCase()+state.slice(1):'Unknown';}
@@ -86,8 +114,8 @@ function renderJobs(){
     const id=jobId(job),outcome=jobOutcome(job),runner=jobRunner(job),flags=jobFlags(job,now);
     const item=element('li');const button=element('button','job-row');button.type='button';button.dataset.job=id;button.dataset.outcome=outcome.kind;if(id===selectedJob)button.setAttribute('aria-current','true');
     button.setAttribute('aria-label',`Job ${id}, ${clientLabel(job.client)}, ${runner}, ${job.state||'unknown'}, ${outcome.label}`);
-    const top=element('span','job-row-top');const state=element('span','job-state');state.dataset.state=job.state||'unknown';state.title=stateLabel(job.state);top.append(state,element('span','job-id',id.slice(0,12)||'—'),element('span','job-time',relativeTime(job.created_at,now)));
-    const bottom=element('span','job-row-meta');const who=element('span',`client-tag client-${job.client||'unknown'}`,clientLabel(job.client));bottom.append(who,element('span','runner-tag',runner==='laptop'?'Laptop':'Spark'));if(job.runtime)bottom.append(element('span','meta-text',job.runtime));
+    const top=element('span','job-row-top');const state=element('span','job-state');state.dataset.state=job.state||'unknown';state.title=stateLabel(job.state);top.append(state,element('span','job-id',job.kind==='service'?serviceView(job).name:id.slice(0,12)||'—'),element('span','job-time',relativeTime(job.created_at,now)));
+    const bottom=element('span','job-row-meta');const who=element('span',`client-tag client-${job.client||'unknown'}`,clientLabel(job.client));bottom.append(who,element('span','runner-tag',runner==='laptop'?'Laptop':'Spark'));if(job.kind==='service')bottom.append(element('span','service-name',`Model server · ${serviceView(job).state}`));else if(job.runtime)bottom.append(element('span','meta-text',TOOL_LABELS[job.runtime]||job.runtime));
     const result=element('span',`outcome outcome-${outcome.kind}`,outcome.label);bottom.append(result);
     if(flags.some(flag=>flag.kind==='warn')){const warn=element('span','row-warn','!');warn.title=flags.filter(flag=>flag.kind==='warn').map(flag=>flag.label).join(', ');bottom.append(warn);}
     button.append(top,bottom);button.addEventListener('click',()=>selectJob(id));item.append(button);list.append(item);
@@ -98,54 +126,54 @@ $('previous-page').addEventListener('click',()=>{pageIndex--;renderJobs();});$('
 document.querySelectorAll('[data-filter]').forEach(button=>button.addEventListener('click',()=>{jobFilter=button.dataset.filter;pageIndex=0;document.querySelectorAll('[data-filter]').forEach(el=>el.setAttribute('aria-pressed',String(el===button)));renderJobs();}));
 $('job-search').addEventListener('input',event=>{jobQuery=event.target.value;pageIndex=0;renderJobs();});
 document.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();view('overview');$('job-search').focus();}if(event.key==='F5'){event.preventDefault();refresh();}if(event.key==='Escape'&&selectedJob&&currentView==='overview'&&!document.querySelector('dialog[open]'))selectJob(null);});
-function selectJob(id){if(selectedJob!==id){selectedJob=id;cancelArmed=null;stopLogFollow();logState=id?{job:id,text:'',offset:0,loading:false,error:''}:null;}renderJobs();if(id)loadLogs(true);}
+function selectJob(id){if(selectedJob!==id){selectedJob=id;cancelArmed=null;stopLogFollow();logState=id?(logCache.get(id)||{job:id,text:'',offset:0,loading:false,error:'',decoder:new TextDecoder()}):null;if(id)logCache.set(id,logState);}renderJobs();if(id)loadLogs(false);}
 $('close-job').addEventListener('click',()=>selectJob(null));
 function renderJobDetail(){
-  const job=boardJobs.find(item=>jobId(item)===selectedJob);
+  const job=boardJobs.find(item=>jobId(item)===selectedJob)||jobCache.get(selectedJob);
   $('job-welcome').hidden=!!job;$('job-view').hidden=!job;
   if(!job){if(selectedJob&&boardJobs.length){/* Selected job left the board; keep its retained output visible. */}return;}
   const now=Number(observation?.observed_at)||Date.now()/1000,outcome=jobOutcome(job),runner=jobRunner(job);
-  $('detail-state').dataset.state=job.state||'unknown';$('detail-state').textContent=stateLabel(job.state);$('detail-id').textContent=jobId(job);
+  $('detail-state').dataset.state=job.state||'unknown';$('detail-state').textContent=serviceView(job)?.state||stateLabel(job.state);$('detail-id').textContent=serviceView(job)?`Model server · ${serviceView(job).name}`:jobId(job);
   const flags=$('detail-flags');flags.replaceChildren(...jobFlags(job,now).map(flag=>{const node=element('div',`flag flag-${flag.kind}`);node.append(element('strong',null,flag.label),element('span',null,flag.detail));return node;}));
   const started=Number(job.started_at),finished=Number(job.finished_at),cpu=job.reserved_cpu??job.cpu,memory=job.reserved_memory_gb??job.memory_gb;
-  const facts=[['Workload result',outcome.label,`fact-outcome outcome-${outcome.kind}`],['Submitted by',`${clientLabel(job.client)} (self-declared)`],['Runner',runner==='laptop'?'This laptop':'Spark'],['Runtime',job.runtime||'—'],['Reserved',cpu!=null?`${cpu} CPU · ${memory??'—'} GiB`:runner==='laptop'?'Not capped (native)':'—'],['Queued',relativeTime(job.created_at,now)],['Run time',Number.isFinite(started)&&started>0?duration((Number.isFinite(finished)&&finished>0?finished:now)-started)+(isActiveJob(job)?' so far':''):'Not started']];
-  if(job.request_id)facts.push(['Request ID',String(job.request_id)]);
-  if(job.cached_from)facts.push(['Cached from',String(job.cached_from).slice(0,16)]);
+  const service=serviceView(job);
+  const facts=[['Result',service?service.state:outcome.label,`fact-outcome outcome-${outcome.kind}`],['Submitted by',`${clientLabel(job.client)} (self-declared)`],['Runs on',runner==='laptop'?'This laptop':'Spark'],['Tools',TOOL_LABELS[job.runtime]||job.runtime||'Not reported'],['Set aside',cpu!=null?`${cpu} cores · ${memory??'—'} GiB`:runner==='laptop'?'No enforced limits':'Not reported'],['Internet',jobInternet(job)],['Downloaded',formatGiB(job.internet_use?.bytes_down)],['Queued',relativeTime(job.created_at,now)],['Run time',Number.isFinite(started)&&started>0?duration((Number.isFinite(finished)&&finished>0?finished:now)-started)+(isActiveJob(job)?' so far':''):'Not started']];
   renderFacts($('detail-facts'),facts);
-  const cancellable=isActiveJob(job)&&!job.cancel_requested;$('cancel-job').hidden=!cancellable;$('cancel-job').querySelector('span').textContent=cancelArmed===jobId(job)?'Confirm cancel':'Cancel job';$('cancel-job').classList.toggle('armed',cancelArmed===jobId(job));
+  const more=[['Job ID',jobId(job)],['Request ID',job.request_id||'Not reported'],['Reported state',job.state||'Unknown']];if(job.cached_from)more.push(['Reused job',String(job.cached_from)]);if(job.error)more.push(['Reported error',typeof job.error==='string'?job.error:job.error.message||job.error.code]);if(job.internet_reason)more.push(['Internet report',job.internet_reason]);if(job.stop_reason)more.push(['Stop reason',job.stop_reason]);renderFacts($('detail-more'),more);
+  $('service-note').hidden=!service;$('service-note').textContent=service?[service.reason,service.note].filter(Boolean).join('. '):'';
+  const cancellable=isActiveJob(job)&&!job.cancel_requested;$('cancel-job').hidden=!cancellable;$('cancel-job').querySelector('span').textContent=cancelArmed===jobId(job)?'Confirm cancel':service?'Stop server':'Cancel job';$('cancel-job').classList.toggle('armed',cancelArmed===jobId(job));
   renderLog();
   if(isActiveJob(job))startLogFollow();else stopLogFollow();
 }
-function renderLog(){if(!logState)return;$('job-output').textContent=logState.error||logState.text||(logState.loading?'Loading retained output…':'No output recorded yet.');$('log-meta').textContent=logState.offset?`${(logState.offset/1024).toFixed(1)} KiB retained${logTimer?' · following':''}`:logTimer?'Following':'';}
-function decodeLog(result){if(typeof result.data==='string'){try{return new TextDecoder().decode(Uint8Array.from(atob(result.data),c=>c.charCodeAt(0)));}catch{}}return typeof result.text==='string'?result.text:'';}
-async function loadLogs(reset=false){
-  const state=logState;if(!state||state.loading)return;if(reset){state.text='';state.offset=0;}state.loading=true;state.error='';renderLog();
-  try{const result=await command(['logs',state.job,'--since',String(state.offset)]);if(logState!==state)return;const chunk=decodeLog(result);state.text+=chunk;if(Number.isSafeInteger(result.next_offset))state.offset=result.next_offset;else state.offset+=new TextEncoder().encode(chunk).length;const pre=$('job-output'),atEnd=pre.scrollHeight-pre.scrollTop-pre.clientHeight<40;state.loading=false;renderLog();if(atEnd||reset)pre.scrollTop=pre.scrollHeight;}
-  catch(error){if(logState===state){state.loading=false;state.error=failure(error);renderLog();}}
+function renderLog(){if(!logState)return;$('job-output').textContent=logState.text||(logState.loading?'Loading retained output…':'No output recorded yet.');$('log-meta').dataset.error=String(!!logState.error);$('log-meta').textContent=logState.error?"Couldn't fetch new output. Retrying.":`${(logState.offset/1024).toFixed(1)} KiB received${logTimer?' · following':''}`;}
+async function loadLogs(){
+  const state=logState;if(!state||state.loading)return;state.loading=true;state.error='';renderLog();
+  try{const result=await command(['logs',state.job,'--since',String(state.offset)]);const bytes=typeof result.data==='string'?Uint8Array.from(atob(result.data),c=>c.charCodeAt(0)):new TextEncoder().encode(result.text||'');const next=Number.isSafeInteger(result.next_offset)?result.next_offset:state.offset+bytes.length;if(next<state.offset||next-state.offset!==bytes.length)throw new Error('Log offset did not match the returned output.');state.text+=state.decoder.decode(bytes,{stream:true});state.offset=next;if(state.text.length>2*1024*1024)state.text='[Earlier output is retained by the bridge.]\n'+state.text.slice(-2*1024*1024);const pre=$('job-output'),atEnd=pre.scrollHeight-pre.scrollTop-pre.clientHeight<40;state.loading=false;if(logState===state){renderLog();if(atEnd)pre.scrollTop=pre.scrollHeight;}}
+  catch(error){state.loading=false;state.error=failure(error);if(logState===state)renderLog();}
 }
 function startLogFollow(){if(!logTimer)logTimer=setInterval(()=>{if(!document.hidden&&currentView==='overview')loadLogs(false);},4000);}
 function stopLogFollow(){clearInterval(logTimer);logTimer=null;}
-$('refresh-output').addEventListener('click',()=>loadLogs(true));
+$('refresh-output').addEventListener('click',()=>loadLogs(false));
 $('copy-job-id').addEventListener('click',()=>copyText(selectedJob||'','Job ID'));
 $('cancel-job').addEventListener('click',()=>busy($('cancel-job'),async()=>{const id=selectedJob;if(!id)return;if(cancelArmed!==id){cancelArmed=id;renderJobDetail();setTimeout(()=>{if(cancelArmed===id){cancelArmed=null;renderJobDetail();}},5000);return;}cancelArmed=null;await command(['cancel',id]);message('Cancellation requested. The runner reports the final state.');await refresh();}));
 
 // Preferences, connection forms and pairing
 function resourceTarget(config){return JSON.stringify(config?[config.ssh_alias||'',config.host_key_alias||'',config.user||'',config.port||22,config.hosts||[]]:null);}
-async function loadPreferences(fillForm=true){const prefs=await invoke('preferences'),targetChanged=resourceTarget(savedConfig)!==resourceTarget(prefs.config);preferences=prefs;savedConfig=prefs.config||null;if(targetChanged){resourceGeneration++;resourceReady=false;resourceHardware=null;if(limits){$('resource-observation').textContent='Spark connection changed. Your draft is kept; read settings before saving to this Spark.';renderResourceDraft();}}laptop=prefs.laptop||laptop;const version=prefs.app_version||'0.3.0';$('app-version').textContent=version;$('installed-version').textContent=version;if(prefs.error)message(prefs.error.message||prefs.error);if(savedConfig){if(prefs.connection){savedConfig.connection_mode=prefs.connection.mode;savedConfig.connection_enabled=prefs.connection.enabled;}if(fillForm){const form=$('ssh-form');for(const [field,key] of [['host','ssh_alias'],['hostKeyAlias','host_key_alias'],['user','user'],['identity_file','identity_file'],['local_build_gate','local_build_gate']])form.elements[field].value=savedConfig[key]||'';form.elements.hostname.value=savedConfig.hosts?.[0]||'';form.elements.otherHosts.value=(savedConfig.hosts||[]).slice(1).join(', ');form.elements.port.value=savedConfig.port||22;$('mode-form').elements.mode.value=configMode(savedConfig);$('bootstrap-remote').checked=savedConfig.allow_remote===true;}}else $('ssh-settings').open=true;renderLaptop();renderConnection();}
+async function loadPreferences(fillForm=true){const prefs=await invoke('preferences'),targetChanged=resourceTarget(savedConfig)!==resourceTarget(prefs.config);preferences=prefs;savedConfig=prefs.config||null;if(targetChanged){observation=null;boardJobs=[];selectJob(null);resourceGeneration++;extrasEpoch++;internet=null;downloads=null;downloadsDirty=false;clearArmed=false;internetMessage='';downloadsMessage='';lastGoodObservation=null;lastFailure=null;health={failures:0,lastGoodAt:0};resourceReady=false;resourceHardware=null;if(limits){$('resource-observation').textContent='Spark connection changed. Your draft is kept; read settings before saving to this Spark.';renderResourceDraft();}}laptop=prefs.laptop||laptop;const version=prefs.app_version||'0.3.0';$('app-version').textContent=version;$('installed-version').textContent=version;if(prefs.error)message(prefs.error.message||prefs.error);if(savedConfig){if(prefs.connection){savedConfig.connection_mode=prefs.connection.mode;savedConfig.connection_enabled=prefs.connection.enabled;}if(fillForm){const form=$('ssh-form');for(const [field,key] of [['host','ssh_alias'],['hostKeyAlias','host_key_alias'],['user','user'],['identity_file','identity_file'],['local_build_gate','local_build_gate']])form.elements[field].value=savedConfig[key]||'';form.elements.hostname.value=savedConfig.hosts?.[0]||'';form.elements.otherHosts.value=(savedConfig.hosts||[]).slice(1).join(', ');form.elements.port.value=savedConfig.port||22;$('mode-form').elements.mode.value=configMode(savedConfig);$('auto-addresses').checked=savedConfig.auto_addresses!==false;$('bootstrap-remote').checked=savedConfig.allow_remote===true;}}else $('ssh-settings').open=true;renderLaptop();renderConnection();}
 function renderLaptop(){if(Number.isSafeInteger(laptop?.concurrency_limit)){$('laptop-limit').value=laptop.concurrency_limit;$('laptop-limit').max=Math.min(64,laptop.logical_parallelism||64);$('laptop-limit').disabled=false;$('save-laptop').disabled=false;}}
 $('connection-toggle').addEventListener('click',()=>busy($('connection-toggle'),async()=>{connecting=true;clearFind();renderConnection();try{const response=await invoke('connection',{mode:null,enabled:savedConfig?.connection_enabled===false,laptopJobs:null});await loadPreferences(false);requireOk(response);await refresh();message(savedConfig?.connection_enabled===false?'Disconnected. Admitted jobs keep running.':'Saved connection checked.');}finally{connecting=false;renderConnection();}}));
-$('mode-form').addEventListener('submit',event=>{event.preventDefault();busy(event.submitter,async()=>{requireOk(await invoke('connection',{mode:new FormData(event.target).get('mode'),enabled:null,laptopJobs:null}));observation=null;connecting=true;clearFind();try{await loadPreferences(false);await refresh();}finally{connecting=false;renderConnection();}message('Connection mode saved. Your pairing is unchanged.');});});
+$('mode-form').addEventListener('submit',event=>{event.preventDefault();busy(event.submitter,async()=>{requireOk(await invoke('connection',{mode:new FormData(event.target).get('mode'),enabled:null,laptopJobs:null,autoAddresses:$('auto-addresses').checked}));observation=null;connecting=true;clearFind();try{await loadPreferences(false);await refresh();}finally{connecting=false;renderConnection();}message('Connection mode saved. Your pairing is unchanged.');});});
 $('ssh-form').addEventListener('submit',event=>{event.preventDefault();busy(event.submitter,async()=>{const form=new FormData(event.target),host=form.get('host').trim(),hostname=form.get('hostname').trim();const args=['setup','--ssh-alias',host,'--host-key-alias',form.get('hostKeyAlias').trim()||host,'--port',form.get('port')];if(hostname)args.push('--host',hostname);for(const other of otherLanAddresses(form.get('otherHosts'),hostname))args.push('--host',other);for(const [field,flag] of [['user','--user'],['identity_file','--identity-file'],['local_build_gate','--local-build-gate']]){const value=form.get(field).trim();if(value)args.push(flag,value);}if(configMode(savedConfig)!=='lan-only')args.push('--allow-remote');if(args.length>24)throw new Error('Too many LAN addresses to save at once. Remove some from Other LAN addresses.');await command(args);clearFind();await loadPreferences();message('Connection saved. Choose Test connection when ready; Spark services were not restarted.');});});
-$('test-connection').addEventListener('click',()=>busy($('test-connection'),async()=>{const result=await command(['doctor']);await refresh();message(result.checks?.docker&&result.scheduler?.healthy?'Connection verified. Docker and the shared scheduler are ready.':'Authenticated connection checked. Review the reported service health.');}));
-$('bootstrap').addEventListener('click',()=>busy($('bootstrap'),async()=>{$('bootstrap-message').textContent='Installing the independent bridge over pinned SSH…';try{const result=requireOk(await invoke('bootstrap',{remoteAccess:$('bootstrap-remote').checked}));$('bootstrap-message').textContent=result.runtime_state==='building'?'Bridge installed. The pinned runtime is still preparing.':'Bridge installed. Its own services are ready to check.';await refresh();}catch(error){$('bootstrap-message').textContent=failure(error);throw error;}}));
+$('test-connection').addEventListener('click',()=>busy($('test-connection'),async()=>{const result=await command(['doctor']);await refresh();message(result.checks?.docker===false?"Connected, but Docker isn't running on the Spark.":result.scheduler?.healthy?'Connection verified. Docker and the job service are ready.':'Connected, but the Spark job service is not responding.');}));
+$('bootstrap').addEventListener('click',()=>busy($('bootstrap'),async()=>{$('bootstrap-message').textContent='Installing the independent bridge over pinned SSH…';try{const result=requireOk(await invoke('bootstrap',{remoteAccess:$('bootstrap-remote').checked}));$('bootstrap-message').textContent=[result.runtime_state,result.cuda_state].some(state=>['scheduled','building'].includes(state))?'Bridge installed. Its tools are queued or preparing; check status before running jobs.':'Bridge installed. Check its connection and tools before running jobs.';await refresh();}catch(error){$('bootstrap-message').textContent=failure(error);throw error;}}));
 
 // Find my Spark: owner-started only. It never runs from refresh, startup or an error.
-function renderFindControls(){const control=findSparkControl({config:savedConfig,connection:connectionView(observation,savedConfig,connecting),connecting,busy:findBusy}),button=$('find-spark');button.disabled=control.disabled;button.className=`button ${control.suggested?'primary':'secondary'}`;button.dataset.suggested=String(control.suggested);if(control.reason&&!findBusy)clearFind();for(const use of $('find-results').querySelectorAll('button'))use.disabled=control.disabled;if(!findBusy)$('find-message').textContent=findMessage??(control.reason||FIND_INTRO);}
+function renderFindControls(){const control=findSparkControl({config:savedConfig,connection:connectionState(),connecting,busy:findBusy}),button=$('find-spark');button.disabled=control.disabled;button.className=`button ${control.suggested?'primary':'secondary'}`;button.dataset.suggested=String(control.suggested);if(control.reason&&!findBusy)clearFind();for(const use of $('find-results').querySelectorAll('button'))use.disabled=control.disabled;if(!findBusy)$('find-message').textContent=findMessage??(control.reason||FIND_INTRO);}
 function clearFind(){findMessage=null;$('find-results').replaceChildren();$('find-results').hidden=true;}
 function renderFind(view){
   findMessage=view.summary;$('find-message').textContent=view.summary;
   const list=$('find-results');list.replaceChildren();
-  for(const row of view.rows){const item=element('li');const text=element('span','find-host');text.append(element('strong',null,row.host),element('small',null,row.detail));item.append(text);if(!row.alreadyFirst){const use=element('button','button secondary small','Use this address');use.type='button';use.addEventListener('click',()=>useFoundAddress(row.host,use));item.append(use);}list.append(item);}
+  for(const row of view.rows){const item=element('li');const text=element('span','find-host');text.append(element('strong',null,row.host+(row.recommended?' · Recommended':'')),element('small',null,row.detail));item.append(text);if(!row.alreadyFirst){const use=element('button','button secondary small','Use this address');use.type='button';use.addEventListener('click',()=>useFoundAddress(row.host,use));item.append(use);}list.append(item);}
   for(const note of [view.emptyReason,...view.notes].filter(Boolean))list.append(element('li','find-note',note));
   list.hidden=!list.childElementCount;
 }
@@ -159,6 +187,54 @@ async function useFoundAddress(host,button){
 }
 
 // Resources
+// These controls show the saved Spark setting. A switch never claims that a download succeeded.
+function renderExtras(){
+  const iv=internetView(internet),dv=downloadsView(downloads),connected=connectionState().connected;
+  $('internet-summary').textContent=iv.label;$('internet-status').textContent=!connected&&iv.known?'Last observed setting. Reconnect and refresh to check it.':internetMessage||iv.note;
+  $('internet-switch').setAttribute('aria-checked',String(iv.enabled===true));$('internet-switch').setAttribute('aria-busy',String(internetBusy));
+  $('internet-switch').disabled=!iv.known||!connected||resourceBusy||downloadsBusy;
+  $('internet-note').textContent=INTERNET_COPY.note;$('internet-blocked').textContent=INTERNET_COPY.blocked;
+  $('internet-limitation').textContent=INTERNET_COPY.limitation;$('internet-rule').textContent=INTERNET_COPY.rule;
+  $('downloads-summary').textContent=dv.label;$('downloads-status').textContent=!connected&&dv.known?'Last observed downloads. Reconnect and refresh to check them.':downloadsMessage||dv.note;
+  $('downloads-note').textContent='Free up space removes reusable downloads when Spark jobs are idle. Jobs may download them again. It does not remove projects or job logs.';
+  if(!downloadsDirty&&dv.keepGiB!==null&&dv.keepGiB!==undefined)$('downloads-limit').value=dv.keepGiB;
+  $('downloads-limit').disabled=!dv.known||!connected||downloadsBusy||resourceBusy;
+  $('save-downloads').disabled=!dv.known||!connected||downloadsBusy||resourceBusy||!downloadsDirty;
+  $('refresh-downloads').disabled=!connected||downloadsBusy||resourceBusy;
+  $('clear-downloads').disabled=!dv.known||!connected||downloadsBusy||resourceBusy||dv.clearPending;
+  $('confirm-clear-downloads').hidden=!clearArmed;$('confirm-clear-downloads').disabled=downloadsBusy||resourceBusy||!connected;
+  renderFacts($('downloads-facts'),dv.facts);
+  $('download-items').replaceChildren(...(Array.isArray(downloads?.items)?downloads.items.slice(0,20):[]).map(item=>{
+    const line=element('li');line.append(element('span',null,String(item.path||item.name||'Saved file')),element('span',null,formatGiB(item.bytes??item.size_bytes)));return line;
+  }));
+}
+try{$('extras-new').hidden=localStorage.getItem('dgxbridge-extras-seen')==='1';}catch{}
+$('dismiss-extras').addEventListener('click',()=>{$('extras-new').hidden=true;try{localStorage.setItem('dgxbridge-extras-seen','1');}catch{}});
+$('internet-switch').addEventListener('click',async()=>{
+  const iv=internetView(internet);if(resourceBusy||downloadsBusy||!iv.known||!connectionState().connected)return;
+  const generation=resourceGeneration;resourceBusy=true;internetBusy=true;extrasEpoch++;internetMessage='Saving the Spark setting…';renderExtras();renderResourceDraft();
+  try{
+    const result=requireOk(await invoke('resources',{policy:null,internet:!iv.enabled}));
+    if(generation!==resourceGeneration)return;acceptExtras(result);internetMessage='Saved and read back from your Spark.';
+  }catch(error){
+    if(generation!==resourceGeneration)return;
+    internetMessage="Your Spark didn't confirm the change. Checking what it has now…";renderExtras();
+    try{const result=requireOk(await invoke('resources',{policy:null,internet:null}));if(generation!==resourceGeneration)return;acceptExtras(result);internetMessage='Showing the setting read back from your Spark.';}
+    catch(readError){if(generation===resourceGeneration)internetMessage=`The saved setting could not be checked. ${failure(readError)} Last observed setting is shown; use Refresh settings before trying again.`;}
+  }finally{resourceBusy=false;internetBusy=false;renderExtras();renderResourceDraft();renderConnection();}
+});
+async function changeDownloads(args){
+  if(downloadsBusy||resourceBusy||!connectionState().connected)return;
+  const generation=resourceGeneration;downloadsBusy=true;extrasEpoch++;downloadsMessage=args.length>1?'Waiting for the Spark to confirm…':'Checking saved downloads…';renderExtras();
+  try{const result=await command(args);if(generation!==resourceGeneration)return;acceptExtras(result);if(args.includes('--keep-gb'))downloadsDirty=false;downloadsMessage=args.includes('--free-up')?(downloadsView(downloads).clearPending?'Clearing is queued until Spark jobs are idle.':'The Spark processed the cleanup request. See its reported space below.'):'Saved downloads checked.';clearArmed=false;}
+  catch(error){if(generation===resourceGeneration)downloadsMessage=`${failure(error)}${args.length>1?' The change was not confirmed. Refresh before trying again.':''}`;}
+  finally{downloadsBusy=false;renderExtras();renderConnection();}
+}
+$('refresh-downloads').addEventListener('click',()=>changeDownloads(['downloads']));
+$('downloads-limit').addEventListener('input',()=>{downloadsDirty=true;renderExtras();});
+$('downloads-form').addEventListener('submit',event=>{event.preventDefault();const keep=Number($('downloads-limit').value);if(!Number.isSafeInteger(keep)||keep<20){downloadsMessage='Choose a whole number of at least 20 GiB. The Spark also checks available disk capacity.';renderExtras();return;}changeDownloads(['downloads','--keep-gb',String(keep)]);});
+$('clear-downloads').addEventListener('click',()=>{clearArmed=!clearArmed;renderExtras();});
+$('confirm-clear-downloads').addEventListener('click',()=>changeDownloads(['downloads','--free-up']));
 for(const [key,label,unit] of RESOURCE_FIELDS){const control=element('label',null,label);const input=document.createElement('input');input.name=key;input.type='number';input.min='1';input.step='1';input.required=true;input.setAttribute('aria-label',`${label} (${unit})`);input.setAttribute('aria-describedby','resource-validation');control.append(input,element('span','input-unit',unit));$('resource-fields').append(control);}
 for(const preset of RESOURCE_PRESETS){const button=element('button','resource-preset');button.type='button';button.dataset.preset=preset.id;button.disabled=true;button.setAttribute('aria-pressed','false');button.append(element('strong',null,preset.name),element('span',null,preset.description),element('small',null,'Read Spark settings to choose'));button.addEventListener('click',()=>{fillResourceDraft(resourcePreset(preset.id,resourceHardware));renderResourceDraft();});$('resource-presets').append(button);}
 function fillResourceDraft(policy){for(const [key] of RESOURCE_FIELDS)$('resources-form').elements[key].value=policy[key];}
@@ -180,29 +256,29 @@ function renderResourceDraft(){
   $('memory-budget-fill').style.width=`${percent(memoryBudget,memory)}%`;
   $('memory-headroom-fill').style.width=`${Math.min(percent(headroom,memory),100-percent(memoryBudget,memory))}%`;
   $('cpu-budget-note').textContent=limits&&cores?`${configured} build budget · ${Math.max(0,cores-cpuBudget)} cores outside this budget.`:'Read your Spark’s hardware to compare its capacity.';
-  $('memory-budget-note').textContent=limits&&memory?`${configured} build budget · ${headroom} GiB minimum headroom.`:'Headroom stays outside the build budget.';
+  $('memory-budget-note').textContent=limits&&memory?`${configured} build budget · ${headroom} GiB kept free.`:'Headroom stays outside the build budget.';
   $('cpu-budget-bar').setAttribute('aria-label',limits&&cores?`${configured} CPU budget ${cpuBudget} of ${cores} hardware cores. Not live usage.`:'CPU budget not observed');
-  $('memory-budget-bar').setAttribute('aria-label',limits&&memory?`${configured} memory budget ${memoryBudget} of ${memory} GiB hardware memory; ${headroom} GiB minimum headroom. Not live usage.`:'Memory budget not observed');
+  $('memory-budget-bar').setAttribute('aria-label',limits&&memory?`${configured} memory budget ${memoryBudget} of ${memory} GiB hardware memory; ${headroom} GiB kept free. Not live usage.`:'Memory budget not observed');
   $('resource-draft-summary').textContent=policy?`${configured}: ${presetName} · up to ${policy.cpu_per_job} cores and ${policy.memory_gb_per_job} GiB per job · ${policy.client_jobs} ${policy.client_jobs===1?'job':'jobs'} per agent.`:limits?'Adjust the limits below to create a valid budget.':'Your saved limits will appear here.';
-  $('resource-validation').textContent=error||(!limits?'Read the Spark policy before editing.':!resourceReady?'Current Spark settings need a fresh read. Your draft is kept; read settings again before saving.':resourceDirty?'Unsaved changes. CPU per job ≤ per agent ≤ total; memory budget + headroom fits your Spark.':'Saved limits loaded. Choose a preset or open advanced limits to make changes.');
+  $('resource-validation').textContent=error||(!limits?'Read the Spark policy before editing.':!resourceReady?'Current Spark settings need a fresh read. Your draft is kept; read settings again before saving.':resourceDirty?'Unsaved changes. CPU per job ≤ per agent ≤ total; memory budget + memory kept free fits your Spark.':'Saved limits loaded. Choose a preset or open advanced limits to make changes.');
   $('resource-validation').dataset.state=error?'error':resourceDirty?'draft':'saved';
   $('save-resources').disabled=!policy||!resourceDirty||!resourceReady||resourceBusy;
   $('discard-resources').hidden=!resourceDirty;$('discard-resources').disabled=resourceBusy;
 }
 async function readResources(){
-  if(resourceBusy)return;const generation=resourceGeneration;resourceBusy=true;$('refresh-resources').disabled=true;renderResourceDraft();
-  try{const result=requireOk(await invoke('resources',{policy:null}));if(generation!==resourceGeneration)throw new Error('Spark connection changed during the request. Read settings again before saving.');const keepDraft=resourceDirty;limits=result.limits;resourceHardware=result.hardware||resourceHardware;resourceReady=true;if(!keepDraft)fillResourceDraft(limits);$('resource-observation').textContent=keepDraft?'Latest saved policy refreshed. Your unsaved changes are kept.':'Current Spark policy loaded.';renderAgents();}
+  if(resourceBusy||downloadsBusy)return;const generation=resourceGeneration;resourceBusy=true;extrasEpoch++;$('refresh-resources').disabled=true;renderResourceDraft();renderExtras();
+  try{const result=requireOk(await invoke('resources',{policy:null}));if(generation!==resourceGeneration)throw new Error('Spark connection changed during the request. Read settings again before saving.');const keepDraft=resourceDirty;limits=result.limits;acceptExtras(result);resourceHardware=result.hardware||resourceHardware;resourceReady=true;if(!keepDraft)fillResourceDraft(limits);$('resource-observation').textContent=keepDraft?'Latest saved policy refreshed. Your unsaved changes are kept.':'Current Spark policy loaded.';renderAgents();}
   catch(error){resourceReady=false;$('resource-observation').textContent=`${failure(error)}${limits?' Your last observed policy and draft are retained.':''}`;}
-  finally{resourceBusy=false;$('refresh-resources').disabled=false;renderResourceDraft();}
+  finally{resourceBusy=false;$('refresh-resources').disabled=false;renderResourceDraft();renderExtras();}
 }
 $('refresh-resources').addEventListener('click',readResources);
 $('resource-fields').addEventListener('input',renderResourceDraft);
 $('discard-resources').addEventListener('click',()=>{if(limits){fillResourceDraft(limits);renderResourceDraft();}});
 $('resources-form').addEventListener('submit',async event=>{
-  event.preventDefault();if(resourceBusy||!resourceReady||$('save-resources').disabled)return;const generation=resourceGeneration;
-  try{const policy=resourcePolicy(new FormData(event.target),resourceHardware);resourceBusy=true;$('refresh-resources').disabled=true;renderResourceDraft();const result=requireOk(await invoke('resources',{policy}));if(generation!==resourceGeneration)throw new Error('Spark connection changed during the request. Read settings again before saving.');limits=result.limits;resourceHardware=result.hardware||resourceHardware;resourceReady=true;fillResourceDraft(limits);$('resource-observation').textContent='Spark limits saved and read back. Running jobs retain their admitted limits.';renderAgents();}
+  event.preventDefault();if(resourceBusy||downloadsBusy||!resourceReady||$('save-resources').disabled)return;const generation=resourceGeneration;
+  try{const policy=resourcePolicy(new FormData(event.target),resourceHardware);resourceBusy=true;extrasEpoch++;$('refresh-resources').disabled=true;renderResourceDraft();renderExtras();const result=requireOk(await invoke('resources',{policy}));if(generation!==resourceGeneration)throw new Error('Spark connection changed during the request. Read settings again before saving.');limits=result.limits;acceptExtras(result);resourceHardware=result.hardware||resourceHardware;resourceReady=true;fillResourceDraft(limits);$('resource-observation').textContent='Spark limits saved and read back. Running jobs retain their admitted limits.';renderAgents();}
   catch(error){$('resource-observation').textContent=`${failure(error)} Your unsaved changes are kept.`;}
-  finally{resourceBusy=false;$('refresh-resources').disabled=false;renderResourceDraft();}
+  finally{resourceBusy=false;$('refresh-resources').disabled=false;renderResourceDraft();renderExtras();}
 });
 $('laptop-form').addEventListener('submit',event=>{event.preventDefault();busy(event.submitter,async()=>{const value=Number(new FormData(event.target).get('laptop_jobs'));if(!Number.isSafeInteger(value)||value<1)throw new Error('Choose a positive whole number of laptop jobs.');const result=requireOk(await invoke('connection',{mode:null,enabled:null,laptopJobs:value}));laptop=result.laptop;renderLaptop();message('Laptop concurrency saved. Native CPU and memory limits are unchanged.');await refresh();});});
 
@@ -219,7 +295,7 @@ $('start-pair').addEventListener('click',async()=>{$('pair-art').hidden=false;$(
 $('cancel-pair').addEventListener('click',async()=>{await invoke('link',{op:'pair-cancel'});await pollPair();});
 
 // Agents
-function renderAgents(){const state=connectionView(observation,savedConfig,connecting),paths=agentPaths(agent,preferences);$('agent-file').textContent=agent==='codex'?'Add to ~/.codex/config.toml':'Add to your project’s .mcp.json';$('agent-label').textContent=agent;$('agent-config').textContent=agentConfiguration(agent,paths.path,paths.stateRoot);$('agent-prompt').textContent=agentPrompt({agent,...paths,config:savedConfig,connection:state,limits:resourceReady?limits:null});document.querySelectorAll('[data-agent]').forEach(el=>{el.classList.toggle('selected',el.dataset.agent===agent);el.setAttribute('aria-pressed',String(el.dataset.agent===agent));});}
+function renderAgents(){const state=connectionState(),paths=agentPaths(agent,preferences);$('agent-file').textContent=agent==='codex'?'Add to ~/.codex/config.toml':'Add to your project’s .mcp.json';$('agent-label').textContent=agent;$('agent-config').textContent=agentConfiguration(agent,paths.path,paths.stateRoot);$('agent-prompt').textContent=agentPrompt({agent,...paths,config:savedConfig,connection:state,limits:resourceReady?limits:null});document.querySelectorAll('[data-agent]').forEach(el=>{el.classList.toggle('selected',el.dataset.agent===agent);el.setAttribute('aria-pressed',String(el.dataset.agent===agent));});}
 document.querySelectorAll('[data-agent]').forEach(el=>el.addEventListener('click',()=>{agent=el.dataset.agent;renderAgents();}));
 async function copyText(text,label){try{await navigator.clipboard.writeText(text);message(`${label} copied.`);}catch{message(`Select and copy the ${label.toLowerCase()} manually.`);}}
 $('copy-config').addEventListener('click',()=>copyText($('agent-config').textContent,'Agent configuration'));$('copy-prompt').addEventListener('click',()=>copyText($('agent-prompt').textContent,'Agent prompt'));
