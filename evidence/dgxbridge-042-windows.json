@@ -1,0 +1,25 @@
+{
+  "version": "0.4.2",
+  "method": "ordinary Windows Explorer and native NSIS in-place upgrade",
+  "installer_sha256": "a5440c36627152dc5658d7ad375282456a68bdee2e88cac3e01856c9495ef62d",
+  "installed_hashes": {
+    "dgxbridge.exe": "84278b9d1b06d1396f3571c800bde7b43143b5cd33908070d3896685a070518d",
+    "bin/sparkdev.exe": "ca7f8f83ac8532580fa2a3e79867fa3102c71946c49355d59c27b7b4958807ac",
+    "bin/sparkdev-link.exe": "93faf5e41fe4ee03f0529bae280a22adb1a4063f71907a2dea4bee4868846dad"
+  },
+  "remote_payload_entries_verified": 15,
+  "state_preserved": true,
+  "checks": [
+    {
+      "name": "Native version, connected Spark and retained history",
+      "passed": true,
+      "detail": "Installed native UI reports 0.4.2, Spark connected, healthy live scheduler, no active jobs and 83 retained jobs with pagination."
+    },
+    {
+      "name": "Fetch saved output from physical runtime test",
+      "passed": true,
+      "detail": "Native job pane fetched 5.2 KiB output for 22de1ce7d91c4a708b72f615f12d087b showing 28 passing runtime tests and Pillow 13.0.0 PNG/JPEG decode/resize."
+    }
+  ],
+  "limits": "No fresh provider session, hotspot test or accepted updater download/install cycle. Broader 0.4.1 native UI checks retained separately; Marketplace admission pending."
+}

@@ -1,0 +1,146 @@
+{
+  "version": "0.4.2",
+  "source_commit": "dfe99aab00ca924171bf1db212913f15e26f0185",
+  "physical_cpu": {
+    "passed": true,
+    "client": "codex",
+    "request_id": "dgx042-pillow-cpu-after-20261021-01",
+    "job": "22de1ce7d91c4a708b72f615f12d087b",
+    "exit_code": 0,
+    "runtime_digest": "sha256:b47955cbe8cfcc64993d279c579c5b7a9e40ba6b808a3f775d8a398e921a7d7a",
+    "probe": {
+      "architecture": "aarch64",
+      "executable": "/opt/pyenv/bin/python3",
+      "native_image_checks": [
+        {
+          "decoded": true,
+          "format": "PNG",
+          "output_sha256": "1b62f67c98b3a8832916742152941af863ca9b73b0abcef6251b132cf4a9219d",
+          "resize": [
+            7,
+            9
+          ],
+          "thumbnail": [
+            4,
+            4
+          ]
+        },
+        {
+          "decoded": true,
+          "format": "JPEG",
+          "output_sha256": "78bdcaf9b6fa267e14d71762b7b37cbfc628259c83554ad372f4237f9e4624f8",
+          "resize": [
+            7,
+            9
+          ],
+          "thumbnail": [
+            4,
+            4
+          ]
+        }
+      ],
+      "pillow": "13.0.0",
+      "python": "3.13.5 (main, Aug 10 2026, 12:06:59) [GCC 14.2.0]",
+      "runtime": "cpu",
+      "runtime_refresh_tests_exit_code": 0
+    },
+    "cli_sha256": "5f130703121c0446a1f256a09eb5ffb8963dd9157d3d7613c98f553a183d39eb"
+  },
+  "physical_cuda": {
+    "passed": true,
+    "client": "codex",
+    "request_id": "dgx042-pillow-cuda-after-20261021-01",
+    "job": "bf2474a158524161b7e4237a4ea4c422",
+    "exit_code": 0,
+    "runtime_digest": "sha256:85e06c434dd32428b927a99e83c323889278c6c719b93e7e949b2a629a49cc86",
+    "probe": {
+      "architecture": "aarch64",
+      "executable": "/usr/bin/python3",
+      "native_image_checks": [
+        {
+          "decoded": true,
+          "format": "PNG",
+          "output_sha256": "1b62f67c98b3a8832916742152941af863ca9b73b0abcef6251b132cf4a9219d",
+          "resize": [
+            7,
+            9
+          ],
+          "thumbnail": [
+            4,
+            4
+          ]
+        },
+        {
+          "decoded": true,
+          "format": "JPEG",
+          "output_sha256": "78bdcaf9b6fa267e14d71762b7b37cbfc628259c83554ad372f4237f9e4624f8",
+          "resize": [
+            7,
+            9
+          ],
+          "thumbnail": [
+            4,
+            4
+          ]
+        }
+      ],
+      "pillow": "13.0.0",
+      "python": "3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0]",
+      "runtime": "cuda",
+      "torch": "2.9.0a0+50eac811a6.nv25.9"
+    },
+    "cli_sha256": "5f130703121c0446a1f256a09eb5ffb8963dd9157d3d7613c98f553a183d39eb"
+  },
+  "runtime_refresh_tests": {
+    "passed": 28,
+    "failed": 0
+  },
+  "activation": {
+    "runtime_build_receipt": {
+      "attempt_id": "d1434c17b6eb4ab9bfff566890d89608",
+      "base": "rust:1.98.1-slim-trixie@sha256:441452f8033b93f69dce3a3ff5c821c411f0a580723e6343932fc34a1b03ba5d",
+      "exit_code": 0,
+      "finished_at": 1792603837.2293313,
+      "image": "sha256:b47955cbe8cfcc64993d279c579c5b7a9e40ba6b808a3f775d8a398e921a7d7a",
+      "probe": "rustc 1.98.1 (48a229cea 2026-09-01)\ngit version 2.47.3\nv20.19.2\nPython 3.13.5\n2.4.6 13.0.0 PNG decode/resize verified\n",
+      "probe_sha256": "8079ec5a3768894cc51ab62bfec9ec68a7096540610b5267ce9aa68a7b9bcdc6",
+      "source_digest": "424daefc9ebd1193dd8ddf15dd5c7d0a9465d216b5221806fd6cfa65b70a292b",
+      "started_at": 1792603831.7372813,
+      "state": "succeeded",
+      "tag": "sparkdev/cpu:1.98.1-arm64"
+    },
+    "cuda_build_receipt": {
+      "attempt_id": "02bd21ec000c4e638b45c838b099ae7a",
+      "base": "nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130",
+      "exit_code": 0,
+      "finished_at": 1792603841.7543943,
+      "image": "sha256:85e06c434dd32428b927a99e83c323889278c6c719b93e7e949b2a629a49cc86",
+      "kind": "cuda",
+      "probe": {
+        "bytes": 16777216,
+        "cuda": "13.0",
+        "device": "NVIDIA GB10",
+        "pillow": "13.0.0",
+        "pillow_png_decode_resize": true,
+        "sum": 4194304.0,
+        "torch": "2.9.0a0+50eac811a6.nv25.09",
+        "user_site": true
+      },
+      "probe_sha256": "5135244dcf36dad98afd8f92053c4b00cf477c8eda4cdcd4814da786f5284d3b",
+      "source_digest": "5e213b550f10ebf3abb54918fa3d25b84253bbda19ae3da1c06bc270227da22b",
+      "started_at": 1792603837.2555606,
+      "state": "succeeded",
+      "tag": "sparkdev/cuda:25.09-arm64"
+    }
+  },
+  "preservation": {
+    "owner_policy_unchanged": true,
+    "pairing_identity_devices_and_pid_unchanged": true,
+    "laptop_configuration_identity_peer_unchanged": true,
+    "old_images_present": {
+      "sha256:331ad7e777c2f41c11fbea628963fc5410b2e90bb0984530f524d9606d762ca2": true,
+      "sha256:5b372ace22d9140717fec881db3cd86bbb213d3ccd2502acd381a586fbb898dc": true
+    }
+  },
+  "claim_scope": "Actual Codex managed jobs and own Spark runtime activation. No Claude invocation, hotspot, native Windows or Marketplace claim."
+}
