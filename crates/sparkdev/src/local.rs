@@ -178,6 +178,67 @@ fn public(mut value: Value) -> Result<Value> {
 #[cfg(test)]
 mod receipt_tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
+    /// Drive the worker's heartbeat schedule on a fake clock in 100 ms passes
+    /// for `seconds`, answering each beat from `script` (its duration and
+    /// whether it succeeded; then quick successes). Returns the start of
+    /// every beat and when the lease was lost, both from the beginning.
+    fn schedule(script: &[(u64, bool)], seconds: u64) -> (Vec<Duration>, Option<Duration>) {
+        let begin = Instant::now();
+        let clock = Cell::new(begin);
+        let starts = RefCell::new(Vec::new());
+        let mut script = script.iter().copied();
+        let mut beats = Heartbeats::new(begin);
+        while clock.get() - begin < Duration::from_secs(seconds) {
+            let lost = beats
+                .tick(
+                    || clock.get(),
+                    || {
+                        starts.borrow_mut().push(clock.get() - begin);
+                        let (took, ok) = script.next().unwrap_or((1, true));
+                        clock.set(clock.get() + Duration::from_secs(took));
+                        Ok(ok)
+                    },
+                )
+                .unwrap();
+            if lost {
+                return (starts.into_inner(), Some(clock.get() - begin));
+            }
+            clock.set(clock.get() + Duration::from_millis(100));
+        }
+        (starts.into_inner(), None)
+    }
+    #[test]
+    fn an_overrunning_heartbeat_is_followed_at_once_so_a_short_outage_keeps_the_job() {
+        // The beat at 15 s meets a stalled Wi-Fi link: a pre-authentication
+        // stall drops after about 10 s, the backoff passes, the one repeat
+        // fails to connect, and the beat returns at about 33 s. The link is
+        // back by then. Scheduled from its end, the next beat would start
+        // at 48 s, after the job was ended at 45 s; from its start it runs
+        // on the next pass of the loop and keeps the lease.
+        let (starts, lost) = schedule(&[(18, false), (2, true)], 120);
+        assert_eq!(lost, None);
+        assert_eq!(starts[0], Duration::from_secs(15));
+        assert_eq!(starts[1], Duration::from_millis(33_100));
+        assert!(starts[2] <= Duration::from_secs(50), "{starts:?}");
+        // Quick beats keep their 15 s spacing.
+        let (starts, _) = schedule(&[], 50);
+        assert_eq!(
+            starts,
+            [15, 30, 45].map(Duration::from_secs)
+        );
+    }
+    #[test]
+    fn a_lease_without_a_successful_heartbeat_for_45_seconds_is_lost() {
+        // The beat due at 45 s still runs first; when it fails too, at 46 s,
+        // the job ends.
+        let (starts, lost) = schedule(&[(1, false); 8], 120);
+        assert_eq!(lost, Some(Duration::from_secs(46)));
+        assert_eq!(starts, [15, 30, 45].map(Duration::from_secs));
+        // A beat that succeeds late, even past 45 s, still keeps the lease.
+        let (_, lost) = schedule(&[(31, true)], 60);
+        assert_eq!(lost, None);
+    }
     #[test]
     fn worker_connection_snapshot_is_not_exposed_in_public_receipts() {
         let value = public(json!({"job":"laptop-fixture","lease":"private-lease","root":"private-worktree","argv":["private-command"],"connection_config":{"ssh_alias":"private-host","connection_enabled":true}})).unwrap();
@@ -248,6 +309,43 @@ fn terminate(child: &mut std::process::Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+/// A running laptop job sends a lease heartbeat this often.
+const HEARTBEAT_EVERY: Duration = Duration::from_secs(15);
+/// With no successful heartbeat for this long the job is ended.
+const LEASE_LOST: Duration = Duration::from_secs(45);
+/// When the worker's next lease heartbeat is due and when the lease is lost.
+///
+/// A heartbeat is due HEARTBEAT_EVERY after the previous one started, not
+/// after it returned. One heartbeat can take up to its 30 s request deadline:
+/// a drop, the backoff and the one repeat the transport allows. Scheduled
+/// from its end, the next beat could land after LEASE_LOST, so a Wi-Fi
+/// outage of well under 45 s would end a job the next beat would have kept.
+/// From its start, an overrunning beat is followed at once by another.
+struct Heartbeats {
+    started: Instant,
+    ok: Instant,
+}
+impl Heartbeats {
+    fn new(now: Instant) -> Self {
+        Self {
+            started: now,
+            ok: now,
+        }
+    }
+    /// One pass of the worker loop: send a heartbeat through `beat` when one
+    /// is due, then say whether the lease is lost. `beat` says whether the
+    /// heartbeat succeeded; `now` reads the clock.
+    fn tick(&mut self, now: impl Fn() -> Instant, beat: impl FnOnce() -> Result<bool>) -> Result<bool> {
+        let start = now();
+        if start.saturating_duration_since(self.started) >= HEARTBEAT_EVERY {
+            self.started = start;
+            if beat()? {
+                self.ok = now();
+            }
+        }
+        Ok(now().saturating_duration_since(self.ok) >= LEASE_LOST)
+    }
 }
 pub fn worker(job: &str) -> Result<()> {
     let result = worker_inner(job);
@@ -378,8 +476,7 @@ fn worker_inner(job: &str) -> Result<()> {
     };
     let stdout = pump(Box::new(out), shared.clone());
     let stderr = pump(Box::new(err), shared);
-    let mut last_heartbeat = Instant::now();
-    let mut last_ok = Instant::now();
+    let mut beats = Heartbeats::new(Instant::now());
     let mut offset = 0u64;
     let (final_state, exit_code) = loop {
         if dir(job)?.join("cancel").exists() {
@@ -396,16 +493,16 @@ fn worker_inner(job: &str) -> Result<()> {
                 status.code().unwrap_or(125),
             );
         }
-        if last_heartbeat.elapsed() >= Duration::from_secs(15) {
+        let lost = beats.tick(Instant::now, || {
             let chunk = logs(job, offset, inventory::CHUNK)?;
             let heartbeat = json!({"v":1,"op":"heartbeat","lease":lease,"state":"running","ttl":60,"since":offset,"data":chunk["data"]});
-            if tr.rpc(heartbeat).is_ok() {
-                last_ok = Instant::now();
+            let ok = tr.rpc(heartbeat).is_ok();
+            if ok {
                 offset = chunk["next_offset"].as_u64().unwrap_or(offset);
             }
-            last_heartbeat = Instant::now();
-        }
-        if last_ok.elapsed() >= Duration::from_secs(45) {
+            Ok(ok)
+        })?;
+        if lost {
             terminate(&mut child);
             break ("failed", 125);
         }
