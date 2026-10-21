@@ -289,7 +289,7 @@ fn worker_inner(job: &str) -> Result<()> {
         .as_str()
         .ok_or_else(|| AppError::new(3, "Missing laptop lease"))?
         .to_string();
-    if inventory::collect(&root)?.manifest_id != value["manifest_id"] {
+    if inventory::collect_readonly(&root)?.manifest_id != value["manifest_id"] {
         return Err(AppError::new(
             5,
             "Laptop source changed after submission; refusing stale job",
