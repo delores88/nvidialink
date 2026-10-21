@@ -327,6 +327,9 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             let mut tr = transport::Transport::new()?;
             flush_cancels(&mut tr);
             sync(&inv, &mut tr)?;
+            if !Rpc::connection_enabled(&tr) {
+                return Err(disconnected());
+            }
             let mut result = tr.rpc(request)?;
             result["request_id"] = json!(request_id);
             result["transport"] = tr.info();
@@ -365,6 +368,10 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                 flush_cancels(&mut tr);
                 let synced = sync(&inv, &mut tr)?;
                 request["manifest_id"] = synced["manifest_id"].clone();
+                // A sync can poll for minutes; a disconnect meanwhile also stops the submission.
+                if !Rpc::connection_enabled(&tr) {
+                    return Err(disconnected());
+                }
                 let mut value = tr.rpc(request)?;
                 value["transport"] = tr.info();
                 value
@@ -839,6 +846,47 @@ fn remote_code(error: &AppError) -> Option<&str> {
 fn source_changed() -> AppError {
     AppError::new(3, "Source changed during sync; rerun")
 }
+fn disconnected() -> AppError {
+    AppError::new(
+        4,
+        "Bridge is disconnected; use sparkdev connect to enable new requests",
+    )
+}
+/// A transport timeout, or the paired route's sidecar failing because the Spark daemon
+/// cut off a request frame that took over 10 seconds: either way the batch was too slow.
+fn too_slow(error: &AppError) -> bool {
+    error.message.starts_with("Transport timeout")
+        || error
+            .message
+            .starts_with("Authenticated remote sidecar unavailable")
+}
+fn gib_text(bytes: u64) -> String {
+    format!("{:.1}", bytes as f64 / inventory::GIB as f64)
+}
+/// Refuse before an upload round when the Spark's advertised free space, less what this
+/// sync already sent, cannot hold the absent chunks twice (stored objects, then the
+/// assembled copy) above its reserve. A controller that advertises no storage is not checked.
+fn disk_preflight(storage: &Value, uploaded: u64, absent: u64) -> Result<()> {
+    let (Some(free), Some(reserve)) = (
+        storage["free_bytes"].as_u64(),
+        storage["reserve_bytes"].as_u64(),
+    ) else {
+        return Ok(());
+    };
+    let (free, needed) = (free.saturating_sub(uploaded), absent.saturating_mul(2));
+    if free < reserve.saturating_add(needed) {
+        return Err(AppError::new(
+            6,
+            format!(
+                "insufficient_disk: Spark has {} GiB free; this upload needs {} GiB and DGXBridge keeps {} in reserve. Free Spark disk space, then retry",
+                gib_text(free),
+                gib_text(needed),
+                inventory::size_text(reserve)
+            ),
+        ));
+    }
+    Ok(())
+}
 /// A chunk's bytes: from the staged store, else from the source at its offset,
 /// always verified against the hash the manifest committed to.
 fn chunk_data(inv: &inventory::Inventory, hash: &str) -> Result<Vec<u8>> {
@@ -904,7 +952,17 @@ impl Session<'_> {
         self.retries += 1;
         self.rpc.connection_enabled()
     }
+    /// A sync may poll and upload for many minutes, while the transport keeps the
+    /// connection state it read at startup: every new request reads saved owner intent.
+    fn owner_allows(&self) -> Result<()> {
+        if self.rpc.connection_enabled() {
+            Ok(())
+        } else {
+            Err(disconnected())
+        }
+    }
     fn call(&mut self, request: &Value, retry: bool) -> Result<Value> {
+        self.owner_allows()?;
         let mut attempt = 0;
         loop {
             match self.rpc.call(request.clone()) {
@@ -945,7 +1003,7 @@ impl Session<'_> {
         Ok(absent)
     }
     /// Upload `hashes` in order. Each batch is sized for the route at that moment
-    /// and halves after a transport timeout; one chunk always fits.
+    /// and halves after a batch proves too slow for the link; one chunk always fits.
     fn upload(
         &mut self,
         inv: &inventory::Inventory,
@@ -955,6 +1013,7 @@ impl Session<'_> {
     ) -> Result<()> {
         let (mut next, mut halvings, mut attempt) = (0usize, 0u32, 0usize);
         while next < hashes.len() {
+            self.owner_allows()?;
             let cap = limits.batch_body(&self.rpc.route()) >> halvings;
             let (mut count, mut size) = (0usize, 64u64);
             for hash in &hashes[next..] {
@@ -1000,11 +1059,11 @@ impl Session<'_> {
                     attempt = 0;
                 }
                 Err(error) => {
-                    let timeout = error.message.starts_with("Transport timeout");
+                    let slow = too_slow(&error);
                     if !retry || !self.retry(&error, attempt) {
                         return Err(error);
                     }
-                    if timeout {
+                    if slow {
                         halvings = (halvings + 1).min(24);
                     }
                     attempt += 1;
@@ -1107,6 +1166,12 @@ pub fn sync_with(
                 Some("missing_chunks" | "hash_mismatch") if rounds < SYNC_ROUNDS => {
                     rounds += 1;
                     let absent = session.missing(&order, limits.missing_batch, true)?;
+                    let bytes = absent
+                        .iter()
+                        .map(|hash| inv.sources.get(hash).map_or(inventory::MIB, |s| s.len))
+                        .sum();
+                    // A controller that checks disk only after the upload is caught here.
+                    disk_preflight(&probe["storage"], session.uploaded, bytes)?;
                     session.upload(inv, &absent, &limits, true)?;
                     (stall_mark, stall_slept) = (Instant::now(), Duration::ZERO);
                 }
@@ -1390,6 +1455,10 @@ mod sync_tests {
         route_after_put: Option<&'static str>,
         /// Fails the request with this zero-based call index.
         fail_calls: BTreeMap<usize, AppError>,
+        /// The probe's advertised storage block.
+        storage: Value,
+        /// The owner disconnects once this many requests have been made.
+        disable_after: Option<usize>,
     }
     impl Fake {
         fn new(limits: Option<Value>) -> Self {
@@ -1405,6 +1474,8 @@ mod sync_tests {
                 always_missing: false,
                 route_after_put: None,
                 fail_calls: BTreeMap::new(),
+                storage: json!({"free_bytes":100*GIB,"reserve_bytes":64*GIB}),
+                disable_after: None,
             }
         }
         fn holding(mut self, inv: &Inventory) -> Self {
@@ -1441,6 +1512,9 @@ mod sync_tests {
     impl Rpc for Fake {
         fn call(&mut self, request: Value) -> Result<Value> {
             self.calls.push(request.clone());
+            if self.disable_after == Some(self.calls.len()) {
+                self.enabled = false;
+            }
             let op = request["op"].as_str().unwrap();
             if let Some(error) = self.fail_calls.remove(&(self.calls.len() - 1)) {
                 return Err(error);
@@ -1460,7 +1534,7 @@ mod sync_tests {
                     let mut out = json!({"ok":true,"missing":missing});
                     if let Some(limits) = &self.limits {
                         out["limits"] = limits.clone();
-                        out["storage"] = json!({"free_bytes":100*GIB,"reserve_bytes":64*GIB});
+                        out["storage"] = self.storage.clone();
                     }
                     Ok(out)
                 }
@@ -1907,5 +1981,80 @@ mod sync_tests {
         let (out, sleeps) = run(&inv, &mut fake);
         assert_eq!((out.unwrap_err().code, sleeps.len()), (5, 0));
         assert_eq!(fake.ops(), ["missing", "sync", "missing", "put_many"]);
+    }
+    #[test]
+    fn a_paired_route_frame_cut_off_by_the_spark_halves_the_batch() {
+        let t = tree(&[("data.bin", chunks(8))], inventory::LARGE_FILE);
+        let counts = |fake: &Fake| fake.batches().iter().map(|b| b.0).collect::<Vec<_>>();
+        // The Spark daemon's 10 s frame deadline surfaces as a sidecar failure, not a timeout.
+        let sidecar = "Authenticated remote sidecar unavailable, busy or not paired; retry the same request ID";
+        let mut fake = Fake::new(Some(advertised()));
+        fake.route = "iroh".into();
+        fake.inject.push_back(("put_many", transient(sidecar)));
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        out.unwrap();
+        assert_eq!(counts(&fake), [2, 1, 1, 1, 1, 1, 1, 1, 1]);
+        assert_eq!(sleeps, secs(&[2]));
+        // A busy link is not a slow one: the batch keeps its size.
+        let mut fake = Fake::new(Some(advertised()));
+        fake.route = "iroh".into();
+        fake.inject
+            .push_back(("put_many", transient("Authenticated remote link is busy")));
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(counts(&fake), [2, 2, 2, 2, 2]);
+    }
+    #[test]
+    fn an_owner_disconnect_stops_polling_uploads_and_further_requests() {
+        let t = tree(
+            &[("main.rs", b"fn main() {}\n".to_vec())],
+            inventory::LARGE_FILE,
+        );
+        // Disconnected after the first poll: no further sync is sent.
+        let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+        fake.assembling = VecDeque::from([5, 10, 15]);
+        fake.disable_after = Some(2);
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        let error = out.unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str(), sleeps),
+            (
+                4,
+                "Bridge is disconnected; use sparkdev connect to enable new requests",
+                secs(&[2])
+            )
+        );
+        assert_eq!(fake.ops(), ["missing", "sync"]);
+        // Disconnected after the first upload batch: the next batch is never sent.
+        let big = tree(&[("data.bin", chunks(8))], inventory::LARGE_FILE);
+        let mut fake = Fake::new(Some(advertised()));
+        fake.disable_after = Some(4);
+        let error = run(&big.inv, &mut fake).0.unwrap_err();
+        assert_eq!(error.code, 4);
+        assert_eq!(fake.ops(), ["missing", "sync", "missing", "put_many"]);
+    }
+    #[test]
+    fn spark_disk_is_checked_before_an_upload_round() {
+        let t = tree(&[("data.bin", chunks(3))], inventory::LARGE_FILE);
+        // 3 MiB absent needs 6 MiB above the reserve: objects, then the assembled copy.
+        let mut fake = Fake::new(Some(advertised()));
+        fake.storage = json!({"free_bytes":64*GIB + 5*MIB,"reserve_bytes":64*GIB});
+        let error = run(&t.inv, &mut fake).0.unwrap_err();
+        assert_eq!(error.code, 6);
+        assert!(
+            error
+                .message
+                .starts_with("insufficient_disk: Spark has 64.0 GiB free")
+                && error.message.contains("keeps 64 GiB in reserve"),
+            "{}",
+            error.message
+        );
+        assert_eq!(fake.ops(), ["missing", "sync", "missing"]);
+        let mut fake = Fake::new(Some(advertised()));
+        fake.storage = json!({"free_bytes":64*GIB + 6*MIB,"reserve_bytes":64*GIB});
+        run(&t.inv, &mut fake).0.unwrap();
+        // No storage block (an older controller): nothing to compare.
+        let mut fake = Fake::new(Some(advertised()));
+        fake.storage = Value::Null;
+        run(&t.inv, &mut fake).0.unwrap();
     }
 }
