@@ -24,6 +24,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -80,6 +81,8 @@ SIOCGIFADDR = 0x8915
 MAX_IFACES = 1024
 MAX_WIRED = 16
 PROBE_DEADLINE = 2.5
+PROBE_LIMIT = PROBE_DEADLINE + 0.5  # Hard bound on the whole probe, sysfs reads included.
+REAP_WAIT = 0.2
 SYS_READ = 4096
 PROC_READ = CHUNK
 TCP_READ = 8 * CHUNK
@@ -590,10 +593,37 @@ def wireless_level(proc_root, name):
 
 
 def run_tool(argv, timeout):
-    """Run one fixed-path probe tool: argv only, fixed environment, no stdin or stderr."""
-    result = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            env=TOOL_ENV, timeout=timeout, check=False)
-    return result.stdout[:TOOL_READ] if result.returncode == 0 else None
+    """Run one fixed-path probe tool: argv only, fixed environment, no stdin or stderr.
+
+    A tool wedged in the kernel (a driver holding rtnl or the wiphy mutex) can ignore
+    SIGKILL, so after its timeout it is killed, given REAP_WAIT to exit, then abandoned.
+    """
+    process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=TOOL_ENV)
+    try:
+        stdout, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=REAP_WAIT)
+        raise
+    return stdout[:TOOL_READ] if process.returncode == 0 else None
+
+
+def bounded_call(function, limit):
+    """function() on a daemon thread; None unless it returns within `limit` seconds.
+
+    A sysfs carrier or speed read can block while a driver holds rtnl, and nothing else
+    bounds it; the abandoned thread dies with this short-lived RPC process.
+    """
+    box = []
+
+    def target():
+        with contextlib.suppress(Exception):
+            box.append(function())
+    thread = threading.Thread(target=target, name="sparkdev-link-probe", daemon=True)
+    thread.start()
+    thread.join(limit)
+    return box[0] if box else None
 
 
 def wifi_detail(name, run, proc_root, deadline):
@@ -1662,7 +1692,7 @@ class Controller:
         # The link report is observation only: a probe failure never fails status.
         network = {"v": 1, "observed": False, "basis": "unknown"}
         try:
-            network = network_view(self.link_probe())
+            network = network_view(bounded_call(self.link_probe, PROBE_LIMIT))
         except Exception:
             pass
         # Every preparation, whatever its runtime, needs the Python image for its proxy.

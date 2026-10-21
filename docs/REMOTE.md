@@ -154,7 +154,11 @@ the wired list is capped at 16). For Wi-Fi it runs `/usr/sbin/iw` or `/sbin/iw`
 (`dev IF link`, `dev IF info`), else `/usr/bin/nmcli -t -e yes -f
 ACTIVE,FREQ,CHAN,BANDWIDTH device wifi list ifname IF --rescan no`, with argv only,
 `LC_ALL=C`, a fixed `PATH`, no stdin or stderr, 64 KiB of stdout, a one-second
-timeout per call and a 2.5-second overall deadline. Signal falls back to
+timeout per call and a 2.5-second overall deadline. A tool still running at its timeout
+is killed, given 0.2 seconds to exit, then abandoned, because a tool wedged in a
+driver can ignore SIGKILL. The whole probe, sysfs reads included, runs on its own
+thread for at most 3 seconds; one that has not returned by then reports
+`observed:false`, so a wedged driver cannot hold `status` past the CLI's timeout. Signal falls back to
 `/proc/net/wireless`. It never scans and never requests SSID or BSSID fields. Raw
 tool output is parsed in memory and discarded, never logged. A single sanitizer
 rebuilds the object from whitelisted, bounded fields, so it holds no SSID, BSSID,

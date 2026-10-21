@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -1125,18 +1126,49 @@ class NetworkLinkTests(unittest.TestCase):
         finally:
             c.db.close()
 
+    @staticmethod
+    def tool(returncode=0, stdout=b"", hangs=False, unkillable=False):
+        process = mock.Mock(returncode=returncode)
+        process.communicate.side_effect = subprocess.TimeoutExpired("iw", 1) if hangs else None
+        process.communicate.return_value = (stdout, None)
+        process.wait.side_effect = subprocess.TimeoutExpired("iw", controller.REAP_WAIT) if unkillable else None
+        return process
+
     def test_default_tool_runner_is_argv_only_with_fixed_environment(self):
         argv = [IW_PATHS[0], "dev", "wlP9s9", "link"]
-        with mock.patch.object(controller.subprocess, "run", return_value=subprocess.CompletedProcess(argv, 0, b"x" * (TOOL_READ + 9))) as run:
+        with mock.patch.object(controller.subprocess, "Popen", return_value=self.tool(stdout=b"x" * (TOOL_READ + 9))) as popen:
             self.assertEqual(len(run_tool(argv, 0.75)), TOOL_READ)
-        args, kwargs = run.call_args
+        args, kwargs = popen.call_args
         self.assertEqual(args, (argv,))
-        self.assertEqual({k: kwargs[k] for k in ("stdin", "stdout", "stderr", "env", "timeout", "check")},
-                         {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.DEVNULL,
-                          "env": TOOL_ENV, "timeout": 0.75, "check": False})
-        self.assertNotIn("shell", kwargs)
-        with mock.patch.object(controller.subprocess, "run", return_value=subprocess.CompletedProcess(argv, 1, b"partial")):
+        self.assertEqual(kwargs, {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.DEVNULL, "env": TOOL_ENV})
+        popen.return_value.communicate.assert_called_once_with(timeout=0.75)
+        with mock.patch.object(controller.subprocess, "Popen", return_value=self.tool(returncode=1, stdout=b"partial")):
             self.assertIsNone(run_tool(argv, 0.75))
+
+    def test_a_tool_that_survives_its_kill_is_abandoned_not_awaited(self):
+        argv = [IW_PATHS[0], "dev", "wlP9s9", "link"]
+        for unkillable in (False, True):
+            process = self.tool(hangs=True, unkillable=unkillable)
+            with mock.patch.object(controller.subprocess, "Popen", return_value=process),                  self.assertRaises(subprocess.TimeoutExpired):
+                run_tool(argv, 0.75)
+            process.kill.assert_called_once_with()
+            process.wait.assert_called_once_with(timeout=controller.REAP_WAIT)
+
+    def test_a_probe_that_never_returns_cannot_hold_status(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        def wedged():
+            release.wait(60)  # A sysfs read blocked on rtnl.
+            return {"observed": True}
+        with mock.patch.object(controller, "PROBE_LIMIT", 0.2):
+            started = time.monotonic()
+            status, doctor = self.reports(wedged)
+            elapsed = time.monotonic() - started
+        self.assertTrue(status["ok"] and doctor["ok"])
+        self.assertEqual((status["network"], doctor["network"]), ({"v": 1, "observed": False, "basis": "unknown"},) * 2)
+        self.assertLess(elapsed, 10)
+        self.assertIsNone(controller.bounded_call(lambda: 1 / 0, 1))
+        self.assertEqual(controller.bounded_call(lambda: {"observed": False}, 1), {"observed": False})
         self.assertIsNone(controller.IFNAME.fullmatch("-wl0"))
         self.assertIsNone(controller.IFNAME.fullmatch("w" * 16))
         self.assertTrue(controller.IFNAME.fullmatch("enP2p1s0f1np1"))
