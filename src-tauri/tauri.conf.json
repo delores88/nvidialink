@@ -19,7 +19,7 @@
     "resources": {"../dist/bin/":"bin/","../dist/sparkdev-bundle.json":"sparkdev-bundle.json","../dist/sparkdev-remote/":"sparkdev-remote/","../LICENSE":"LICENSE","../dist/notices/":"notices/","../ui/vendor/QRCODE-LICENSE.txt":"notices/QRCODE-LICENSE.txt","../ui/vendor/PHASEFORGE-AUTHOR-NOTICE.txt":"notices/PHASEFORGE-AUTHOR-NOTICE.txt"},
     "windows": {
       "webviewInstallMode": {"type":"skip"},
-      "nsis": {"installMode":"currentUser","displayLanguageSelector":false,"installerIcon":"icons/icon.ico","startMenuFolder":"DeloresAI"}
+      "nsis": {"installMode":"currentUser","displayLanguageSelector":false,"installerIcon":"icons/icon.ico","startMenuFolder":"DeloresAI","installerHooks":"installer-hooks.nsh"}
     }
   }
 }
