@@ -1,0 +1,2385 @@
+{
+  "v": 1,
+  "mirror_commit": "15315f480287ffb8b7de857cadb590680874b5dc",
+  "source_files": [
+    {
+      "url": "https://raw.githubusercontent.com/blender/blender/8bf95cbd38d1456c94e9d751f3804eea4d5b137b/build_files/build_environment/cmake/versions.cmake",
+      "sha256": "960b7a6a1f4adc4b0e1a7e9d34c38fb3cba8e1253177461351b7d80acd17fb63",
+      "bytes": 69593
+    },
+    {
+      "url": "https://raw.githubusercontent.com/blender/blender/8bf95cbd38d1456c94e9d751f3804eea4d5b137b/build_files/build_environment/cmake/download.cmake",
+      "sha256": "b5997cfc0aec556add43a769eb580b0442c5d8b76c98e883adf1a9c606a69c62",
+      "bytes": 6000
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://codeload.github.com/blender/blender/tar.gz/8bf95cbd38d1456c94e9d751f3804eea4d5b137b",
+      "sha256": "41e8682083bd096cb25ee6c5ab2e484351030af90919b4c38415fddff0a5cf8a",
+      "bytes": 78305925,
+      "name": "blender",
+      "commit": "8bf95cbd38d1456c94e9d751f3804eea4d5b137b",
+      "prefix": "blender-8bf95cbd38d1456c94e9d751f3804eea4d5b137b",
+      "filename": "blender-source.tar.gz"
+    },
+    {
+      "url": "https://codeload.github.com/NVIDIA/optix-dev/tar.gz/f60c1e44f18426f426a2ed948f28515b3cf67b8a",
+      "sha256": "eca772dfede56ba073a1048ecf43de5af9c4e13a537222a21ee95ffa2164c5f6",
+      "bytes": 85794,
+      "name": "optix",
+      "commit": "f60c1e44f18426f426a2ed948f28515b3cf67b8a",
+      "prefix": "optix-dev-f60c1e44f18426f426a2ed948f28515b3cf67b8a",
+      "filename": "optix-source.tar.gz"
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "ZLIB",
+      "version": "1.3.1",
+      "filename": "zlib-1.3.1.tar.gz",
+      "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+      "bytes": 1512791,
+      "license": "SPDX:Zlib",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "9855b6d802d7fe5b7bd5b196a2271655",
+      "mirror_git_blob": "7fcf7e1430f919aa9d6532b5c5d6c78e8a79ade9",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+    },
+    {
+      "name": "PNG",
+      "version": "1.6.43",
+      "filename": "libpng-1.6.43.tar.xz",
+      "sha256": "6a5ca0652392a2d7c9db2ae5b40210843c0bbc081cbd410825ab00cc59f14a6c",
+      "bytes": 1044076,
+      "license": "SPDX:libpng-2.0",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "6a5ca0652392a2d7c9db2ae5b40210843c0bbc081cbd410825ab00cc59f14a6c",
+      "mirror_git_blob": "6b9b06f37dfa29d07e6fc77292c0086896fe8030",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/6a5ca0652392a2d7c9db2ae5b40210843c0bbc081cbd410825ab00cc59f14a6c"
+    },
+    {
+      "name": "JPEG",
+      "version": "2.1.3",
+      "filename": "libjpeg-turbo-2.1.3.tar.gz",
+      "sha256": "dbda0c685942aa3ea908496592491e5ec8160d2cf1ec9d5fd5470e50768e7859",
+      "bytes": 2260756,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "627b980fad0573e08e4c3b80b290fc91",
+      "mirror_git_blob": "da23558fbde154f1e9564fad4aba9343f7504c08",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/dbda0c685942aa3ea908496592491e5ec8160d2cf1ec9d5fd5470e50768e7859"
+    },
+    {
+      "name": "BLOSC",
+      "version": "1.21.1",
+      "filename": "blosc-1.21.1.tar.gz",
+      "sha256": "f387149eab24efa01c308e4cba0f59f64ccae57292ec9c794002232f7903b55b",
+      "bytes": 1456777,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "134b55813b1dca57019d2a2dc1f7a923",
+      "mirror_git_blob": "d2d7ef8d5182996c8dae61f59d43368d29f57b74",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/f387149eab24efa01c308e4cba0f59f64ccae57292ec9c794002232f7903b55b"
+    },
+    {
+      "name": "PTHREADS",
+      "version": "3.0.0",
+      "filename": "pthreads4w-code-3.0.0.zip",
+      "sha256": "b81136effb7185c77601fe2e0e6ac19bd996912e4814cebdd3010b0fac9e259b",
+      "bytes": 862409,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "f3bf81bb395840b3446197bcf4ecd653",
+      "mirror_git_blob": "e0ab7eebf7e7d9aaf70d839ff489b8e226597298",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/b81136effb7185c77601fe2e0e6ac19bd996912e4814cebdd3010b0fac9e259b"
+    },
+    {
+      "name": "OPENEXR",
+      "version": "3.3.2",
+      "filename": "openexr-3.3.2.tar.gz",
+      "sha256": "5013e964de7399bff1dd328cbf65d239a989a7be53255092fa10b85a8715744d",
+      "bytes": 21324765,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "0ca7b46575537ff495d9914166aafa65",
+      "mirror_git_blob": "c27140b87ab57faef2c0102e0a71830e01073fb0",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/5013e964de7399bff1dd328cbf65d239a989a7be53255092fa10b85a8715744d"
+    },
+    {
+      "name": "FREETYPE",
+      "version": "2.13.0",
+      "filename": "freetype-2.13.0.tar.gz",
+      "sha256": "a7aca0e532a276ea8d85bd31149f0a74c33d19c8d287116ef8f5f8357b4f1f80",
+      "bytes": 3819054,
+      "license": "SPDX:FTL",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "98bc3cf234fe88ef3cf24569251fe0a4",
+      "mirror_git_blob": "07701d873f3ccf559c04279ba3e99552df799c51",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/a7aca0e532a276ea8d85bd31149f0a74c33d19c8d287116ef8f5f8357b4f1f80"
+    },
+    {
+      "name": "EPOXY",
+      "version": "1.5.10",
+      "filename": "libepoxy-1.5.10.tar.gz",
+      "sha256": "a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15",
+      "bytes": 332078,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "f0730aad115c952e77591fcc805b1dc1",
+      "mirror_git_blob": "7f61108e5fd179ba6bdae4cfd622f7870d8ab2b8",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15"
+    },
+    {
+      "name": "OPENSUBDIV",
+      "version": "v3_6_0",
+      "filename": "opensubdiv-v3_6_0.tar.gz",
+      "sha256": "bebfd61ab6657a4f4ff27845fb66a167d00395783bfbd253254d87447ed1d879",
+      "bytes": 40746688,
+      "license": "TOST-1.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "cd03aaf8890bc0b8550eef62029cabe7",
+      "mirror_git_blob": "cc9864dd99b15c7aa287c6b6140fa992b487b7fe",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/bebfd61ab6657a4f4ff27845fb66a167d00395783bfbd253254d87447ed1d879"
+    },
+    {
+      "name": "OPENCOLORIO",
+      "version": "2.4.1",
+      "filename": "OpenColorIO-2.4.1.tar.gz",
+      "sha256": "d4eb15408b33dffd6ba0bba9a53328085b40bdd9319fa3d0d7348d06a8cbe842",
+      "bytes": 11386201,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "a11368ef8f001837f29b7dd18dbd2290",
+      "mirror_git_blob": "629faaf1075beef5305ff73871678c206b88698f",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/d4eb15408b33dffd6ba0bba9a53328085b40bdd9319fa3d0d7348d06a8cbe842"
+    },
+    {
+      "name": "MINIZIPNG",
+      "version": "3.0.7",
+      "filename": "minizip-ng-3.0.7.tar.gz",
+      "sha256": "39981a0db1bb6da504909bce63d7493286c5e50825c056564544c990d15c55cf",
+      "bytes": 643065,
+      "license": "SPDX:Zlib",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "09dcc8a9def348e1be9659e384c2cd55",
+      "mirror_git_blob": "bdf1c8fbbaf249967cec9a32a2f4595a7d2c729d",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/39981a0db1bb6da504909bce63d7493286c5e50825c056564544c990d15c55cf"
+    },
+    {
+      "name": "LLVM",
+      "version": "17.0.6",
+      "filename": "llvm-project-17.0.6.src.tar.xz",
+      "sha256": "58a8818c60e6627064f312dbf46c02d9949956558340938b71cf731ad8bc0813",
+      "bytes": 127838860,
+      "license": "SPDX:Apache-2.0 WITH LLVM-exception",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "62a09d65240a5133f001ace48269dbfc",
+      "mirror_git_blob": "9a7fe059772df27d4d1f353636990ff8a8f33c4f",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/58a8818c60e6627064f312dbf46c02d9949956558340938b71cf731ad8bc0813"
+    },
+    {
+      "name": "OPENIMAGEIO",
+      "version": "v3.0.6.1",
+      "filename": "OpenImageIO-v3.0.6.1.tar.gz",
+      "sha256": "4d0fb92e4964f79dfaed77ac73f1a7f754c671a9f5ad29c7950c0844916ce5f5",
+      "bytes": 52703969,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "935f926a7457ffd49fa4774449e99325",
+      "mirror_git_blob": "314f53e04d9ee3bba7b261912f0b041b84e9212a",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/4d0fb92e4964f79dfaed77ac73f1a7f754c671a9f5ad29c7950c0844916ce5f5"
+    },
+    {
+      "name": "TIFF",
+      "version": "4.7.0",
+      "filename": "tiff-4.7.0.tar.gz",
+      "sha256": "67160e3457365ab96c5b3286a0903aa6e78bdc44c4bc737d2e486bcecb6ba976",
+      "bytes": 3896583,
+      "license": "SPDX:libtiff",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "3a0fa4a270a4a192b08913f88d0cfbdd",
+      "mirror_git_blob": "1a863a09352a6474abe786fb53ef0d6c5b2df2d8",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/67160e3457365ab96c5b3286a0903aa6e78bdc44c4bc737d2e486bcecb6ba976"
+    },
+    {
+      "name": "PYTHON",
+      "version": "3.11.11",
+      "filename": "Python-3.11.11.tar.xz",
+      "sha256": "2a9920c7a0cd236de33644ed980a13cbbc21058bfdc528febb6081575ed73be3",
+      "bytes": 20085792,
+      "license": "SPDX:Python-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "3e497037b170fe4be5f462c4964596f2",
+      "mirror_git_blob": "788100b5eb3b987990f8ad542391ba1b676b1fb6",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/2a9920c7a0cd236de33644ed980a13cbbc21058bfdc528febb6081575ed73be3"
+    },
+    {
+      "name": "TBB",
+      "version": "v2021.13.0",
+      "filename": "oneTBB-v2021.13.0.tar.gz",
+      "sha256": "3ad5dd08954b39d113dc5b3f8a8dc6dc1fd5250032b7c491eb07aed5c94133e1",
+      "bytes": 2613916,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "f287cd007240a838286ff13e7deaee12",
+      "mirror_git_blob": "fa1a78c26d1b27d174348942c4527117fd7d7bd4",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/3ad5dd08954b39d113dc5b3f8a8dc6dc1fd5250032b7c491eb07aed5c94133e1"
+    },
+    {
+      "name": "OPENVDB",
+      "version": "12.0.0",
+      "filename": "openvdb-12.0.0.tar.gz",
+      "sha256": "23ceb5b18a851f45af118f718a9dd3001efaee364e3f623c37ffbdad03b8905f",
+      "bytes": 4687417,
+      "license": "SPDX:MPL-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "c5cd16784b6b42aaa956b574042f374d",
+      "mirror_git_blob": "0d5af66e9e23776398460d286ee732fa0fe3c354",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/23ceb5b18a851f45af118f718a9dd3001efaee364e3f623c37ffbdad03b8905f"
+    },
+    {
+      "name": "CYTHON",
+      "version": "3.0.11",
+      "filename": "cython-3.0.11.tar.gz",
+      "sha256": "7146dd2af8682b4ca61331851e6aebce9fe5158e75300343f80c07ca80b1faff",
+      "bytes": 2755544,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "388b85b7c23f501320d19d991b169f5d",
+      "mirror_git_blob": "0c6288b2f001e31cccdf6ad2704b263b51665307",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/7146dd2af8682b4ca61331851e6aebce9fe5158e75300343f80c07ca80b1faff"
+    },
+    {
+      "name": "ZSTANDARD",
+      "version": "0.23.0",
+      "filename": "zstandard-0.23.0.tar.gz",
+      "sha256": "b2d8c62d08e7255f68f7a740bae85b3c9b8e5466baa9cbf7f57f1cde0ac6bc09",
+      "bytes": 681701,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "b2d8c62d08e7255f68f7a740bae85b3c9b8e5466baa9cbf7f57f1cde0ac6bc09",
+      "mirror_git_blob": "33d9782cdf45ee08efd18742b6074e57138e0c75",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/b2d8c62d08e7255f68f7a740bae85b3c9b8e5466baa9cbf7f57f1cde0ac6bc09"
+    },
+    {
+      "name": "NUMPY",
+      "version": "1.26.4",
+      "filename": "numpy-1.26.4.tar.gz",
+      "sha256": "2a02aba9ed12e4ac4eb3ea9421c420301a0c6460d9830d74a9df87efa4912010",
+      "bytes": 15786129,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "19550cbe7bedd96a928da9d4ad69509d",
+      "mirror_git_blob": "7c54ed40db53d5ab15125647174cd24e4f30dd0a",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/2a02aba9ed12e4ac4eb3ea9421c420301a0c6460d9830d74a9df87efa4912010"
+    },
+    {
+      "name": "LAME",
+      "version": "3.100",
+      "filename": "lame-3.100.tar.gz",
+      "sha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e",
+      "bytes": 1524133,
+      "license": "SPDX:LGPL-2.1-or-later",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "83e260acbe4389b54fe08e0bdbf7cddb",
+      "mirror_git_blob": "d74b52d0dd4115dc4ae03ef97de173c5f7b1174f",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e"
+    },
+    {
+      "name": "OGG",
+      "version": "1.3.5",
+      "filename": "libogg-1.3.5.tar.gz",
+      "sha256": "0eb4b4b9420a0f51db142ba3f9c64b333f826532dc0f48c6410ae51f4799b664",
+      "bytes": 593071,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "0eb4b4b9420a0f51db142ba3f9c64b333f826532dc0f48c6410ae51f4799b664",
+      "mirror_git_blob": "72b09ee3fb0b014ef893fc89e27af11d870a7df2",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/0eb4b4b9420a0f51db142ba3f9c64b333f826532dc0f48c6410ae51f4799b664"
+    },
+    {
+      "name": "VORBIS",
+      "version": "1.3.7",
+      "filename": "libvorbis-1.3.7.tar.gz",
+      "sha256": "0e982409a9c3fc82ee06e08205b1355e5c6aa4c36bca58146ef399621b0ce5ab",
+      "bytes": 1658963,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "0e982409a9c3fc82ee06e08205b1355e5c6aa4c36bca58146ef399621b0ce5ab",
+      "mirror_git_blob": "52ac716f79d9fa92fe9cd51c1db4f799cbc4ed77",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/0e982409a9c3fc82ee06e08205b1355e5c6aa4c36bca58146ef399621b0ce5ab"
+    },
+    {
+      "name": "THEORA",
+      "version": "1.1.1",
+      "filename": "libtheora-1.1.1.tar.bz2",
+      "sha256": "b6ae1ee2fa3d42ac489287d3ec34c5885730b1296f0801ae577a35193d3affbc",
+      "bytes": 1903175,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "b6ae1ee2fa3d42ac489287d3ec34c5885730b1296f0801ae577a35193d3affbc",
+      "mirror_git_blob": "4a488aec361d810a02ea99bbcb945badc813c469",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/b6ae1ee2fa3d42ac489287d3ec34c5885730b1296f0801ae577a35193d3affbc"
+    },
+    {
+      "name": "FLAC",
+      "version": "1.4.2",
+      "filename": "flac-1.4.2.tar.xz",
+      "sha256": "e322d58a1f48d23d9dd38f432672865f6f79e73a6f9cc5a5f57fcaa83eb5a8e4",
+      "bytes": 1013700,
+      "license": "SPDX:GPL-2.0-or-later",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "e322d58a1f48d23d9dd38f432672865f6f79e73a6f9cc5a5f57fcaa83eb5a8e4",
+      "mirror_git_blob": "c65a5b530f733f60dc028f5e5372e62cd9cb367b",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/e322d58a1f48d23d9dd38f432672865f6f79e73a6f9cc5a5f57fcaa83eb5a8e4"
+    },
+    {
+      "name": "VPX",
+      "version": "1.14.0",
+      "filename": "libvpx-v1.14.0.tar.gz",
+      "sha256": "5f21d2db27071c8a46f1725928a10227ae45c5cd1cad3727e4aafbe476e321fa",
+      "bytes": 5606471,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "5f21d2db27071c8a46f1725928a10227ae45c5cd1cad3727e4aafbe476e321fa",
+      "mirror_git_blob": "008648bbed7854c5294d0a5e43119f53c46e248f",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/5f21d2db27071c8a46f1725928a10227ae45c5cd1cad3727e4aafbe476e321fa"
+    },
+    {
+      "name": "OPUS",
+      "version": "1.3.1",
+      "filename": "opus-1.3.1.tar.gz",
+      "sha256": "65b58e1e25b2a114157014736a3d9dfeaad8d41be1c8179866f144a2fb44ff9d",
+      "bytes": 1040054,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "65b58e1e25b2a114157014736a3d9dfeaad8d41be1c8179866f144a2fb44ff9d",
+      "mirror_git_blob": "57de77297d9cc2d4baef01dd4b20ffddf82d9870",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/65b58e1e25b2a114157014736a3d9dfeaad8d41be1c8179866f144a2fb44ff9d"
+    },
+    {
+      "name": "X264",
+      "version": "35fe20d1ba49918ec739a5b068c208ca82f977f7",
+      "filename": "x264-35fe20d1ba49918ec739a5b068c208ca82f977f7.tar.gz",
+      "sha256": "bb4f7da03936b5a030ed5827133b58eb3f701d7e5dce32cca4ba6df93797d42e",
+      "bytes": 942991,
+      "license": "SPDX:GPL-2.0-or-later",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "bb4f7da03936b5a030ed5827133b58eb3f701d7e5dce32cca4ba6df93797d42e",
+      "mirror_git_blob": "042d9a3d5a10ed5dd973d46552b2bec84735b58e",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/bb4f7da03936b5a030ed5827133b58eb3f701d7e5dce32cca4ba6df93797d42e"
+    },
+    {
+      "name": "X265",
+      "version": "3cf6c1e53037eb9e198860365712e1bafb22f7c6",
+      "filename": "x265-3cf6c1e53037eb9e198860365712e1bafb22f7c6.tar.gz",
+      "sha256": "40d12016192cdc740132cb00dd6cc80ead094ff91a1a897181256def2011342e",
+      "bytes": 1655386,
+      "license": "SPDX:GPL-2.0-or-later",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "40d12016192cdc740132cb00dd6cc80ead094ff91a1a897181256def2011342e",
+      "mirror_git_blob": "cff1ad8d24effd8d9ef33779ff39d8f97e8fe54a",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/40d12016192cdc740132cb00dd6cc80ead094ff91a1a897181256def2011342e"
+    },
+    {
+      "name": "OPENJPEG",
+      "version": "2.5.0",
+      "filename": "openjpeg-v2.5.0.tar.gz",
+      "sha256": "0333806d6adecc6f7a91243b2b839ff4d2053823634d4f6ed7a59bc87409122a",
+      "bytes": 1867111,
+      "license": "SPDX:BSD-2-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "0333806d6adecc6f7a91243b2b839ff4d2053823634d4f6ed7a59bc87409122a",
+      "mirror_git_blob": "f79bee42f47c1aee7afca7e500899a2c8dd815fd",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/0333806d6adecc6f7a91243b2b839ff4d2053823634d4f6ed7a59bc87409122a"
+    },
+    {
+      "name": "FFMPEG",
+      "version": "7.1.1",
+      "filename": "ffmpeg-7.1.1.tar.bz2",
+      "sha256": "0c8da2f11579a01e014fc007cbacf5bb4da1d06afd0b43c7f8097ec7c0f143ba",
+      "bytes": 13278839,
+      "license": "SPDX:LGPL-2.1-or-later",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "0c8da2f11579a01e014fc007cbacf5bb4da1d06afd0b43c7f8097ec7c0f143ba",
+      "mirror_git_blob": "c6a1da9093d6dfec7e4ae6a3dd4a4701c7145ec9",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/0c8da2f11579a01e014fc007cbacf5bb4da1d06afd0b43c7f8097ec7c0f143ba"
+    },
+    {
+      "name": "FFTW",
+      "version": "3.3.10",
+      "filename": "fftw-3.3.10.tar.gz",
+      "sha256": "56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467",
+      "bytes": 4144100,
+      "license": "SPDX:GPL-2.0-or-later",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "8ccbf6a5ea78a16dbc3e1306e234cc5c",
+      "mirror_git_blob": "5e961d1d22bcf6121542fac6ea373e36378ee4b8",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467"
+    },
+    {
+      "name": "ICONV",
+      "version": "1.16",
+      "filename": "libiconv-1.16.tar.gz",
+      "sha256": "e6a1b1b589654277ee790cce3734f07876ac4ccfaecbee8afa0b649cf529cc04",
+      "bytes": 5166734,
+      "license": "SPDX:LGPL-2.1-or-later",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "7d2a800b952942bb2880efb00cfd524c",
+      "mirror_git_blob": "b73c6a6c98881bad92eb64e9c26f23f7be36133b",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/e6a1b1b589654277ee790cce3734f07876ac4ccfaecbee8afa0b649cf529cc04"
+    },
+    {
+      "name": "SNDFILE",
+      "version": "1.2.2",
+      "filename": "libsndfile-1.2.2.tar.xz",
+      "sha256": "3799ca9924d3125038880367bf1468e53a1b7e3686a934f098b7e1d286cdb80e",
+      "bytes": 730760,
+      "license": "SPDX:LGPL-2.1-or-later",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "04e2e6f726da7c5dc87f8cf72f250d04",
+      "mirror_git_blob": "ee3b57c61a97acf9e0d5810d3706576d6d0220dd",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/3799ca9924d3125038880367bf1468e53a1b7e3686a934f098b7e1d286cdb80e"
+    },
+    {
+      "name": "WEBP",
+      "version": "1.3.2",
+      "filename": "libwebp-1.3.2.tar.gz",
+      "sha256": "2a499607df669e40258e53d0ade8035ba4ec0175244869d1025d460562aa09b4",
+      "bytes": 4162949,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "34869086761c0e2da6361035f7b64771",
+      "mirror_git_blob": "ad5572e01f25927004cbdededeb06d320b305500",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/2a499607df669e40258e53d0ade8035ba4ec0175244869d1025d460562aa09b4"
+    },
+    {
+      "name": "JEMALLOC",
+      "version": "5.2.1",
+      "filename": "jemalloc-5.2.1.tar.bz2",
+      "sha256": "34330e5ce276099e2e8950d9335db5a875689a4c6a56751ef3b1d8c537f887f6",
+      "bytes": 554279,
+      "license": "SPDX:BSD-2-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "3d41fbf006e6ebffd489bdb304d009ae",
+      "mirror_git_blob": "e04471128ec099817647097e427671eabadf03e4",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/34330e5ce276099e2e8950d9335db5a875689a4c6a56751ef3b1d8c537f887f6"
+    },
+    {
+      "name": "XML2",
+      "version": "2.13.5",
+      "filename": "libxml2-2.13.5.tar.xz",
+      "sha256": "74fc163217a3964257d3be39af943e08861263c4231f9ef5b496b6f6d4c7b2b6",
+      "bytes": 2586872,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "0b919be8edff97ade9c946e1a83bdecd",
+      "mirror_git_blob": "cc581518db23d89465896947971e27a2632d2341",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/74fc163217a3964257d3be39af943e08861263c4231f9ef5b496b6f6d4c7b2b6"
+    },
+    {
+      "name": "YAMLCPP",
+      "version": "0.7.0",
+      "filename": "yaml-cpp-0.7.0.tar.gz",
+      "sha256": "43e6a9fcb146ad871515f0d0873947e5d497a1c9c60c58cb102a97b47208b7c3",
+      "bytes": 1033237,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "74d646a3cc1b5d519829441db96744f0",
+      "mirror_git_blob": "17fd509a58e5bf2f4c6bf6265ac0d07f09e7aec3",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/43e6a9fcb146ad871515f0d0873947e5d497a1c9c60c58cb102a97b47208b7c3"
+    },
+    {
+      "name": "EXPAT",
+      "version": "2_6_4",
+      "filename": "libexpat-2_6_4.tar.gz",
+      "sha256": "372b18f6527d162fa9658f1c74d22a37429b82d822f5a1e1fc7e00f6045a06a2",
+      "bytes": 8419100,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "f2f8d61e2bd71d1118e1258ed9f4c0b7",
+      "mirror_git_blob": "3d18ad570049b799cca0a2266cf540d3361eaff2",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/372b18f6527d162fa9658f1c74d22a37429b82d822f5a1e1fc7e00f6045a06a2"
+    },
+    {
+      "name": "PUGIXML",
+      "version": "1.10",
+      "filename": "pugixml-1.10.tar.gz",
+      "sha256": "10f1f0a32b559ca8435d95855928d990cfbb9796e339efb638080c897728174c",
+      "bytes": 562718,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "0c208b0664c7fb822bf1b49ad035e8fd",
+      "mirror_git_blob": "f74854d21442325dc22a8933d8442a9b2579c8b6",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/10f1f0a32b559ca8435d95855928d990cfbb9796e339efb638080c897728174c"
+    },
+    {
+      "name": "BZIP2",
+      "version": "1.0.8",
+      "filename": "bzip2_1.0.8.orig.tar.gz",
+      "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+      "bytes": 810029,
+      "license": "SPDX:bzip2-1.0.6",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+      "mirror_git_blob": "4bccaf1130545dc4bf86ebb0339d0789ff6f208a",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269"
+    },
+    {
+      "name": "FFI",
+      "version": "3.4.4",
+      "filename": "libffi-3.4.4.tar.gz",
+      "sha256": "d66c56ad259a82cf2a9dfc408b32bf5da52371500b84745f7fb8b645712df676",
+      "bytes": 1362394,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "d66c56ad259a82cf2a9dfc408b32bf5da52371500b84745f7fb8b645712df676",
+      "mirror_git_blob": "9df19eab6ce0b28972af3adea21646ac72ca0c8e",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/d66c56ad259a82cf2a9dfc408b32bf5da52371500b84745f7fb8b645712df676"
+    },
+    {
+      "name": "LZMA",
+      "version": "5.2.5",
+      "filename": "xz-5.2.5.tar.bz2",
+      "sha256": "5117f930900b341493827d63aa910ff5e011e0b994197c3b71c08a20228a42df",
+      "bytes": 1473322,
+      "license": "SPDX:GPL-3.0-or-later",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "5117f930900b341493827d63aa910ff5e011e0b994197c3b71c08a20228a42df",
+      "mirror_git_blob": "1dbeae1fc9242b9264e73e7ac665c8746edfe2d2",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/5117f930900b341493827d63aa910ff5e011e0b994197c3b71c08a20228a42df"
+    },
+    {
+      "name": "SSL",
+      "version": "3.1.5",
+      "filename": "openssl-3.1.5.tar.gz",
+      "sha256": "6ae015467dabf0469b139ada93319327be24b98251ffaeceda0221848dc09262",
+      "bytes": 15663524,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "6ae015467dabf0469b139ada93319327be24b98251ffaeceda0221848dc09262",
+      "mirror_git_blob": "9db1c6e080a918811fb84a53fc32d4711e376a03",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/6ae015467dabf0469b139ada93319327be24b98251ffaeceda0221848dc09262"
+    },
+    {
+      "name": "SQLITE",
+      "version": "3.45.1",
+      "filename": "sqlite-autoconf-3450100.tar.gz",
+      "sha256": "cd9c27841b7a5932c9897651e20b86c701dd740556989b01ca596fcfa3d49a0a",
+      "bytes": 3232682,
+      "license": "Public Domain",
+      "upstream_hash_type": "SHA1",
+      "upstream_hash": "650305e234add12fc1e6bef0b365d86a087b3d38",
+      "mirror_git_blob": "79c10254690e07ee10582ccdc846f0bc6689f131",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/cd9c27841b7a5932c9897651e20b86c701dd740556989b01ca596fcfa3d49a0a"
+    },
+    {
+      "name": "EMBREE",
+      "version": "4.4.0",
+      "filename": "embree-v4.4.0.zip",
+      "sha256": "1b0e69c293ac93ca57229b159a8ad8424e8ec62ceeba2dd31f6d521b70691dd3",
+      "bytes": 70857649,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "56e5f414b9ae441b366be79867b8fb07",
+      "mirror_git_blob": "73e423f4c27d3d589334e9455e934ab9b35e43d6",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/1b0e69c293ac93ca57229b159a8ad8424e8ec62ceeba2dd31f6d521b70691dd3"
+    },
+    {
+      "name": "OIDN",
+      "version": "2.3.3",
+      "filename": "oidn-2.3.3.src.tar.gz",
+      "sha256": "ccf221535b4007607fb53d3ff5afa74de25413bb8ef5d03d215f46c7cc2f96cf",
+      "bytes": 93308113,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "f7756731235b51dfb788787e2f7c9ee0",
+      "mirror_git_blob": "d6139a3e19816b76cc443daf43d45eab4d15072b",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/ccf221535b4007607fb53d3ff5afa74de25413bb8ef5d03d215f46c7cc2f96cf"
+    },
+    {
+      "name": "NASM",
+      "version": "2.15.02",
+      "filename": "nasm-2.15.02.tar.gz",
+      "sha256": "aded8b796c996a486a56e0515c83e414116decc3b184d88043480b32eb0a8589",
+      "bytes": 1219823,
+      "license": null,
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "aded8b796c996a486a56e0515c83e414116decc3b184d88043480b32eb0a8589",
+      "mirror_git_blob": "79676f94874a2379750bc89c558f31e374eaf4bb",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/aded8b796c996a486a56e0515c83e414116decc3b184d88043480b32eb0a8589"
+    },
+    {
+      "name": "ISPC",
+      "version": "v1.21.1",
+      "filename": "ispc-v1.21.1.tar.gz",
+      "sha256": "9f4a11d68c1a3f64be7bad912ef00df50fa8fb3c3e98cebb502ee41d8f9e9fd7",
+      "bytes": 19599136,
+      "license": null,
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "edd16b016aabc07819d14fd86a1fb5d0",
+      "mirror_git_blob": "8440f9b7d4accc0e72c20f1a667c5efd03ba1833",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/9f4a11d68c1a3f64be7bad912ef00df50fa8fb3c3e98cebb502ee41d8f9e9fd7"
+    },
+    {
+      "name": "GMP",
+      "version": "6.3.0",
+      "filename": "gmp-6.3.0.tar.xz",
+      "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+      "bytes": 2094196,
+      "license": "SPDX:GPL-2.0-or-later",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "956dc04e864001a9c22429f761f2c283",
+      "mirror_git_blob": "6c63001f19130f2c7601984530fc592e95d3cf7c",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898"
+    },
+    {
+      "name": "ZSTD",
+      "version": "1.5.6",
+      "filename": "zstd-1.5.6.tar.gz",
+      "sha256": "8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1",
+      "bytes": 2406875,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1",
+      "mirror_git_blob": "ebcdd7536c038860062a90b3afb0211282e3bf37",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1"
+    },
+    {
+      "name": "SSE2NEON",
+      "version": "227cc413fb2d50b2a10073087be96b59d5364aea",
+      "filename": "sse2neon-227cc413fb2d50b2a10073087be96b59d5364aea.tar.gz",
+      "sha256": "3427a495743bb6fd1b5f9f806b80f57d67b1ac7ccf39a5f44aedd487fd7e6da1",
+      "bytes": 136342,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "3427a495743bb6fd1b5f9f806b80f57d67b1ac7ccf39a5f44aedd487fd7e6da1",
+      "mirror_git_blob": "6e1aba201d3c880a88d930123ea591a589454c1d",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/3427a495743bb6fd1b5f9f806b80f57d67b1ac7ccf39a5f44aedd487fd7e6da1"
+    },
+    {
+      "name": "FLEX",
+      "version": "2.6.4",
+      "filename": "flex-2.6.4.tar.gz",
+      "sha256": "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995",
+      "bytes": 1419096,
+      "license": null,
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "2882e3179748cc9f9c23ec593d6adc8d",
+      "mirror_git_blob": "7423e0809898e12c90846fbb402196ccd770d3de",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995"
+    },
+    {
+      "name": "BROTLI",
+      "version": "1.0.9",
+      "filename": "brotli-v1.0.9.tar.gz",
+      "sha256": "f9e8d81d0405ba66d181529af42a3354f838c939095ff99930da6aa9cdf6fe46",
+      "bytes": 486984,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "f9e8d81d0405ba66d181529af42a3354f838c939095ff99930da6aa9cdf6fe46",
+      "mirror_git_blob": "6810cd4b2722a4e15a400a97da41f8633126af6a",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/f9e8d81d0405ba66d181529af42a3354f838c939095ff99930da6aa9cdf6fe46"
+    },
+    {
+      "name": "FMT",
+      "version": "9.1.0",
+      "filename": "fmt-9.1.0.tar.gz",
+      "sha256": "5dea48d1fcddc3ec571ce2058e13910a0d4a6bab4cc09a809d8b1dd1c88ae6f2",
+      "bytes": 837901,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "5dea48d1fcddc3ec571ce2058e13910a0d4a6bab4cc09a809d8b1dd1c88ae6f2",
+      "mirror_git_blob": "22e2b4695b3d89a84f799cfed03a572042c89cc7",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/5dea48d1fcddc3ec571ce2058e13910a0d4a6bab4cc09a809d8b1dd1c88ae6f2"
+    },
+    {
+      "name": "ROBINMAP",
+      "version": "v1.3.0",
+      "filename": "robinmap-v1.3.0.tar.gz",
+      "sha256": "a8424ad3b0affd4c57ed26f0f3d8a29604f0e1f2ef2089f497f614b1c94c7236",
+      "bytes": 70562,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "a8424ad3b0affd4c57ed26f0f3d8a29604f0e1f2ef2089f497f614b1c94c7236",
+      "mirror_git_blob": "5456d0acc0d194e0059240d1f6749cfb99c6400b",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/a8424ad3b0affd4c57ed26f0f3d8a29604f0e1f2ef2089f497f614b1c94c7236"
+    },
+    {
+      "name": "IMATH",
+      "version": "3.1.7",
+      "filename": "imath-3.1.7.tar.gz",
+      "sha256": "bff1fa140f4af0e7f02c6cb78d41b9a7d5508e6bcdfda3a583e35460eb6d4b47",
+      "bytes": 583049,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "5cedab446ab296c080957c3037c6d097",
+      "mirror_git_blob": "0dfea0277f4fab313c2c2ce53c99f1a4572f287a",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/bff1fa140f4af0e7f02c6cb78d41b9a7d5508e6bcdfda3a583e35460eb6d4b47"
+    },
+    {
+      "name": "PYSTRING",
+      "version": "v1.1.3",
+      "filename": "pystring-v1.1.3.tar.gz",
+      "sha256": "358a56e756e701836b69a31c75d3d9d41c34d447cf7b3775bbd5620dcd3203d9",
+      "bytes": 18364,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "f2c68786b359f5e4e62bed53bc4fb86d",
+      "mirror_git_blob": "581e3190e24026751cf1c423042e3b99cea90ca6",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/358a56e756e701836b69a31c75d3d9d41c34d447cf7b3775bbd5620dcd3203d9"
+    },
+    {
+      "name": "OPENPGL",
+      "version": "v0.6.0",
+      "filename": "openpgl-v0.6.0.tar.gz",
+      "sha256": "4192a4096ee3e3d31878cd013f8de23418c8037c576537551f946c4811931c5e",
+      "bytes": 10824550,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "4192a4096ee3e3d31878cd013f8de23418c8037c576537551f946c4811931c5e",
+      "mirror_git_blob": "0e52675a1d7badf3e83dbd1d2a6ac4d1ef4ec3f4",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/4192a4096ee3e3d31878cd013f8de23418c8037c576537551f946c4811931c5e"
+    },
+    {
+      "name": "AOM",
+      "version": "3.4.0",
+      "filename": "libaom-3.4.0.tar.gz",
+      "sha256": "bd754b58c3fa69f3ffd29da77de591bd9c26970e3b18537951336d6c0252e354",
+      "bytes": 5175838,
+      "license": "SPDX:BSD-2-Clause",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "bd754b58c3fa69f3ffd29da77de591bd9c26970e3b18537951336d6c0252e354",
+      "mirror_git_blob": "9f9a269ae9491a5c4dfd3d55021b28cc9c0ad329",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/bd754b58c3fa69f3ffd29da77de591bd9c26970e3b18537951336d6c0252e354"
+    },
+    {
+      "name": "FRIBIDI",
+      "version": "v1.0.12",
+      "filename": "fribidi-v1.0.12.tar.gz",
+      "sha256": "2e9e859876571f03567ac91e5ed3b5308791f31cda083408c2b60fa1fe00a39d",
+      "bytes": 2110289,
+      "license": "SPDX:LGPL-2.1-or-later",
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "2e9e859876571f03567ac91e5ed3b5308791f31cda083408c2b60fa1fe00a39d",
+      "mirror_git_blob": "5733edf9ddb9d9c0e6bfafe88d8473c8f0c6aecf",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/2e9e859876571f03567ac91e5ed3b5308791f31cda083408c2b60fa1fe00a39d"
+    },
+    {
+      "name": "HARFBUZZ",
+      "version": "10.0.1",
+      "filename": "harfbuzz-10.0.1.tar.gz",
+      "sha256": "e7358ea86fe10fb9261931af6f010d4358dac64f7074420ca9bc94aae2bdd542",
+      "bytes": 36785875,
+      "license": null,
+      "upstream_hash_type": "SHA256",
+      "upstream_hash": "e7358ea86fe10fb9261931af6f010d4358dac64f7074420ca9bc94aae2bdd542",
+      "mirror_git_blob": "576d177da8f58293a39d9be4d1d57b1f16ec3917",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/e7358ea86fe10fb9261931af6f010d4358dac64f7074420ca9bc94aae2bdd542"
+    },
+    {
+      "name": "PYBIND11",
+      "version": "2.10.1",
+      "filename": "pybind-v2.10.1.tar.gz",
+      "sha256": "111014b516b625083bef701df7880f78c2243835abdb263065b6b59b960b6bad",
+      "bytes": 727880,
+      "license": "SPDX:BSD-2-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "ce07bfd5089245da7807b3faf6cbc878",
+      "mirror_git_blob": "e6aa0289ff61e93c8b4b56fd1d74d0cdb6e54a3c",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/111014b516b625083bef701df7880f78c2243835abdb263065b6b59b960b6bad"
+    },
+    {
+      "name": "DEFLATE",
+      "version": "1.18",
+      "filename": "libdeflate-v1.18.tar.gz",
+      "sha256": "225d982bcaf553221c76726358d2ea139bb34913180b20823c782cede060affd",
+      "bytes": 184924,
+      "license": "SPDX:MIT",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "a29d9dd653cbe03f2d5cd83972063f9e",
+      "mirror_git_blob": "1f6b099093b059b783ad32103821ea985abe5b55",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/225d982bcaf553221c76726358d2ea139bb34913180b20823c782cede060affd"
+    },
+    {
+      "name": "NANOBIND",
+      "version": "v2.1.0",
+      "filename": "nanobind-v2.1.0.tar.gz",
+      "sha256": "c37c53c60ada5fe1c956e24bd4b83af669a2309bf952bd251f36a7d2fa3bacf0",
+      "bytes": 850714,
+      "license": "SPDX:BSD-3-Clause",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "363e96957741869bb16ff983c042e72f",
+      "mirror_git_blob": "afc87bfc84a3a1140aeca610a91cac7422c56fe9",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/c37c53c60ada5fe1c956e24bd4b83af669a2309bf952bd251f36a7d2fa3bacf0"
+    },
+    {
+      "name": "MANIFOLD",
+      "version": "v3.1.0",
+      "filename": "Manifold-v3.1.0.tar.gz",
+      "sha256": "bdfc2cced7e41bad74aef01f765eb01e5d93b8ff4ef7434be6f825efe7908f93",
+      "bytes": 29612931,
+      "license": "SPDX:Apache-2.0",
+      "upstream_hash_type": "MD5",
+      "upstream_hash": "ddbc6b342d57b3a1a6c53cd60c63c867",
+      "mirror_git_blob": "2f606dc590da38c5906bb36db95c2685e1b9751f",
+      "url": "https://projects.blender.org/blender/lib-source.git/info/lfs/objects/bdfc2cced7e41bad74aef01f765eb01e5d93b8ff4ef7434be6f825efe7908f93"
+    }
+  ],
+  "python_wheels": [
+    {
+      "name": "setuptools",
+      "version": "63.2.0",
+      "filename": "setuptools-63.2.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/a4/53/bfc6409447ca024558b8b19d055de94c813c3e32c0296c48a0873a161cf5/setuptools-63.2.0-py3-none-any.whl",
+      "sha256": "0d33c374d41c7863419fc8f6c10bfe25b7b498aa34164d135c622e52580c6b16",
+      "bytes": 1228000
+    },
+    {
+      "name": "idna",
+      "version": "3.10",
+      "filename": "idna-3.10-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/76/c6/c88e154df9c4e1a2a66ccf0005a88dfb2650c1dffb6f5ce603dfbd452ce3/idna-3.10-py3-none-any.whl",
+      "sha256": "946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3",
+      "bytes": 70442
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.4.1",
+      "filename": "charset_normalizer-3.4.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/0e/f6/65ecc6878a89bb1c23a086ea335ad4bf21a588990c3f535a227b9eea9108/charset_normalizer-3.4.1-py3-none-any.whl",
+      "sha256": "d98b1668f06378c6dbefec3b92299716b931cd4e6061f3c875a71ced1780ab85",
+      "bytes": 49767
+    },
+    {
+      "name": "urllib3",
+      "version": "2.4.0",
+      "filename": "urllib3-2.4.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/6b/11/cc635220681e93a0183390e26485430ca2c7b5f9d33b15c74c2861cb8091/urllib3-2.4.0-py3-none-any.whl",
+      "sha256": "4e16665048960a0900c702d4a66415956a584919c03361cac9f1df5c5dd7e813",
+      "bytes": 128680
+    },
+    {
+      "name": "certifi",
+      "version": "2025.4.26",
+      "filename": "certifi-2025.4.26-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/4a/7e/3db2bd1b1f9e95f7cddca6d6e75e2f2bd9f51b1246e546d88addca0106bd/certifi-2025.4.26-py3-none-any.whl",
+      "sha256": "30350364dfe371162649852c63336a15c70c6510c2ad5015b21c2345311805f3",
+      "bytes": 159618
+    },
+    {
+      "name": "requests",
+      "version": "2.32.3",
+      "filename": "requests-2.32.3-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/f9/9b/335f9764261e915ed497fcdeb11df5dfd6f7bf257d4a6a2a686d80da4d54/requests-2.32.3-py3-none-any.whl",
+      "sha256": "70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6",
+      "bytes": 64928
+    },
+    {
+      "name": "autopep8",
+      "version": "2.3.1",
+      "filename": "autopep8-2.3.1-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/ad/9e/f0beffe45b507dca9d7540fad42b316b2fd1076dc484c9b1f23d9da570d7/autopep8-2.3.1-py2.py3-none-any.whl",
+      "sha256": "a203fe0fcad7939987422140ab17a930f684763bf7335bdb6709991dd7ef6c2d",
+      "bytes": 45667
+    },
+    {
+      "name": "pycodestyle",
+      "version": "2.13",
+      "filename": "pycodestyle-2.13.0-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/07/be/b00116df1bfb3e0bb5b45e29d604799f7b91dd861637e4d448b4e09e6a3e/pycodestyle-2.13.0-py2.py3-none-any.whl",
+      "sha256": "35863c5974a271c7a726ed228a14a4f6daf49df369d8c50cd9a6f58a5e143ba9",
+      "bytes": 31424
+    },
+    {
+      "name": "meson",
+      "version": "0.63.0",
+      "filename": "meson-0.63.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/57/01/02acf0471ca3c87cfc768e66cd6ddf2ac90b6d20999743d87da7ae2aa66a/meson-0.63.0-py3-none-any.whl",
+      "sha256": "399f2ca3181ef257fe3adb2deaff46bc19435cb8b1e883f26db831ce32139820",
+      "bytes": 884994
+    }
+  ],
+  "lfs_assets": [
+    {
+      "path": "assets/brushes/essentials_brushes-curve_sculpt.blend",
+      "sha256": "de873a20947e1fb7f19675b0f0c79dcdb9d58a75e5193aa2606f8ce0cc0b15f1",
+      "bytes": 827070,
+      "git_blob_sha1": "92fe3b3da11d9b731ebd4f1117f2ad288fdf07a3",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/de873a20947e1fb7f19675b0f0c79dcdb9d58a75e5193aa2606f8ce0cc0b15f1"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-gp_draw.blend",
+      "sha256": "90978cf45e1e075090d346f1a3d327b31c09271f780676d050c6b95cb67dc49d",
+      "bytes": 455879,
+      "git_blob_sha1": "ca0a8cf322edd0fdea7edd9832f102df56d3a2a3",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/90978cf45e1e075090d346f1a3d327b31c09271f780676d050c6b95cb67dc49d"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-gp_sculpt.blend",
+      "sha256": "edd368cb3097e8afd5f6ecaf66a395dba687941c8b4402039416b8ddb780e4f9",
+      "bytes": 317729,
+      "git_blob_sha1": "3d0a4688cf97deb6f16ca6bcacf5ad61e004c536",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/edd368cb3097e8afd5f6ecaf66a395dba687941c8b4402039416b8ddb780e4f9"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-gp_vertex.blend",
+      "sha256": "1de31a8acbb6e51524a5bd7151996d35922ca057b5091fbbec92e210aae3f7a0",
+      "bytes": 267291,
+      "git_blob_sha1": "a35e82022dccddc2f5903721e59106c6480b1d73",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1de31a8acbb6e51524a5bd7151996d35922ca057b5091fbbec92e210aae3f7a0"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-gp_weight.blend",
+      "sha256": "cc52281fdd49739a365325ffb5211cf43a91f5bc1649403d63fe86d3e92e37db",
+      "bytes": 213750,
+      "git_blob_sha1": "c090ea2c4590d8ea9df9b7ee16599409b6d13286",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/cc52281fdd49739a365325ffb5211cf43a91f5bc1649403d63fe86d3e92e37db"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-mesh_sculpt.blend",
+      "sha256": "b0357ed7ac2b362ec3d37caf638539a7cf1a0625306c5cbb7f840640761e602d",
+      "bytes": 2629923,
+      "git_blob_sha1": "0c155f555623832f32a227521e349f5b6abe5a90",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/b0357ed7ac2b362ec3d37caf638539a7cf1a0625306c5cbb7f840640761e602d"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-mesh_texture.blend",
+      "sha256": "f02b8d814ba97b4a6fea1fdc1b61b9ff9c77113b7996accde80c30322ce068ff",
+      "bytes": 872265,
+      "git_blob_sha1": "a1130339ac5be8284584d1c8057fb468774f4184",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/f02b8d814ba97b4a6fea1fdc1b61b9ff9c77113b7996accde80c30322ce068ff"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-mesh_vertex.blend",
+      "sha256": "7b4b5d973f1bc4a06f7553afc96c7cb0bd9a0c17921cd65903b40395eccd3300",
+      "bytes": 600678,
+      "git_blob_sha1": "96983337594cb11dda34da9971b59f6c629d427a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/7b4b5d973f1bc4a06f7553afc96c7cb0bd9a0c17921cd65903b40395eccd3300"
+    },
+    {
+      "path": "assets/brushes/essentials_brushes-mesh_weight.blend",
+      "sha256": "67b141b9f15b0709f954fcd5e1d846deb95f5da8615ae70f0adcfacb3025d87f",
+      "bytes": 404988,
+      "git_blob_sha1": "653ea10289f764b0ec9a82e703b50e7bc1746935",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/67b141b9f15b0709f954fcd5e1d846deb95f5da8615ae70f0adcfacb3025d87f"
+    },
+    {
+      "path": "assets/geometry_nodes/procedural_hair_node_assets.blend",
+      "sha256": "1d35a46a828a583ea5b9dde52862ee27debab544e1d8769699d6da2138c8bbe2",
+      "bytes": 2465506,
+      "git_blob_sha1": "e918fb57128a7883a32ff09dd32fee3ba59da2d4",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1d35a46a828a583ea5b9dde52862ee27debab544e1d8769699d6da2138c8bbe2"
+    },
+    {
+      "path": "assets/geometry_nodes/smooth_by_angle.blend",
+      "sha256": "a3c1b8eb6c1231b6a00b575c44b38571597da65e6a0238074c37a10c50a77023",
+      "bytes": 71770,
+      "git_blob_sha1": "a96d2e4304f0f074d27412ec51b8d1de340d7d55",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a3c1b8eb6c1231b6a00b575c44b38571597da65e6a0238074c37a10c50a77023"
+    },
+    {
+      "path": "release/datafiles/DejaVuSans-Lite.sfd.bz2",
+      "sha256": "7efca456dfd439a2218082d4293bd109892ba53c064064dc4d019bdb024f6422",
+      "bytes": 182524,
+      "git_blob_sha1": "cc5cb1e72bbb463bec08a749af21547686f64aac",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/7efca456dfd439a2218082d4293bd109892ba53c064064dc4d019bdb024f6422"
+    },
+    {
+      "path": "release/datafiles/icons/brush.generic.dat",
+      "sha256": "f24b3a4c53fd2e29dd1a7f49b7bdb0d13b9ecc0d7c567cda066d83aabe92acc3",
+      "bytes": 1574,
+      "git_blob_sha1": "8f78226afb3a93235a78a5abf33b67409a7f7761",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/f24b3a4c53fd2e29dd1a7f49b7bdb0d13b9ecc0d7c567cda066d83aabe92acc3"
+    },
+    {
+      "path": "release/datafiles/icons/brush.gpencil_draw.erase.dat",
+      "sha256": "33423bd93aa73e02d6cfd0fee443fe6d5a105b4c730b7ddf011c59f32dacde90",
+      "bytes": 1052,
+      "git_blob_sha1": "74cb4472497360f20ce7aaf5f8f344c9822a2761",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/33423bd93aa73e02d6cfd0fee443fe6d5a105b4c730b7ddf011c59f32dacde90"
+    },
+    {
+      "path": "release/datafiles/icons/brush.gpencil_draw.fill.dat",
+      "sha256": "55d9b56988868c4b42a1cfaf2884d0c7455131dda5d9c40b6f3473ae686b1a6c",
+      "bytes": 2276,
+      "git_blob_sha1": "8d5ac440ae6f83f7b339ae088469f91849a10867",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/55d9b56988868c4b42a1cfaf2884d0c7455131dda5d9c40b6f3473ae686b1a6c"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_texture.clone.dat",
+      "sha256": "bd69d5008200039b7030d4dd13e71cd76c1a716fc96fd71fc34b1d4722f1a56c",
+      "bytes": 764,
+      "git_blob_sha1": "32f73b9f6231e67ab1a36cf7b22d9cf334112bc8",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/bd69d5008200039b7030d4dd13e71cd76c1a716fc96fd71fc34b1d4722f1a56c"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_texture.fill.dat",
+      "sha256": "55d9b56988868c4b42a1cfaf2884d0c7455131dda5d9c40b6f3473ae686b1a6c",
+      "bytes": 2276,
+      "git_blob_sha1": "8d5ac440ae6f83f7b339ae088469f91849a10867",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/55d9b56988868c4b42a1cfaf2884d0c7455131dda5d9c40b6f3473ae686b1a6c"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_texture.mask.dat",
+      "sha256": "bbb4980d5bd6af99bcf5e558c919a2eca23d63dcc366f542bb8911e688ff379b",
+      "bytes": 476,
+      "git_blob_sha1": "643c285c2409c37b219b3c70e996f630e820bd12",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/bbb4980d5bd6af99bcf5e558c919a2eca23d63dcc366f542bb8911e688ff379b"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_texture.smear.dat",
+      "sha256": "e5a560ed1f5ba78fa8909efec0f2f3aed4033e81e3d9472fcaa41fef63a00f3b",
+      "bytes": 1700,
+      "git_blob_sha1": "08410162132d4bdbbbf84503d030da693a28ddb2",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/e5a560ed1f5ba78fa8909efec0f2f3aed4033e81e3d9472fcaa41fef63a00f3b"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_texture.soften.dat",
+      "sha256": "a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127",
+      "bytes": 1304,
+      "git_blob_sha1": "4c99ddc72eccd8d036da1c6dc29ef8a2a83ec033",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_vertex.average.dat",
+      "sha256": "d4b2f6c792b12926cf03cddd9b9b6d2166c7e37fed22d48ce7503ef3a1f75e7e",
+      "bytes": 3284,
+      "git_blob_sha1": "057aca451bb3d486f8985394b3332e1d10b93135",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d4b2f6c792b12926cf03cddd9b9b6d2166c7e37fed22d48ce7503ef3a1f75e7e"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_vertex.blur.dat",
+      "sha256": "a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127",
+      "bytes": 1304,
+      "git_blob_sha1": "4c99ddc72eccd8d036da1c6dc29ef8a2a83ec033",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_vertex.replace.dat",
+      "sha256": "386ca440fbf2f4bb7d39b33fa543bb291a0c2f8a4c40b79ac4e64172235b77e2",
+      "bytes": 2942,
+      "git_blob_sha1": "4ced7941d9d4680da9d37bc9d0a9c3e92596eef2",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/386ca440fbf2f4bb7d39b33fa543bb291a0c2f8a4c40b79ac4e64172235b77e2"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_vertex.smear.dat",
+      "sha256": "e5a560ed1f5ba78fa8909efec0f2f3aed4033e81e3d9472fcaa41fef63a00f3b",
+      "bytes": 1700,
+      "git_blob_sha1": "08410162132d4bdbbbf84503d030da693a28ddb2",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/e5a560ed1f5ba78fa8909efec0f2f3aed4033e81e3d9472fcaa41fef63a00f3b"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_weight.average.dat",
+      "sha256": "d4b2f6c792b12926cf03cddd9b9b6d2166c7e37fed22d48ce7503ef3a1f75e7e",
+      "bytes": 3284,
+      "git_blob_sha1": "057aca451bb3d486f8985394b3332e1d10b93135",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d4b2f6c792b12926cf03cddd9b9b6d2166c7e37fed22d48ce7503ef3a1f75e7e"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_weight.blur.dat",
+      "sha256": "a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127",
+      "bytes": 1304,
+      "git_blob_sha1": "4c99ddc72eccd8d036da1c6dc29ef8a2a83ec033",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127"
+    },
+    {
+      "path": "release/datafiles/icons/brush.paint_weight.smear.dat",
+      "sha256": "62d81b0f5c74b07654fbd74adcee09e40bdb536ec7889a37c37e954565a67a17",
+      "bytes": 1700,
+      "git_blob_sha1": "7da8de79267fe08d34efc7ce43f2ffcbac17eefc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/62d81b0f5c74b07654fbd74adcee09e40bdb536ec7889a37c37e954565a67a17"
+    },
+    {
+      "path": "release/datafiles/icons/brush.particle.add.dat",
+      "sha256": "1d64974550ba2c64dabcd446803307b658aac78b3a73ec284a90f91822eb3383",
+      "bytes": 2132,
+      "git_blob_sha1": "01659b67b58193b952c29817e79542a0c0cf6336",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1d64974550ba2c64dabcd446803307b658aac78b3a73ec284a90f91822eb3383"
+    },
+    {
+      "path": "release/datafiles/icons/brush.particle.comb.dat",
+      "sha256": "c4b91ab4190297a377ac73d9c79c0d2359d1753eec85cfd873470c23d41fd900",
+      "bytes": 4472,
+      "git_blob_sha1": "51bfd0b8261b05b7b9e07ba39397d366a6bc9dec",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c4b91ab4190297a377ac73d9c79c0d2359d1753eec85cfd873470c23d41fd900"
+    },
+    {
+      "path": "release/datafiles/icons/brush.particle.cut.dat",
+      "sha256": "693099c7084aaaed1c6e069097267c0294a8a845eba54e80209c1f6edda383e4",
+      "bytes": 2456,
+      "git_blob_sha1": "d6ef7c8d0739572eacbdf75350d77ccab850ec23",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/693099c7084aaaed1c6e069097267c0294a8a845eba54e80209c1f6edda383e4"
+    },
+    {
+      "path": "release/datafiles/icons/brush.particle.length.dat",
+      "sha256": "bf1c34055267f658b4443ecedc6f8a1ef113fc001267a0dd2af7a57e3bff1227",
+      "bytes": 1736,
+      "git_blob_sha1": "f454dee1b5f1b3cb234a5bad66f59f7d1fa96c10",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/bf1c34055267f658b4443ecedc6f8a1ef113fc001267a0dd2af7a57e3bff1227"
+    },
+    {
+      "path": "release/datafiles/icons/brush.particle.puff.dat",
+      "sha256": "6f3d23abf20de6d3fbd86dba62f5a485230ba88551ee9768e8df0c1c5554ee3e",
+      "bytes": 1718,
+      "git_blob_sha1": "329592f93eadcf6999355149dc844d410b5732bf",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/6f3d23abf20de6d3fbd86dba62f5a485230ba88551ee9768e8df0c1c5554ee3e"
+    },
+    {
+      "path": "release/datafiles/icons/brush.particle.smooth.dat",
+      "sha256": "b06e366c76f1c218cb219d1a995ced1617ce1579d9c55136b0b4f49d69c24a97",
+      "bytes": 746,
+      "git_blob_sha1": "77924ad0068ce5af47398138543d24170e75fec6",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/b06e366c76f1c218cb219d1a995ced1617ce1579d9c55136b0b4f49d69c24a97"
+    },
+    {
+      "path": "release/datafiles/icons/brush.particle.weight.dat",
+      "sha256": "fe4b22e81e2d7439c7131de00c6df9b0710741ab072f9ede4f3f8b96a86015ba",
+      "bytes": 2924,
+      "git_blob_sha1": "7bbafceb64da4e087c4b556c90503d0267277ffd",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/fe4b22e81e2d7439c7131de00c6df9b0710741ab072f9ede4f3f8b96a86015ba"
+    },
+    {
+      "path": "release/datafiles/icons/brush.sculpt.displacement_eraser.dat",
+      "sha256": "89449222a8e763697b33dbc0479e392a6580be4086465f8f79ab9f05dcb2a7b3",
+      "bytes": 3104,
+      "git_blob_sha1": "740c3600ee4df472d0d8ccb0cc37865bce84e7dc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/89449222a8e763697b33dbc0479e392a6580be4086465f8f79ab9f05dcb2a7b3"
+    },
+    {
+      "path": "release/datafiles/icons/brush.sculpt.displacement_smear.dat",
+      "sha256": "9151471ac435103e4c936e6e72634d6bde97aed0d5979ca76b419324eb455dd9",
+      "bytes": 3968,
+      "git_blob_sha1": "5f26145f8bd331d6814dbc17bb5ff6cdee5af960",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9151471ac435103e4c936e6e72634d6bde97aed0d5979ca76b419324eb455dd9"
+    },
+    {
+      "path": "release/datafiles/icons/brush.sculpt.draw_face_sets.dat",
+      "sha256": "8c5cf9b3dff149cecb682d39849e9c758de6726deca850858600f111bf2767b7",
+      "bytes": 3266,
+      "git_blob_sha1": "fa976c326adf725cb1fa7fefb0fad41cc42776e5",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/8c5cf9b3dff149cecb682d39849e9c758de6726deca850858600f111bf2767b7"
+    },
+    {
+      "path": "release/datafiles/icons/brush.sculpt.mask.dat",
+      "sha256": "0476def2be9046e2cc7cf5beb1966c5c325a24c35b08be0f41e201c697856858",
+      "bytes": 3266,
+      "git_blob_sha1": "9bce70f6a1ebb8b69cbf471b2cf4c0e185ded31a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0476def2be9046e2cc7cf5beb1966c5c325a24c35b08be0f41e201c697856858"
+    },
+    {
+      "path": "release/datafiles/icons/brush.sculpt.paint.dat",
+      "sha256": "9044aa41f8fcb0a210c8671b5c6aadc0f1443973eba824f6ad235fa81aeb8719",
+      "bytes": 1574,
+      "git_blob_sha1": "62597756af4966dba9d7d2914028fca61786eee6",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9044aa41f8fcb0a210c8671b5c6aadc0f1443973eba824f6ad235fa81aeb8719"
+    },
+    {
+      "path": "release/datafiles/icons/brush.sculpt.simplify.dat",
+      "sha256": "a19c16225085ac1fcb8da5a2994499e3e573a1fd8b1adbecc02be103ce3bbe15",
+      "bytes": 5480,
+      "git_blob_sha1": "53b9fbf433ad3ef65b2a5c0415b519a91c320889",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a19c16225085ac1fcb8da5a2994499e3e573a1fd8b1adbecc02be103ce3bbe15"
+    },
+    {
+      "path": "release/datafiles/icons/brush.uv_sculpt.grab.dat",
+      "sha256": "4fe94dc2b1418ab7c52f859724bc85cf4aa566a5b6e8702fe51549a26f07329f",
+      "bytes": 3176,
+      "git_blob_sha1": "a3d9bd44bc9e81258e87e2cd827bc72548668c19",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4fe94dc2b1418ab7c52f859724bc85cf4aa566a5b6e8702fe51549a26f07329f"
+    },
+    {
+      "path": "release/datafiles/icons/brush.uv_sculpt.pinch.dat",
+      "sha256": "471656f05b501ba784ff69ab3b9c3240a1f37b316c154dc118887a149b37c78d",
+      "bytes": 3968,
+      "git_blob_sha1": "5eb1c0a517ba6740eccec452004ffc2bbde84f02",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/471656f05b501ba784ff69ab3b9c3240a1f37b316c154dc118887a149b37c78d"
+    },
+    {
+      "path": "release/datafiles/icons/brush.uv_sculpt.relax.dat",
+      "sha256": "7f80bdf27d5fe8d5225031e2a72ef35388709ce132379b7a81da6de422c99510",
+      "bytes": 7208,
+      "git_blob_sha1": "e9d8d970855188a52d323b81549ae915d80840e4",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/7f80bdf27d5fe8d5225031e2a72ef35388709ce132379b7a81da6de422c99510"
+    },
+    {
+      "path": "release/datafiles/icons/none.dat",
+      "sha256": "5632ac4cb9c572b4403162ceb15d4dc2d601e4f9e4b63a3c0cc34f062e3abf2a",
+      "bytes": 3014,
+      "git_blob_sha1": "74b530af26d64a36b47174f27df876421de15d57",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/5632ac4cb9c572b4403162ceb15d4dc2d601e4f9e4b63a3c0cc34f062e3abf2a"
+    },
+    {
+      "path": "release/datafiles/icons/ops.armature.bone.roll.dat",
+      "sha256": "e5af15135066f995859038ddc0c16843d7aab525bed2eb3ad90595180fd6d6c9",
+      "bytes": 1646,
+      "git_blob_sha1": "94ab90523ff2175c200366be944a6fdef683ca6a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/e5af15135066f995859038ddc0c16843d7aab525bed2eb3ad90595180fd6d6c9"
+    },
+    {
+      "path": "release/datafiles/icons/ops.armature.extrude.cursor.dat",
+      "sha256": "18491cf431f2e6c39e751564e5a86acbe694a023f6e390b50c5cb77da448aa1a",
+      "bytes": 1502,
+      "git_blob_sha1": "ff74be6538e45e6e7c3854396a3fd9b159ce4464",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/18491cf431f2e6c39e751564e5a86acbe694a023f6e390b50c5cb77da448aa1a"
+    },
+    {
+      "path": "release/datafiles/icons/ops.armature.extrude.dat",
+      "sha256": "b343696858d818a9a25262bebf552b16614c630a16b27e3b69e8f4c47211fb85",
+      "bytes": 1250,
+      "git_blob_sha1": "daa3a9cfe59f4b3ecfb09be64733df88cb241b36",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/b343696858d818a9a25262bebf552b16614c630a16b27e3b69e8f4c47211fb85"
+    },
+    {
+      "path": "release/datafiles/icons/ops.armature.extrude_cursor.dat",
+      "sha256": "0c5c53e9972ce4c1bff0f14601a8905dea3a962fa2e7b3ae2f5bc3cb10a50ea8",
+      "bytes": 1574,
+      "git_blob_sha1": "b2cdce3ddc80e8c7c96a8409ec8df1413fb14f82",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0c5c53e9972ce4c1bff0f14601a8905dea3a962fa2e7b3ae2f5bc3cb10a50ea8"
+    },
+    {
+      "path": "release/datafiles/icons/ops.armature.extrude_move.dat",
+      "sha256": "8417a96ae76089c2abef139935f6174c498867d53c3247a72b48c6ba7a49853d",
+      "bytes": 1376,
+      "git_blob_sha1": "3e0a813ac78a39d3a9a3dd83f75f37c0b521b9c3",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/8417a96ae76089c2abef139935f6174c498867d53c3247a72b48c6ba7a49853d"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curve.draw.dat",
+      "sha256": "eb8572b4837645a62f714e13b12d80351a5418c9b729089b4f2dc297b1106d4d",
+      "bytes": 2402,
+      "git_blob_sha1": "4851d96dc2c0ee291ac3a99835de3eff32b7e928",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/eb8572b4837645a62f714e13b12d80351a5418c9b729089b4f2dc297b1106d4d"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curve.dupli_extrude_cursor.dat",
+      "sha256": "1acac49448d27d3bcadc996eacb62c9452a83a349e08899660bf52a36259a82a",
+      "bytes": 4202,
+      "git_blob_sha1": "1bb04f379e586ef3705a367529ce9f9830997e26",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1acac49448d27d3bcadc996eacb62c9452a83a349e08899660bf52a36259a82a"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curve.extrude_cursor.dat",
+      "sha256": "2d03e0cd2eb28f8f47466b16273f234cd2549d52e20b241893e68e3289ac09f7",
+      "bytes": 1844,
+      "git_blob_sha1": "b5e35ead2d8531d5dc9ee1952973f9a003003643",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/2d03e0cd2eb28f8f47466b16273f234cd2549d52e20b241893e68e3289ac09f7"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curve.extrude_move.dat",
+      "sha256": "f7e23ffe7c5b872b558b3e31973ddfacaa1c97fbc723cf8943f875bd7b79db4c",
+      "bytes": 1754,
+      "git_blob_sha1": "8c3efaf3764f9fa9f31216e4d3b951557916fd51",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/f7e23ffe7c5b872b558b3e31973ddfacaa1c97fbc723cf8943f875bd7b79db4c"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curve.pen.dat",
+      "sha256": "c4d097357a95179ca7562afb99f755aee73159faadfb8d28ce69b99dcd844018",
+      "bytes": 3374,
+      "git_blob_sha1": "0d4431c262466aa32931c98c8a48bd2648a31047",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c4d097357a95179ca7562afb99f755aee73159faadfb8d28ce69b99dcd844018"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curve.radius.dat",
+      "sha256": "4de5fba0f1c0860a1ee0a004e750555e189dc3a4f45767b9a6582274135fe6a8",
+      "bytes": 1466,
+      "git_blob_sha1": "630dd1c09cb8d1bb507c50b990b293df68903bcb",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4de5fba0f1c0860a1ee0a004e750555e189dc3a4f45767b9a6582274135fe6a8"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curve.vertex_random.dat",
+      "sha256": "083e37ee8ae80ba9f35108d3d28be54d4d6362408da97e0c30c36658a85fd8b7",
+      "bytes": 1412,
+      "git_blob_sha1": "bd306cdb72a67b6cf75433116612735323f8faaf",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/083e37ee8ae80ba9f35108d3d28be54d4d6362408da97e0c30c36658a85fd8b7"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curves.sculpt_add.dat",
+      "sha256": "1d64974550ba2c64dabcd446803307b658aac78b3a73ec284a90f91822eb3383",
+      "bytes": 2132,
+      "git_blob_sha1": "01659b67b58193b952c29817e79542a0c0cf6336",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1d64974550ba2c64dabcd446803307b658aac78b3a73ec284a90f91822eb3383"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curves.sculpt_delete.dat",
+      "sha256": "2a87dc4a0f2bbbb1f9f8062cf71a1bdad02568bbd6772c125dd7201c9b0bd1c2",
+      "bytes": 2060,
+      "git_blob_sha1": "64a8aa0288a168e6347104c35f7eaa467d555a37",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/2a87dc4a0f2bbbb1f9f8062cf71a1bdad02568bbd6772c125dd7201c9b0bd1c2"
+    },
+    {
+      "path": "release/datafiles/icons/ops.curves.sculpt_density.dat",
+      "sha256": "cdf5c0b9a80a9ba692855b2f5bee4472290abef2357633cb27687cc237f5926c",
+      "bytes": 3032,
+      "git_blob_sha1": "46e99389ccae10257d97df9e19b8339fb9ee176d",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/cdf5c0b9a80a9ba692855b2f5bee4472290abef2357633cb27687cc237f5926c"
+    },
+    {
+      "path": "release/datafiles/icons/ops.generic.cursor.dat",
+      "sha256": "eb295216341138029716c499b35005379b4e9297a1a7f35b5d13a852bd031111",
+      "bytes": 2168,
+      "git_blob_sha1": "9822e8f282799d856dbde7302e5503695410e9b9",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/eb295216341138029716c499b35005379b4e9297a1a7f35b5d13a852bd031111"
+    },
+    {
+      "path": "release/datafiles/icons/ops.generic.select.dat",
+      "sha256": "3f09dda7752731609385ee216288cc0ed416a0ee174efa34117130dd53fd7900",
+      "bytes": 296,
+      "git_blob_sha1": "ce6685caf2cec0e8953a9f3361931aca771022e7",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/3f09dda7752731609385ee216288cc0ed416a0ee174efa34117130dd53fd7900"
+    },
+    {
+      "path": "release/datafiles/icons/ops.generic.select_box.dat",
+      "sha256": "7da57dfd654cc9bb102ab1a737a49bf345252264fe4c14dcc01b27a847478699",
+      "bytes": 2312,
+      "git_blob_sha1": "06e7a17ee43150a418ad7f54a09fd0070c3443ac",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/7da57dfd654cc9bb102ab1a737a49bf345252264fe4c14dcc01b27a847478699"
+    },
+    {
+      "path": "release/datafiles/icons/ops.generic.select_circle.dat",
+      "sha256": "d9fcd517fdc3ac01765901f870679f446953ba55ee62c3ce1b2b7541217a0cea",
+      "bytes": 2564,
+      "git_blob_sha1": "398fa7ac4061a55490a628e3610e23728f3869a2",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d9fcd517fdc3ac01765901f870679f446953ba55ee62c3ce1b2b7541217a0cea"
+    },
+    {
+      "path": "release/datafiles/icons/ops.generic.select_lasso.dat",
+      "sha256": "25bcdb44f86822eaa63ece6d99318b38c1df4b9cb81be966e0c253e941496c6a",
+      "bytes": 2402,
+      "git_blob_sha1": "51624a278641a3c1ee5f0d08cc1a8d08dee56b1c",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/25bcdb44f86822eaa63ece6d99318b38c1df4b9cb81be966e0c253e941496c6a"
+    },
+    {
+      "path": "release/datafiles/icons/ops.generic.select_paint.dat",
+      "sha256": "127196c1adc3b5140cd6caca2b21f77c37ce75c89495f56f3b223c54b3fd76ea",
+      "bytes": 1790,
+      "git_blob_sha1": "f92fb5e44703d3fdb1dc4a5ce9a3d4da85dfe94e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/127196c1adc3b5140cd6caca2b21f77c37ce75c89495f56f3b223c54b3fd76ea"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.draw.dat",
+      "sha256": "0f84e11819aada302f0c6beca9c3c8d39e4445e4e1184c31ad1de9cbf4cc8e72",
+      "bytes": 1268,
+      "git_blob_sha1": "349612a7ea495e408668f3cb450703e145d62112",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0f84e11819aada302f0c6beca9c3c8d39e4445e4e1184c31ad1de9cbf4cc8e72"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.draw.eraser.dat",
+      "sha256": "799cd84512aa678a2dc4d4a7f5ff9aea9858c98109be09c4667663e3e15c2069",
+      "bytes": 1268,
+      "git_blob_sha1": "41c8a5f04bbe7dad7b6f7993fa5940f6df8b2860",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/799cd84512aa678a2dc4d4a7f5ff9aea9858c98109be09c4667663e3e15c2069"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.draw.line.dat",
+      "sha256": "e88797677143d8abaf6847d4c9bfe585ea03e011d88f2a79edda291511c40c25",
+      "bytes": 422,
+      "git_blob_sha1": "ba89f026d2be017632e5da5d09f4a5d51c985e3f",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/e88797677143d8abaf6847d4c9bfe585ea03e011d88f2a79edda291511c40c25"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.draw.poly.dat",
+      "sha256": "ba5fade3997a5f8cf40adff4ab64dbe2139b1f3b81775d668011e0aefd2c3af3",
+      "bytes": 548,
+      "git_blob_sha1": "ab589cbf041f89eb7dc9caba83ac9f3b05a5e808",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/ba5fade3997a5f8cf40adff4ab64dbe2139b1f3b81775d668011e0aefd2c3af3"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.edit_bend.dat",
+      "sha256": "9e1c260fde74e56a5016135a86ac24496aa72fd53cc3fe8d01a79a4555acc0db",
+      "bytes": 1664,
+      "git_blob_sha1": "51e5a15c15a866512799ea6c7ce6e649ef768efe",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9e1c260fde74e56a5016135a86ac24496aa72fd53cc3fe8d01a79a4555acc0db"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.edit_mirror.dat",
+      "sha256": "a12f0aacf4088e0bbc4411cca9d44b58decba8ad4da9952bb022c755840632d2",
+      "bytes": 3230,
+      "git_blob_sha1": "30ed500edd619bba23f1fe90aaf80223d6c494dd",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a12f0aacf4088e0bbc4411cca9d44b58decba8ad4da9952bb022c755840632d2"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.edit_shear.dat",
+      "sha256": "1ca17a6ce5ba416875f5fde2c26b1c55951141a80503008081d4f650311dd841",
+      "bytes": 1286,
+      "git_blob_sha1": "16c8de8d6b4f6ff6bee48b669aceea15591d6d0b",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1ca17a6ce5ba416875f5fde2c26b1c55951141a80503008081d4f650311dd841"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.edit_to_sphere.dat",
+      "sha256": "c6e239cfb6ddfb1ec8a3dfc0fa69cf73680f1831bfe2dc870bacc2a184de853d",
+      "bytes": 152,
+      "git_blob_sha1": "03bc99414d8955e8adcf561b5b95409f49eb2de8",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c6e239cfb6ddfb1ec8a3dfc0fa69cf73680f1831bfe2dc870bacc2a184de853d"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.extrude_move.dat",
+      "sha256": "d492288780d646277d2774674dc2bfa1e24221b6937fddd1869fba7bb41ee4f9",
+      "bytes": 5426,
+      "git_blob_sha1": "4be546827d1aad34153d75720f0eb47d3a90d575",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d492288780d646277d2774674dc2bfa1e24221b6937fddd1869fba7bb41ee4f9"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.primitive_arc.dat",
+      "sha256": "2f06e4b63fd0ce9b27ce96482f84440d5c6ce587911296a1c9f4b72260d8a9be",
+      "bytes": 1142,
+      "git_blob_sha1": "848866178df2476e8637540c8485e8ea0ae92657",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/2f06e4b63fd0ce9b27ce96482f84440d5c6ce587911296a1c9f4b72260d8a9be"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.primitive_box.dat",
+      "sha256": "11487a34115e894cc370f0f932d8dbab7d72ddd66d3404a9df0c79cc153f3cfa",
+      "bytes": 332,
+      "git_blob_sha1": "3a40d0f3685d50a17b0823945ea1184e59d230a2",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/11487a34115e894cc370f0f932d8dbab7d72ddd66d3404a9df0c79cc153f3cfa"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.primitive_circle.dat",
+      "sha256": "22a9bcf107bc051100c8e635d4380c90024a166779f21845eaf858caa114e5e7",
+      "bytes": 1340,
+      "git_blob_sha1": "8041717d9245ab05ad3d438043907e4cb29819ce",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/22a9bcf107bc051100c8e635d4380c90024a166779f21845eaf858caa114e5e7"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.primitive_curve.dat",
+      "sha256": "0ce05f984c1d7b92356ab889fde3bc868fbb1018e37ab60c6d03b97397d32404",
+      "bytes": 1196,
+      "git_blob_sha1": "a8d0cdbe256953ad4baf601947b730bfa2db4cc7",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0ce05f984c1d7b92356ab889fde3bc868fbb1018e37ab60c6d03b97397d32404"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.primitive_line.dat",
+      "sha256": "0e73a9a204c1d9e2727d1b3d6ee796bf5199a6de4def80f644b782460e15d462",
+      "bytes": 440,
+      "git_blob_sha1": "93053e2209e5f5e5399c6e463060cf1055c14a07",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0e73a9a204c1d9e2727d1b3d6ee796bf5199a6de4def80f644b782460e15d462"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.primitive_polyline.dat",
+      "sha256": "d071717a9bfe74e3737979ac8619f051d1658a56b8b9d28e1a2d1dc9500e08ef",
+      "bytes": 674,
+      "git_blob_sha1": "5674f9b8a13b2c70ad891c7f4ad4fd988b6aeb8c",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d071717a9bfe74e3737979ac8619f051d1658a56b8b9d28e1a2d1dc9500e08ef"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.radius.dat",
+      "sha256": "4de5fba0f1c0860a1ee0a004e750555e189dc3a4f45767b9a6582274135fe6a8",
+      "bytes": 1466,
+      "git_blob_sha1": "630dd1c09cb8d1bb507c50b990b293df68903bcb",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4de5fba0f1c0860a1ee0a004e750555e189dc3a4f45767b9a6582274135fe6a8"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.sculpt_average.dat",
+      "sha256": "d4b2f6c792b12926cf03cddd9b9b6d2166c7e37fed22d48ce7503ef3a1f75e7e",
+      "bytes": 3284,
+      "git_blob_sha1": "057aca451bb3d486f8985394b3332e1d10b93135",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d4b2f6c792b12926cf03cddd9b9b6d2166c7e37fed22d48ce7503ef3a1f75e7e"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.sculpt_blur.dat",
+      "sha256": "a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127",
+      "bytes": 1304,
+      "git_blob_sha1": "4c99ddc72eccd8d036da1c6dc29ef8a2a83ec033",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a06f9541ef8f0f4e4eb1e06999cf26be3721a9edf4a6e9f8c19c70db85cfc127"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.sculpt_clone.dat",
+      "sha256": "965fe7283e234a4baa6f9a5aa4d18e1e82a0f45e7311411eb7f1fb4e26fc4dcb",
+      "bytes": 3176,
+      "git_blob_sha1": "407a49bcad677e8e65360dca59c1006a2474f495",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/965fe7283e234a4baa6f9a5aa4d18e1e82a0f45e7311411eb7f1fb4e26fc4dcb"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.sculpt_smear.dat",
+      "sha256": "62d81b0f5c74b07654fbd74adcee09e40bdb536ec7889a37c37e954565a67a17",
+      "bytes": 1700,
+      "git_blob_sha1": "7da8de79267fe08d34efc7ce43f2ffcbac17eefc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/62d81b0f5c74b07654fbd74adcee09e40bdb536ec7889a37c37e954565a67a17"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.stroke_trim.dat",
+      "sha256": "3a74a6d883783b4b9b9ae920c504b6ac0b23a8921b906e1441d45a69575404a5",
+      "bytes": 1916,
+      "git_blob_sha1": "2b63171cd98c7f1e30470b74b2886d76c334bdb9",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/3a74a6d883783b4b9b9ae920c504b6ac0b23a8921b906e1441d45a69575404a5"
+    },
+    {
+      "path": "release/datafiles/icons/ops.gpencil.transform_fill.dat",
+      "sha256": "0e058974b029d99484341f82253fdc4e68b3fc4a001e092b749478dbca52f349",
+      "bytes": 2132,
+      "git_blob_sha1": "822fbd4da3b549dd424f642ac78f55b08875dbce",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0e058974b029d99484341f82253fdc4e68b3fc4a001e092b749478dbca52f349"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.bevel.dat",
+      "sha256": "740070114a6f55ac9ac99f9d22fd7012ae785006e1a44e33bfc64c74cde040a7",
+      "bytes": 422,
+      "git_blob_sha1": "0c6da1219a8e85b2330eaf566e77b81ab29f2b00",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/740070114a6f55ac9ac99f9d22fd7012ae785006e1a44e33bfc64c74cde040a7"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.bisect.dat",
+      "sha256": "4ce939fa079cae558980ed3338e4a4577ee7fa6f26d6ee9b1ee21bae2d749320",
+      "bytes": 494,
+      "git_blob_sha1": "536be918c5e2d16fa37b7af9fa5574e003834e56",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4ce939fa079cae558980ed3338e4a4577ee7fa6f26d6ee9b1ee21bae2d749320"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.dupli_extrude_cursor.dat",
+      "sha256": "9e89a90f1b287b5431c5e9fc2d9705e4db0d2badfa9545646ba68124dc861646",
+      "bytes": 746,
+      "git_blob_sha1": "873d805e675f77b713dd4763273fed8fca044bab",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9e89a90f1b287b5431c5e9fc2d9705e4db0d2badfa9545646ba68124dc861646"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.extrude_faces_move.dat",
+      "sha256": "62eae3218ba0524bd143422afb59f9494b917378209c9924437747387c796cf8",
+      "bytes": 296,
+      "git_blob_sha1": "c459766d44081343d97b0a80713ef5005b6457a9",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/62eae3218ba0524bd143422afb59f9494b917378209c9924437747387c796cf8"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.extrude_manifold.dat",
+      "sha256": "453bad97a0db3fc7ac87d54d11044d9f1a38919dfda586a833c203c3c85a7c54",
+      "bytes": 494,
+      "git_blob_sha1": "e95f467138f157d18dc336bba9160c3301e46492",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/453bad97a0db3fc7ac87d54d11044d9f1a38919dfda586a833c203c3c85a7c54"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.extrude_region_move.dat",
+      "sha256": "962b086de9b0eb9750c78caa9a208802f5b1000b55fd136eee38241acd25919d",
+      "bytes": 350,
+      "git_blob_sha1": "91e65febf05f6053688277728725e5ccaa0823ed",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/962b086de9b0eb9750c78caa9a208802f5b1000b55fd136eee38241acd25919d"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.extrude_region_shrink_fatten.dat",
+      "sha256": "c498c6de6c684956a40b3ee7520552c1808fce02b8779e88b80d9bac25fb39da",
+      "bytes": 224,
+      "git_blob_sha1": "234b07d5efe87676e2fe2851f6d15e8decf14399",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c498c6de6c684956a40b3ee7520552c1808fce02b8779e88b80d9bac25fb39da"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.inset.dat",
+      "sha256": "60f6a55f7ca242ac3d39db4f300521003f00e837c11d7d469553e00aef289a6c",
+      "bytes": 584,
+      "git_blob_sha1": "786a78267af8ccc02c4bd749034d6513a281564d",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/60f6a55f7ca242ac3d39db4f300521003f00e837c11d7d469553e00aef289a6c"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.knife_tool.dat",
+      "sha256": "8fec9a897bb43f07ec691f0aaffcc9943884250cf2d98f44db68872fc9e95e20",
+      "bytes": 1520,
+      "git_blob_sha1": "a382e4c36718b51e2a6574b57067365c51dc2785",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/8fec9a897bb43f07ec691f0aaffcc9943884250cf2d98f44db68872fc9e95e20"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.loopcut_slide.dat",
+      "sha256": "63a593ec0aaf5df19df1dfa0d219fd7b568bd989320840fc913d70d3a6f4e002",
+      "bytes": 710,
+      "git_blob_sha1": "853a6250b861d001c17b3a8d771f1213f521cede",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/63a593ec0aaf5df19df1dfa0d219fd7b568bd989320840fc913d70d3a6f4e002"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.offset_edge_loops_slide.dat",
+      "sha256": "d73a3c6f1223399ff68be37afb64f302b287409e7aa64afb4e26653d4aa97d50",
+      "bytes": 962,
+      "git_blob_sha1": "3cca666ecfb66b2350e8675a668fe3ef67abfd78",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d73a3c6f1223399ff68be37afb64f302b287409e7aa64afb4e26653d4aa97d50"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.polybuild_hover.dat",
+      "sha256": "0dc1239bcd378b710e67e63241d9c0e3066d7e01c1031f9a248232543681ccce",
+      "bytes": 4598,
+      "git_blob_sha1": "484a729dcc03e86231d9e06a5206fad2ffd0bc70",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0dc1239bcd378b710e67e63241d9c0e3066d7e01c1031f9a248232543681ccce"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.primitive_cone_add_gizmo.dat",
+      "sha256": "e9bc33ceeb716a28e88f9a8b18352f609f60d7c697b26671498f633af48ea78e",
+      "bytes": 2132,
+      "git_blob_sha1": "f91303963079faa4aa8969a86ea4926747f2e499",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/e9bc33ceeb716a28e88f9a8b18352f609f60d7c697b26671498f633af48ea78e"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.primitive_cube_add_gizmo.dat",
+      "sha256": "863b6fe4f5b0c41f5c9a1a8e37bd49e1ebb06026ac56a4bb0d79bcd288425d4a",
+      "bytes": 980,
+      "git_blob_sha1": "4d4e10e23ca2283fb694809e3ee7cc54ab7dff5d",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/863b6fe4f5b0c41f5c9a1a8e37bd49e1ebb06026ac56a4bb0d79bcd288425d4a"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.primitive_cylinder_add_gizmo.dat",
+      "sha256": "427cadfbf933eec90c1ef67e2d9b3a2f8438a7a899a331c745787b8151cd5abd",
+      "bytes": 5372,
+      "git_blob_sha1": "0fbe8ec00de15bc7f0b5379125d88ee99648dc6d",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/427cadfbf933eec90c1ef67e2d9b3a2f8438a7a899a331c745787b8151cd5abd"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.primitive_grid_add_gizmo.dat",
+      "sha256": "b253b1179f0ac9923ee4dfc44b5defaaa1d78d940cac96438ec40d600343f8ff",
+      "bytes": 566,
+      "git_blob_sha1": "749c76447008bb3b63c2794e7de6c5d4d7265476",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/b253b1179f0ac9923ee4dfc44b5defaaa1d78d940cac96438ec40d600343f8ff"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.primitive_sphere_add_gizmo.dat",
+      "sha256": "0914ddefbda5b12bfcaa2285f5b4a5ac9d4b21d7c1041a8d8cfa29b5de55e8f0",
+      "bytes": 6236,
+      "git_blob_sha1": "2c3c4f2ee884c086d1679fcfab1ff0f6287400ed",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0914ddefbda5b12bfcaa2285f5b4a5ac9d4b21d7c1041a8d8cfa29b5de55e8f0"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.primitive_torus_add_gizmo.dat",
+      "sha256": "83e183f21e2714f71eb5678c4f364ccb678f0e202beaebd915bbdc5a3404a0dd",
+      "bytes": 8252,
+      "git_blob_sha1": "acb4df6b246b641dd6ec59921b811514937fe683",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/83e183f21e2714f71eb5678c4f364ccb678f0e202beaebd915bbdc5a3404a0dd"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.rip.dat",
+      "sha256": "f5419a017c0b1680508cee88f5cb75f81d40f2bd0baf0719a92cc2746d41feeb",
+      "bytes": 944,
+      "git_blob_sha1": "f91469b16d6ef6e6dfd28a80d0b703b3d07c714e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/f5419a017c0b1680508cee88f5cb75f81d40f2bd0baf0719a92cc2746d41feeb"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.rip_edge.dat",
+      "sha256": "f8823c5e4f9de2199a08fe63fd45efc66078a6aff4bcb5cb4f7332e3f6606435",
+      "bytes": 890,
+      "git_blob_sha1": "15b48aacdc883b4f6882aff412406bd12d16c8e2",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/f8823c5e4f9de2199a08fe63fd45efc66078a6aff4bcb5cb4f7332e3f6606435"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.spin.dat",
+      "sha256": "681f49a553863ac96a3876c6e15b8ae33ad702d3847ca80147ec9d56f1379fbe",
+      "bytes": 1538,
+      "git_blob_sha1": "1eeaa79377c7f60f10405e28252d48b0a5460439",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/681f49a553863ac96a3876c6e15b8ae33ad702d3847ca80147ec9d56f1379fbe"
+    },
+    {
+      "path": "release/datafiles/icons/ops.mesh.vertices_smooth.dat",
+      "sha256": "9cbd0e1dae1c053fe0f09ba527c5b4a5eb7d9041a446390de146ca1f78ac4c0c",
+      "bytes": 296,
+      "git_blob_sha1": "de92182a6ad20be7ae4a20071f9ec669a58e56bc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9cbd0e1dae1c053fe0f09ba527c5b4a5eb7d9041a446390de146ca1f78ac4c0c"
+    },
+    {
+      "path": "release/datafiles/icons/ops.node.links_cut.dat",
+      "sha256": "22d6fabf47a38045be87f5df104c3f791562bbb94af41820d0621d8cc5910647",
+      "bytes": 1628,
+      "git_blob_sha1": "4248814c0dfb769fabc0a2f33ac56da4ed2fafc1",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/22d6fabf47a38045be87f5df104c3f791562bbb94af41820d0621d8cc5910647"
+    },
+    {
+      "path": "release/datafiles/icons/ops.paint.eyedropper_add.dat",
+      "sha256": "30b87385452a3b06fa70970180f788182ee3397b9f098b7869c9886af0351c01",
+      "bytes": 962,
+      "git_blob_sha1": "3800f64d432f3ede27390c8caec223322995e0bb",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/30b87385452a3b06fa70970180f788182ee3397b9f098b7869c9886af0351c01"
+    },
+    {
+      "path": "release/datafiles/icons/ops.paint.vertex_color_fill.dat",
+      "sha256": "90d1b7134b2226b8daada0bb14f98cec505c3d586b0278e6637bcfee1992f881",
+      "bytes": 1844,
+      "git_blob_sha1": "5282934d6a1d2129189c27b07578fca138ffcac6",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/90d1b7134b2226b8daada0bb14f98cec505c3d586b0278e6637bcfee1992f881"
+    },
+    {
+      "path": "release/datafiles/icons/ops.paint.weight_fill.dat",
+      "sha256": "55d9b56988868c4b42a1cfaf2884d0c7455131dda5d9c40b6f3473ae686b1a6c",
+      "bytes": 2276,
+      "git_blob_sha1": "8d5ac440ae6f83f7b339ae088469f91849a10867",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/55d9b56988868c4b42a1cfaf2884d0c7455131dda5d9c40b6f3473ae686b1a6c"
+    },
+    {
+      "path": "release/datafiles/icons/ops.paint.weight_gradient.dat",
+      "sha256": "a074c36806c99a2cfcee781c9c3d1be1393e20a1cc87de71e96f8fc9f862ed07",
+      "bytes": 1232,
+      "git_blob_sha1": "2480c7b92048d8d5bd867af61a210046bd87ee28",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a074c36806c99a2cfcee781c9c3d1be1393e20a1cc87de71e96f8fc9f862ed07"
+    },
+    {
+      "path": "release/datafiles/icons/ops.paint.weight_sample.dat",
+      "sha256": "1460a1e0da4f17a168012940464b707c7cbe074d7a47fa2c7f6fe1d20ca19d12",
+      "bytes": 1502,
+      "git_blob_sha1": "d2fd12d6ae931ddae924d7aa97eb7c8c53976d6b",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1460a1e0da4f17a168012940464b707c7cbe074d7a47fa2c7f6fe1d20ca19d12"
+    },
+    {
+      "path": "release/datafiles/icons/ops.paint.weight_sample_group.dat",
+      "sha256": "636424b98543a8abc8de3b625b0a864d75cd82bad9301220df22206136400cc7",
+      "bytes": 1538,
+      "git_blob_sha1": "15dfabe9334d3715e43b440b583b4bb83ea5b36d",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/636424b98543a8abc8de3b625b0a864d75cd82bad9301220df22206136400cc7"
+    },
+    {
+      "path": "release/datafiles/icons/ops.pose.breakdowner.dat",
+      "sha256": "72332769d6e1060cb6f068d18d1cbdb0d1b8977073f8a1b6011f2678557ef96b",
+      "bytes": 1682,
+      "git_blob_sha1": "cd8c21af2b0e76acbcfe0297cf344d85ca6569a8",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/72332769d6e1060cb6f068d18d1cbdb0d1b8977073f8a1b6011f2678557ef96b"
+    },
+    {
+      "path": "release/datafiles/icons/ops.pose.push.dat",
+      "sha256": "12c0dff9843824aa3e82d68cebe67f7fcdc4ddb40b80f7cafcf978b2bbcaa555",
+      "bytes": 2384,
+      "git_blob_sha1": "07113c0393a712578fe380b78a7e93d74ecf6adc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/12c0dff9843824aa3e82d68cebe67f7fcdc4ddb40b80f7cafcf978b2bbcaa555"
+    },
+    {
+      "path": "release/datafiles/icons/ops.pose.relax.dat",
+      "sha256": "4d27a1e765bd231ec01899c6df11f60608b3a23566e3a0d4de3ca87af18d3859",
+      "bytes": 1394,
+      "git_blob_sha1": "435344064740e7b8d9144495cc3ef03bd7f7be1a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4d27a1e765bd231ec01899c6df11f60608b3a23566e3a0d4de3ca87af18d3859"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.border_face_set.dat",
+      "sha256": "2d89df3c3e696da0da3fdbee89e65d808a6340b955e89ebf6e43ab5312a0c7c5",
+      "bytes": 1142,
+      "git_blob_sha1": "99c455df2ddcedf8f42aee37bad5583c37035d29",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/2d89df3c3e696da0da3fdbee89e65d808a6340b955e89ebf6e43ab5312a0c7c5"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.border_hide.dat",
+      "sha256": "955dc13406c6dc5b6c30c8370188f369f74926a599a417a1d13b9f7964e546fb",
+      "bytes": 620,
+      "git_blob_sha1": "25b1dca70e859c22a81f851384be776737d4f645",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/955dc13406c6dc5b6c30c8370188f369f74926a599a417a1d13b9f7964e546fb"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.border_mask.dat",
+      "sha256": "f1d61be13918e222f2c41e74bffee0dcb196ae0ed25eb2481e0d8beaa273e4d8",
+      "bytes": 944,
+      "git_blob_sha1": "cf5090ac0c69bbb59ba7ff44bc9f86ebbf1dc632",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/f1d61be13918e222f2c41e74bffee0dcb196ae0ed25eb2481e0d8beaa273e4d8"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.box_trim.dat",
+      "sha256": "70eea74ecff30c781b797aba494c12d5e2bd62326998bc1ffb78327723005d6f",
+      "bytes": 1736,
+      "git_blob_sha1": "3429a793f23c4ea3c015c7f215d43c25a1eb22ef",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/70eea74ecff30c781b797aba494c12d5e2bd62326998bc1ffb78327723005d6f"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.cloth_filter.dat",
+      "sha256": "7d09dd54067918e1acd3a530309b02e4d7a081da3c56ba8af1431205ce9c0193",
+      "bytes": 5570,
+      "git_blob_sha1": "6f41c11d754a9eb011627feaaf39877fed56587e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/7d09dd54067918e1acd3a530309b02e4d7a081da3c56ba8af1431205ce9c0193"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.color_filter.dat",
+      "sha256": "0f367f0e7dfe7c8545e0beb432a18c10ebad8f42fe83851f5e1e11626417f6d8",
+      "bytes": 1700,
+      "git_blob_sha1": "a21e12d169ec5a41e90c76e3ec07dd80f1966c52",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0f367f0e7dfe7c8545e0beb432a18c10ebad8f42fe83851f5e1e11626417f6d8"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.face_set_edit.dat",
+      "sha256": "065961069698bc5d07f10852e9c18a2c35823c93f457f82135f7df2ea61716aa",
+      "bytes": 1700,
+      "git_blob_sha1": "13b10b0e1898761b312097b7db28265e0216c910",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/065961069698bc5d07f10852e9c18a2c35823c93f457f82135f7df2ea61716aa"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.lasso_face_set.dat",
+      "sha256": "fa225076aba95166e89eb2c6b2d875a5726bec0d7333c73c9e9f567bb2b7c9ba",
+      "bytes": 3284,
+      "git_blob_sha1": "c4211d039380b35ec573fb620b9447c8d4b7e611",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/fa225076aba95166e89eb2c6b2d875a5726bec0d7333c73c9e9f567bb2b7c9ba"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.lasso_hide.dat",
+      "sha256": "15cd7f2f4e89ed392bc7d3b9175c4429067f87f8064b8312db679b360c176b65",
+      "bytes": 2240,
+      "git_blob_sha1": "b6253a481be5b57fe3ea423badb12bdade213ff9",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/15cd7f2f4e89ed392bc7d3b9175c4429067f87f8064b8312db679b360c176b65"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.lasso_mask.dat",
+      "sha256": "446b2365d244dc61fce95d6dd2aaacf98971f5978d3c40a6f932ddb1c648ed70",
+      "bytes": 2978,
+      "git_blob_sha1": "149c0d03d7a0f1fd4835ad503d37b97b9f57e798",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/446b2365d244dc61fce95d6dd2aaacf98971f5978d3c40a6f932ddb1c648ed70"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.lasso_trim.dat",
+      "sha256": "e499d12ec53d16a2eb7b7496bca522c954f92f9983831777da8676305171ccdc",
+      "bytes": 2816,
+      "git_blob_sha1": "0a1a0193b43ca58f5369a1ce10b4a45e367c6c49",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/e499d12ec53d16a2eb7b7496bca522c954f92f9983831777da8676305171ccdc"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.line_face_set.dat",
+      "sha256": "40fda788211766626759199dadcd57ad82c9f491cdc8e3a6db55a94702d01353",
+      "bytes": 1790,
+      "git_blob_sha1": "f3459605807764c9e5541066b3328c628ff02606",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/40fda788211766626759199dadcd57ad82c9f491cdc8e3a6db55a94702d01353"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.line_hide.dat",
+      "sha256": "fd46634964fdd1b9d604b77d860cbf935d8c1666827397e05d82fcd9ef6b1bbb",
+      "bytes": 1034,
+      "git_blob_sha1": "b3d1080abac705ce7e746a9e500923b9ec47119e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/fd46634964fdd1b9d604b77d860cbf935d8c1666827397e05d82fcd9ef6b1bbb"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.line_mask.dat",
+      "sha256": "66c008cd73458cfcad9bb22902de1cbc155512eecdf243aa6c58a22484826163",
+      "bytes": 1412,
+      "git_blob_sha1": "e0d2519d0f489d966c935de8a4308ef9ce93dc4a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/66c008cd73458cfcad9bb22902de1cbc155512eecdf243aa6c58a22484826163"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.line_project.dat",
+      "sha256": "58ae0011d9c4a03100e8f5573169c67213d7d0583234c9d9d16238ffdec91832",
+      "bytes": 1016,
+      "git_blob_sha1": "0f96103d37f5a390beaff4434d0772d72e61245d",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/58ae0011d9c4a03100e8f5573169c67213d7d0583234c9d9d16238ffdec91832"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.line_trim.dat",
+      "sha256": "6604dd2bb6d193f4c9259a905b112578e32e9786ae57089bc1aa8bf3c7e78b5e",
+      "bytes": 1826,
+      "git_blob_sha1": "6c6c6c3d8dd9aacb7ec117fa13505ec4f20067cc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/6604dd2bb6d193f4c9259a905b112578e32e9786ae57089bc1aa8bf3c7e78b5e"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.mask_by_color.dat",
+      "sha256": "1b8c0946caf311192c37276f20d17215c9940aa83d3cd3519c124aeab4dd998d",
+      "bytes": 3716,
+      "git_blob_sha1": "28fd335d05826a2c2a6f33704c3a3c41307b4056",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1b8c0946caf311192c37276f20d17215c9940aa83d3cd3519c124aeab4dd998d"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.mesh_filter.dat",
+      "sha256": "7a7cdaa99b48ca8556bb16d7511f627d06ca6f36cb4462ec36405fd67f26a4fa",
+      "bytes": 2060,
+      "git_blob_sha1": "c80366ec5e42516b7298cb31cfd0b7024d5582f6",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/7a7cdaa99b48ca8556bb16d7511f627d06ca6f36cb4462ec36405fd67f26a4fa"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.polyline_face_set.dat",
+      "sha256": "14c210a4c15342ba2ef8e4da8200f957a7a8c290d7b5d06180c15cc2d6e3e479",
+      "bytes": 4436,
+      "git_blob_sha1": "cba8969a50feccc763f78089145267e87c3d2c08",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/14c210a4c15342ba2ef8e4da8200f957a7a8c290d7b5d06180c15cc2d6e3e479"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.polyline_hide.dat",
+      "sha256": "3a6f7de7ab4a4a21e4faa63988d9c070c1de6028b52dc917f21344177fa408a2",
+      "bytes": 3626,
+      "git_blob_sha1": "923be0e7a02c1320c87ac21b653ebd7a80a67275",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/3a6f7de7ab4a4a21e4faa63988d9c070c1de6028b52dc917f21344177fa408a2"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.polyline_mask.dat",
+      "sha256": "4af58556ee21b6819ba69187dbb5e54b84d630f3fce2f1410f15dfaa8c002b48",
+      "bytes": 4400,
+      "git_blob_sha1": "fb7323fd51d18491845941331d7da84b0bfb9cb4",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4af58556ee21b6819ba69187dbb5e54b84d630f3fce2f1410f15dfaa8c002b48"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sculpt.polyline_trim.dat",
+      "sha256": "d2cbf25ed93ca242769a82e2414e406b963017b6d97aa705552785b1ce3b8f7f",
+      "bytes": 3716,
+      "git_blob_sha1": "86c6c8d5782496ffcbe069d32dd53bd2747712bf",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d2cbf25ed93ca242769a82e2414e406b963017b6d97aa705552785b1ce3b8f7f"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sequencer.blade.dat",
+      "sha256": "0bb3199539b0e7d0e41d44efeb56e9c2a515fb644ad8b73a2d02ebb592ad4b79",
+      "bytes": 1376,
+      "git_blob_sha1": "c38540a91ba648ae00c330626c96c120548d7327",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0bb3199539b0e7d0e41d44efeb56e9c2a515fb644ad8b73a2d02ebb592ad4b79"
+    },
+    {
+      "path": "release/datafiles/icons/ops.sequencer.retime.dat",
+      "sha256": "ee2de3eb373bc4bbcf8d8aa6ae192c08d6a09c67bdaf4d9f4e5dda7613b365a2",
+      "bytes": 3950,
+      "git_blob_sha1": "24717761dec65023aeddba48b643af4cac4e4a63",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/ee2de3eb373bc4bbcf8d8aa6ae192c08d6a09c67bdaf4d9f4e5dda7613b365a2"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.bone_envelope.dat",
+      "sha256": "f0f5e10b2e76f1fbddd299c192f7ce7707b6bbded552b3979d1735b90d75bd71",
+      "bytes": 1736,
+      "git_blob_sha1": "71330188a82b4a0e0c7d320605eb304feb96444e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/f0f5e10b2e76f1fbddd299c192f7ce7707b6bbded552b3979d1735b90d75bd71"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.bone_size.dat",
+      "sha256": "5c073cd4091e313c9bf5b27d0ea36f59de262707b890dc34de72ae7c34fb45e2",
+      "bytes": 1052,
+      "git_blob_sha1": "be4bbacd0a15ee2baef7313c05917f4911e5cee7",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/5c073cd4091e313c9bf5b27d0ea36f59de262707b890dc34de72ae7c34fb45e2"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.edge_slide.dat",
+      "sha256": "607cc2140e83179f4afa53ffcd37005926091d0b6db77237719a81d65e2ee6e4",
+      "bytes": 800,
+      "git_blob_sha1": "64222a9bc3449eafbc4461046bc91e9f035f76fe",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/607cc2140e83179f4afa53ffcd37005926091d0b6db77237719a81d65e2ee6e4"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.push_pull.dat",
+      "sha256": "a0e107b39c8962389dbe84991393c91f9d9937bb7952ca2b49343686996a6486",
+      "bytes": 728,
+      "git_blob_sha1": "2f111b495d714f365432203bacf35ee2e26cdf96",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a0e107b39c8962389dbe84991393c91f9d9937bb7952ca2b49343686996a6486"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.resize.cage.dat",
+      "sha256": "02de52ec4a5b3178c7306d1127f774310a18fc30a35eecaa88a01836c3a512dd",
+      "bytes": 2456,
+      "git_blob_sha1": "c0772ad0109ab4b255b1ba4dbccd0531c1b9698f",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/02de52ec4a5b3178c7306d1127f774310a18fc30a35eecaa88a01836c3a512dd"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.resize.dat",
+      "sha256": "c0b3db9821368c5177c0fc7e723001f1dca0568949ec53833451cb41414bebc8",
+      "bytes": 278,
+      "git_blob_sha1": "f46a778ec29f62a14bf0cdc4f3599d38b4698376",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c0b3db9821368c5177c0fc7e723001f1dca0568949ec53833451cb41414bebc8"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.rotate.dat",
+      "sha256": "397b60f9a6921263768b47ab1806d7f1935da2867fc97849e484df797e663aca",
+      "bytes": 1664,
+      "git_blob_sha1": "1a4c72cc42a693e325f672427854d68a474597f6",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/397b60f9a6921263768b47ab1806d7f1935da2867fc97849e484df797e663aca"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.shear.dat",
+      "sha256": "41c5642ecba5f36ae4c7186984e1c02b6eca6eb6a31e371e52d0685fb00aa21d",
+      "bytes": 206,
+      "git_blob_sha1": "0c35f0b04bee59d6ab3a66f03c8d84012538f473",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/41c5642ecba5f36ae4c7186984e1c02b6eca6eb6a31e371e52d0685fb00aa21d"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.shrink_fatten.dat",
+      "sha256": "4cd037ce44b6bacd683bac1ff309f9de5f247924dced9ea166a1ff097ddeec48",
+      "bytes": 1142,
+      "git_blob_sha1": "2ddad4071d9ca4d1a3fdc509227464f591cc73ef",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4cd037ce44b6bacd683bac1ff309f9de5f247924dced9ea166a1ff097ddeec48"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.tilt.dat",
+      "sha256": "456f7472b40983dbbaec7496a9b9f0479640648876e386fac19c2f97fccd5b6c",
+      "bytes": 5822,
+      "git_blob_sha1": "6fa6338c7799290763c0c77845da421027ae5f76",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/456f7472b40983dbbaec7496a9b9f0479640648876e386fac19c2f97fccd5b6c"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.tosphere.dat",
+      "sha256": "0cf7f85ac1657862c7b91b6e5da3fd71c4ca85b4c2cf8749692f40aa756ae59a",
+      "bytes": 1232,
+      "git_blob_sha1": "57c4c7594609faf46770e13490b36c89ab0c1c08",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/0cf7f85ac1657862c7b91b6e5da3fd71c4ca85b4c2cf8749692f40aa756ae59a"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.transform.dat",
+      "sha256": "c45737094488f6ec549587b22b0897549279fd4f0f4ed06be7e4bbe428819f0e",
+      "bytes": 1700,
+      "git_blob_sha1": "2cfdcb290f67353ac284f327bde9d66be95b2226",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c45737094488f6ec549587b22b0897549279fd4f0f4ed06be7e4bbe428819f0e"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.translate.dat",
+      "sha256": "fad345643f6c3edc6b6c5dc6b773581376a4238adb3013366056ef06576ee9a6",
+      "bytes": 224,
+      "git_blob_sha1": "c9e3fe44285c913a6b8e0d86db84a203cc09e273",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/fad345643f6c3edc6b6c5dc6b773581376a4238adb3013366056ef06576ee9a6"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.vert_slide.dat",
+      "sha256": "77847ef7ea89060326c62d032a9e6de1aa0a599621c2e288a3eeff48c02abc87",
+      "bytes": 1106,
+      "git_blob_sha1": "58d3b9e1df81c36c20e7439440fa10ec077e538f",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/77847ef7ea89060326c62d032a9e6de1aa0a599621c2e288a3eeff48c02abc87"
+    },
+    {
+      "path": "release/datafiles/icons/ops.transform.vertex_random.dat",
+      "sha256": "efd93373edf9dee26467c4e7fb292ec0125f01682929e1e8d4521f5902484f1d",
+      "bytes": 296,
+      "git_blob_sha1": "d6c0a4212f2e8e366ce206e8b0d6944d2b740885",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/efd93373edf9dee26467c4e7fb292ec0125f01682929e1e8d4521f5902484f1d"
+    },
+    {
+      "path": "release/datafiles/icons/ops.view3d.ruler.dat",
+      "sha256": "c3cc4544b73d8546460457fe157cb079a77af16bfbb27f84d2360772fcb99570",
+      "bytes": 1772,
+      "git_blob_sha1": "8a71d4658b737707db162ba5cb88fd62ae44bd63",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c3cc4544b73d8546460457fe157cb079a77af16bfbb27f84d2360772fcb99570"
+    },
+    {
+      "path": "release/datafiles/preview.blend",
+      "sha256": "703261170a8bc0d73f7c4a5563c9b3243db2befce8bf1e4a480936baec50b92f",
+      "bytes": 1412458,
+      "git_blob_sha1": "2c08ad530eafb5086785fda7439e346e2a3c3d61",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/703261170a8bc0d73f7c4a5563c9b3243db2befce8bf1e4a480936baec50b92f"
+    },
+    {
+      "path": "release/datafiles/preview_grease_pencil.blend",
+      "sha256": "de7feab80a8906b22f3d94cb8e6730e1339f0bd725a04d7838f406d3cd348bc3",
+      "bytes": 1126319,
+      "git_blob_sha1": "3294f1d73c8ebca0b569bc8478d51c2fb47225c9",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/de7feab80a8906b22f3d94cb8e6730e1339f0bd725a04d7838f406d3cd348bc3"
+    },
+    {
+      "path": "release/datafiles/splash.png",
+      "sha256": "1d10a8faddbddeeee97ed81ee1fc2283fd29f035ded278228d6daf65f00a067e",
+      "bytes": 570611,
+      "git_blob_sha1": "5e86bd33b75ed9f0a7dd520a132757e957e46ee6",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/1d10a8faddbddeeee97ed81ee1fc2283fd29f035ded278228d6daf65f00a067e"
+    },
+    {
+      "path": "release/datafiles/startup.blend",
+      "sha256": "5cecc6388292bc565d366a0a88d9139425d9cce2ac85e645fad41541febd4659",
+      "bytes": 885428,
+      "git_blob_sha1": "29966e8d75eebb330780473b9c0f147abbf8d5c4",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/5cecc6388292bc565d366a0a88d9139425d9cce2ac85e645fad41541febd4659"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/basic_1.exr",
+      "sha256": "4b5d96eac3da92df987788476dcc1fe7055cf8b8e7ede12f29395394059145d4",
+      "bytes": 44539,
+      "git_blob_sha1": "a65a409db1fd20b161b8dcde0405a58cc47e8d6d",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4b5d96eac3da92df987788476dcc1fe7055cf8b8e7ede12f29395394059145d4"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/basic_2.exr",
+      "sha256": "3d07b5a5af5a391ba6cd85d0bbae94b601c6ea7676cb7376f23aff507bd48624",
+      "bytes": 61142,
+      "git_blob_sha1": "dd3ccbbcbaa64aa475d5d5bd0c334b0d924aa28c",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/3d07b5a5af5a391ba6cd85d0bbae94b601c6ea7676cb7376f23aff507bd48624"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/basic_dark.exr",
+      "sha256": "ff23e6390e2fec045aaed8318b7ac4fd9064b2aac0ee929ea8b6223c1d7fa6b0",
+      "bytes": 38734,
+      "git_blob_sha1": "d8611f948ac5ab6b4a41799fbce58756f6cee51e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/ff23e6390e2fec045aaed8318b7ac4fd9064b2aac0ee929ea8b6223c1d7fa6b0"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/basic_side.exr",
+      "sha256": "2bda08f8ff008db7393f898e1fd939936a1ef76932a703e1c2532b94694f10a3",
+      "bytes": 41554,
+      "git_blob_sha1": "c3d8246d4af95dc4110190ffddbe3351f19aa9e9",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/2bda08f8ff008db7393f898e1fd939936a1ef76932a703e1c2532b94694f10a3"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/ceramic_dark.exr",
+      "sha256": "50db042a0f613c9b703a02f6765b37ea34eac579227a704259306650a93e60bd",
+      "bytes": 63518,
+      "git_blob_sha1": "bdf3975e820b025e36d47872b71636b53b8d3f21",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/50db042a0f613c9b703a02f6765b37ea34eac579227a704259306650a93e60bd"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/ceramic_lightbulb.exr",
+      "sha256": "5646bc6382f2337d1b416ef49a0c52770d669596718525654c6b27e7fa78d78a",
+      "bytes": 102212,
+      "git_blob_sha1": "c802810eab4c990f9d66ef422ad02896d2cf81cc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/5646bc6382f2337d1b416ef49a0c52770d669596718525654c6b27e7fa78d78a"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/check_normal+y.exr",
+      "sha256": "9242d1eb83b9c27ce8ee9f2ddcb06e74d94ab7ddccdd578d4e7f8c170e4048c6",
+      "bytes": 87477,
+      "git_blob_sha1": "53b00a4161e2195e64236d908a198a5d541f96fe",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9242d1eb83b9c27ce8ee9f2ddcb06e74d94ab7ddccdd578d4e7f8c170e4048c6"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/check_rim_dark.exr",
+      "sha256": "88c45d7bb7c56ebc477dca8f914693b895e949a4d1d593ad3d31320f609db100",
+      "bytes": 50807,
+      "git_blob_sha1": "640867797c96f8022104d9f01ef8eec8dc1bee8c",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/88c45d7bb7c56ebc477dca8f914693b895e949a4d1d593ad3d31320f609db100"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/check_rim_light.exr",
+      "sha256": "aae39719f5b53d3459d46f24df8c6da876ae8ca7a7b2193b8b25f325df5ae415",
+      "bytes": 56757,
+      "git_blob_sha1": "48688e5e9e8fe46baa9e8fdf7bb09e72cdcf8fc4",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/aae39719f5b53d3459d46f24df8c6da876ae8ca7a7b2193b8b25f325df5ae415"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/clay_brown.exr",
+      "sha256": "92b924ee8da9d45d9df9e206e2147eafead29bc342a4ef224fa9000617509a6a",
+      "bytes": 65156,
+      "git_blob_sha1": "7c51b27e231729cce7815ef7aa9089f04b77f10c",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/92b924ee8da9d45d9df9e206e2147eafead29bc342a4ef224fa9000617509a6a"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/clay_muddy.exr",
+      "sha256": "b5a2b4e51e0e40343449d7c1d28554b6fb20a6100c0d1fd09e8aba264a5bcc8e",
+      "bytes": 53778,
+      "git_blob_sha1": "7930cfe8f819fc5da86a6a9655cf5c23f015cdbd",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/b5a2b4e51e0e40343449d7c1d28554b6fb20a6100c0d1fd09e8aba264a5bcc8e"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/clay_studio.exr",
+      "sha256": "09ec677677986e3418b4aefc24938040715bac831288a2688ce940eb8459b4b1",
+      "bytes": 51624,
+      "git_blob_sha1": "2433183224331931d388f081ba39ecadc09b9a09",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/09ec677677986e3418b4aefc24938040715bac831288a2688ce940eb8459b4b1"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/jade.exr",
+      "sha256": "68dd3750f1b5b27c78866f1c139f558210cf151e1b7b241826e58170fa287d18",
+      "bytes": 63103,
+      "git_blob_sha1": "2ea94e16ccaa86275e5a78df38546683b485c9f7",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/68dd3750f1b5b27c78866f1c139f558210cf151e1b7b241826e58170fa287d18"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/metal_anisotropic.exr",
+      "sha256": "187b76f28af9a9412171c561eea15d8f5ea577cffb9a4f7f53a712aa1a9f6842",
+      "bytes": 118909,
+      "git_blob_sha1": "117af780cd1e3bb9a09415d95de652ea11161f02",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/187b76f28af9a9412171c561eea15d8f5ea577cffb9a4f7f53a712aa1a9f6842"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/metal_carpaint.exr",
+      "sha256": "d93f2facf97ddfb29fa2e0369c080773cd4bf8bd6ede6df51b71444f8448a8ab",
+      "bytes": 91775,
+      "git_blob_sha1": "05c9304c7e087ce2588bc3c52c6491fc28826a9a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/d93f2facf97ddfb29fa2e0369c080773cd4bf8bd6ede6df51b71444f8448a8ab"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/metal_lead.exr",
+      "sha256": "9c20d2a19dc59fcaaa2f6cc54213fd7a4326739df934f6298ee3fec93ec0379c",
+      "bytes": 41455,
+      "git_blob_sha1": "3ce3128d8b5fec3182c60b70b3707f065d4481f8",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9c20d2a19dc59fcaaa2f6cc54213fd7a4326739df934f6298ee3fec93ec0379c"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/metal_shiny.exr",
+      "sha256": "aa4f5eead4b05c8c724923ad94ad1b5145f38b3886a1a8437dab6bac2fdabb8c",
+      "bytes": 126238,
+      "git_blob_sha1": "4959f12cd6b6250ba8f84d8e032719a6e53c0c2e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/aa4f5eead4b05c8c724923ad94ad1b5145f38b3886a1a8437dab6bac2fdabb8c"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/pearl.exr",
+      "sha256": "a23ce63d3baec3e6e0874ececbbfb348e54471f7b28aabaf3b5f495f07b59fa6",
+      "bytes": 70218,
+      "git_blob_sha1": "d254201f5575ecf83013e368574aed9a3c74f965",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a23ce63d3baec3e6e0874ececbbfb348e54471f7b28aabaf3b5f495f07b59fa6"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/reflection_check_horizontal.exr",
+      "sha256": "b5e3351d2effed79f82aaf7eca0eee97a15791ed58f37be9abc1d4f2d7d919ef",
+      "bytes": 51939,
+      "git_blob_sha1": "5f41d07339b7ec16bcc6563ff137cf285cf8eedd",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/b5e3351d2effed79f82aaf7eca0eee97a15791ed58f37be9abc1d4f2d7d919ef"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/reflection_check_vertical.exr",
+      "sha256": "514153e038b669920475851afd5f6d4e16cab54124f127e356121336cac01561",
+      "bytes": 54453,
+      "git_blob_sha1": "c9292c7c053fbf29aafbcf20d2764123361816bc",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/514153e038b669920475851afd5f6d4e16cab54124f127e356121336cac01561"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/resin.exr",
+      "sha256": "355fc4ee18e040282ce67dd6e971dd969949491112e619b968e8c1a983a5b138",
+      "bytes": 91009,
+      "git_blob_sha1": "09c167f01b7c28d23664c7a163809314984c920f",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/355fc4ee18e040282ce67dd6e971dd969949491112e619b968e8c1a983a5b138"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/skin.exr",
+      "sha256": "edb309f3feda69eac919deff2b7bbce695074e9bc95cc95012a2ec02367e2be6",
+      "bytes": 55351,
+      "git_blob_sha1": "bd86cfcc20ae465723cc937ce7f0a8dbfe751d1f",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/edb309f3feda69eac919deff2b7bbce695074e9bc95cc95012a2ec02367e2be6"
+    },
+    {
+      "path": "release/datafiles/studiolights/matcap/toon.exr",
+      "sha256": "4e94f06e47590e8b97cc9cd6e3fe59b01739c74278257e5108f676a7e900ca59",
+      "bytes": 55733,
+      "git_blob_sha1": "d7babda05e18f5eb065eb6ab033a404bec78567e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/4e94f06e47590e8b97cc9cd6e3fe59b01739c74278257e5108f676a7e900ca59"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/city.exr",
+      "sha256": "9e42abcd2fa3231e5c2485ca6dd64800534d157b7194ab7fe9cc3bf5a56d0256",
+      "bytes": 204863,
+      "git_blob_sha1": "fac69a5403a2a3b51d725bca679174d2f0208b25",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/9e42abcd2fa3231e5c2485ca6dd64800534d157b7194ab7fe9cc3bf5a56d0256"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/courtyard.exr",
+      "sha256": "6690b47725965531559380121e6878373eb599655e35fefd109a4bd0911366f3",
+      "bytes": 255126,
+      "git_blob_sha1": "142504138fb47eba3024495d69923211ebeda9b0",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/6690b47725965531559380121e6878373eb599655e35fefd109a4bd0911366f3"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/forest.exr",
+      "sha256": "bdf2298244affa0f85509380fd130ac6d4dfaa3c856df065998f7f4c1a93dc0d",
+      "bytes": 552641,
+      "git_blob_sha1": "7809de1141fe935457de0cc73d8fe87ecf924e1a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/bdf2298244affa0f85509380fd130ac6d4dfaa3c856df065998f7f4c1a93dc0d"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/interior.exr",
+      "sha256": "e945ff5c1ddd7a3aaf05e9fb5c3bc9cb93c5518414febd44ed2c394e013f0cbd",
+      "bytes": 189416,
+      "git_blob_sha1": "ddb91daa8b222bedea152d60221499768d0e0fd7",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/e945ff5c1ddd7a3aaf05e9fb5c3bc9cb93c5518414febd44ed2c394e013f0cbd"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/night.exr",
+      "sha256": "17480af5547465d160f7307c92585cf30820ca563f87f066395decbad8ac32a4",
+      "bytes": 139959,
+      "git_blob_sha1": "380591f26bebbd1419b703145dedb20cab765f59",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/17480af5547465d160f7307c92585cf30820ca563f87f066395decbad8ac32a4"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/studio.exr",
+      "sha256": "c36c7fd390b2cdf8693360cf3662cb1d710c95fa799d9f822f42997167839b56",
+      "bytes": 98015,
+      "git_blob_sha1": "13704e8dc62b373b0f15f1905fe321597618614a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/c36c7fd390b2cdf8693360cf3662cb1d710c95fa799d9f822f42997167839b56"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/sunrise.exr",
+      "sha256": "6a1180126e4db7d01f134c5430ea43c1b263ab1a12faf58a444d9ce9c03f3a84",
+      "bytes": 251877,
+      "git_blob_sha1": "b0689a58e51c6527ed8810186644dd482f96799a",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/6a1180126e4db7d01f134c5430ea43c1b263ab1a12faf58a444d9ce9c03f3a84"
+    },
+    {
+      "path": "release/datafiles/studiolights/world/sunset.exr",
+      "sha256": "3bcafdda4f2d7b9759cc1d73004d34d721a274c29b1a0947be88a602dbac426b",
+      "bytes": 171164,
+      "git_blob_sha1": "bf0414b39faf538b48baa62257aa6e5ff168928f",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/3bcafdda4f2d7b9759cc1d73004d34d721a274c29b1a0947be88a602dbac426b"
+    },
+    {
+      "path": "scripts/startup/bl_app_templates_system/2D_Animation/startup.blend",
+      "sha256": "25b8def08a030f267f2b7c7c7baa2182eb62cefd67b509e7861655091ae8e51b",
+      "bytes": 770444,
+      "git_blob_sha1": "272e59b17dacf24657e6f0c69459bbfeef3b198e",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/25b8def08a030f267f2b7c7c7baa2182eb62cefd67b509e7861655091ae8e51b"
+    },
+    {
+      "path": "scripts/startup/bl_app_templates_system/Sculpting/startup.blend",
+      "sha256": "a6a34aaed752f75b20ddd6c024794634b179fef00abdf5ee1fbad78f70cce2c2",
+      "bytes": 434272,
+      "git_blob_sha1": "303375cba541eba566546065d29d2547d6bd9984",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/a6a34aaed752f75b20ddd6c024794634b179fef00abdf5ee1fbad78f70cce2c2"
+    },
+    {
+      "path": "scripts/startup/bl_app_templates_system/VFX/startup.blend",
+      "sha256": "632c50a8858a3893a044818e53572970a6ecf80fd3d33f70fd10c6bf016e7156",
+      "bytes": 538056,
+      "git_blob_sha1": "cd607e6afa6f88541b8d4f641a4f953ca8209ec3",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/632c50a8858a3893a044818e53572970a6ecf80fd3d33f70fd10c6bf016e7156"
+    },
+    {
+      "path": "scripts/startup/bl_app_templates_system/Video_Editing/startup.blend",
+      "sha256": "02b0432069396c8f3fef0d11fe26f980df47b9e0b6fce8955be29310f6244723",
+      "bytes": 439460,
+      "git_blob_sha1": "7d7a6c1435eb33b4a96e3c30914ba2838d68534b",
+      "url": "https://projects.blender.org/blender/blender.git/info/lfs/objects/02b0432069396c8f3fef0d11fe26f980df47b9e0b6fce8955be29310f6244723"
+    }
+  ],
+  "lfs_classification": "Inspected non-code runtime/source assets: geometry icons, EXR/PNG images, one SplineFontDB font source, and Blender scenes/brushes/node graphs. Nine identical embedded Text blocks are non-module README prose; no drivers or OSL script nodes were observed with autoexec disabled. Not a scanner certificate or a claim that scene/node graphs have no built-in Blender behavior.",
+  "provenance": "Sources: actual downloaded SHA256. Dependency SHA256/size: Git LFS pointer blobs verified against immutable mirror tree. Asset pointers: archive contents checked against immutable Blender source tree.",
+  "runtime_data": {
+    "destination": "Each lfs_assets.path replaces the exact Git LFS pointer under the verified /src/blender archive. The source build installs selected runtime assets under /opt/blender; the complete source inventory is retained.",
+    "origin": "https://projects.blender.org/blender/blender.git/info/lfs/objects/<sha256>",
+    "verification": "Actual payload SHA256 and exact size before hydration; verified cache hits only, cache mismatch fails before download; format checks in locked_sources.py. No path-bearing compressed font archive extraction.",
+    "download_evidence": {
+      "objects": 187,
+      "bytes": 19160355,
+      "paths": 198,
+      "mapped_bytes": 19182385,
+      "kind": "Actual HTTPS payloads downloaded, SHA256/size checked, 2026-10-21",
+      "receipt_sha256": "ce73c0380642a0d9d69ef50626ed2561d828c6139d4a659283774caa03198b0e"
+    },
+    "types": [
+      {
+        "extension": ".dat",
+        "paths": 147,
+        "purpose": "Packed geometry icon triangle coordinates and colors, not model weights",
+        "format": "VCO NUL + four-byte bounds/offset header; remaining bytes positive multiple of18",
+        "consumer": "source/blender/blenkernel/intern/icons.cc:BKE_icon_geom_from_memory and BKE_icon_geom_from_file; rendered by BKE_icon_geom_rasterize",
+        "consumer_source_sha256": "1feaef8e6e257076b9caf43238c07c84e3fb465765dffe5249867a6018f6143e",
+        "notices": "Blender source GPL-2.0-or-later; source tree copyright/license notices remain intact"
+      },
+      {
+        "extension": ".exr",
+        "paths": 31,
+        "purpose": "Studio-light matcap/HDRI images",
+        "format": "OpenEXR magic 0x01312f76",
+        "notices": [
+          "release/datafiles/studiolights/matcap/license.txt (CC0/public domain)",
+          "release/datafiles/studiolights/world/license.txt (CC0)"
+        ]
+      },
+      {
+        "extension": ".png",
+        "paths": 1,
+        "purpose": "Blender splash image",
+        "format": "PNG signature",
+        "notices": "Blender source artwork/copyright notices retained; no DGXBridge MIT relicensing"
+      },
+      {
+        "extension": ".sfd.bz2",
+        "paths": 1,
+        "purpose": "DejaVu Sans font source retained in source tree",
+        "format": "One bzip2 stream containing SplineFontDB1.0 text; no member filenames/paths",
+        "decompressed_bytes": 802525,
+        "decompressed_sha256": "3bedb8bfdd95e69cd9b7b96e15652ca7eccd23883c9e1eb49755d955fc7fb020",
+        "notices": "Bitstream/Tavmjong Bah copyright and DejaVu public-domain changes are identified in the font Copyright metadata; release/license/others/Arev-Fonts.txt and remaining upstream notices are retained. Complete runtime license review remains separate."
+      },
+      {
+        "extension": ".blend",
+        "paths": 18,
+        "purpose": "Bundled scenes, brushes, geometry-node assets and application templates; built-in Blender operations remain available",
+        "format": "Blender file or Zstandard-compressed Blender file",
+        "notices": [
+          "assets/LICENSE (CC0) for assets/ subtree",
+          "Blender source license/copyright for startup and preview files"
+        ]
+      }
+    ],
+    "blend_inspection": {
+      "job": "17e6fcbf0fc44ba8a05b2a981e1b3abf",
+      "kind": "Actual physical Spark Blender metadata inspection; not automatic-return acceptance",
+      "blender": "4.5.9 LTS",
+      "image": "sha256:936b64d14c03fcd81ea918d0e1b9dcebc4d95942319fe695d4bcd10779076222",
+      "startup_flags": [
+        "--background",
+        "--factory-startup",
+        "--disable-autoexec"
+      ],
+      "load_flags": {
+        "load_ui": false,
+        "use_scripts": false
+      },
+      "script_sha256": "c790edb1e044071291b439a8081913170093c05e4b4d55f799dbb34991c4dcc7",
+      "log_sha256": "232b55b3676f8294e92343a48c5b16da87cae188b43aa76eaf0ec59699f88254",
+      "assets": 18,
+      "texts": 9,
+      "text_modules": 0,
+      "drivers": 0,
+      "osl_script_nodes": 0,
+      "autoexec_disabled": true,
+      "embedded_text": {
+        "name": "README",
+        "copies": 9,
+        "bytes": 380,
+        "sha256": "8045226942b320ed82efab359429be7245e2aaafe338dd2743249b5551f28e3d",
+        "classification": "Plain ESSENTIAL BRUSHES editing guidance; reconstructed from exact source TextLine bytes and matched physical inspection hash; not Python"
+      },
+      "library_references": "Sequential opens retained three installed bundled brush library references, all named by assets also in the inspected18. No additional remote fetch or embedded text/driver execution was requested."
+    }
+  }
+}

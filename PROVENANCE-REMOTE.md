@@ -74,12 +74,53 @@ PhaseForge Blender build artifact. That artifact resides outside the PhaseForge
 Git checkout, so no PhaseForge commit is claimed. `runtimes/blender/PROVENANCE.json`
 records every original file's SHA-256 and the narrow adaptations (two compiler
 workers, flattened bootstrap paths, separate `sparkdev` image name). Blender is
-checked out at upstream commit `8bf95cbd38d1456c94e9d751f3804eea4d5b137b`
+fetched as a SHA256-locked source archive at upstream commit `8bf95cbd38d1456c94e9d751f3804eea4d5b137b`
 (`v4.5.9`); NVIDIA OptiX headers are pinned at
-`f60c1e44f18426f426a2ed948f28515b3cf67b8a` (`v8.0.0`). Blender's dependency builder
-verifies its source archives against its pinned hashes. These third-party
+`f60c1e44f18426f426a2ed948f28515b3cf67b8a` (`v8.0.0`). The archive SHA256 values are
+`41e8682083bd096cb25ee6c5ab2e484351030af90919b4c38415fddff0a5cf8a` (Blender) and
+`eca772dfede56ba073a1048ecf43de5af9c4e13a537222a21ee95ffa2164c5f6` (OptiX), computed
+from the actual upstream downloads. These third-party
 components retain their own licenses; this repository ships recipes and patches,
 not Blender or NVIDIA image layers.
+
+`runtimes/blender/inputs.lock.json` records all 66 dependency archives, nine
+universal Python wheels at Blender's existing versions, and 198 runtime-data
+paths backed by 187 unique Git LFS objects. The dependency SHA256 values and sizes
+come from Git LFS pointer blobs verified against mirror tree
+`15315f480287ffb8b7de857cadb590680874b5dc`. The original CMake hashes were 39 MD5,
+26 SHA256 and one SHA1; the helper upgrades every archive check to SHA256 rather
+than relabeling those hashes. It downloads only HTTPS content-addressed mirror
+objects, replaces CMake's downloader with local checks, and installs Python
+wheels offline with `--require-hashes --no-deps`. There is no HTTP or upstream
+source fallback. LFS pointer bytes are checked against the selected Blender
+source before hydration; no runtime assets are removed. The original upstream
+versions and license metadata remain in the lock and source archive.
+
+The manifest declares 84 fixed executable/build inputs including these archives
+and wheels. All 187 distinct runtime/source data objects were downloaded and
+verified against their SHA256 and size (19,160,355 bytes). The helper rehashes
+cache hits and fails on a mismatch. The 147 `.dat` files are packed VCO geometry
+icons consumed by `BKE_icon_geom_from_memory` in the pinned Blender source, not
+model weights. The font is one bzip2 stream containing an 802,525-byte
+SplineFontDB document. Decompression is bounded; its exact decoded hash, header
+and terminator are checked, and trailing streams/content are rejected. PNG and
+EXR signatures are checked alongside the exact byte locks.
+
+Physical Spark job `17e6fcbf0fc44ba8a05b2a981e1b3abf` opened all 18 `.blend` assets
+using Blender 4.5.9 LTS with `--disable-autoexec` and
+`open_mainfile(load_ui=False, use_scripts=False)`. It observed nine identical,
+non-module README Text blocks, zero drivers and zero OSL script nodes. The
+380-byte README was reconstructed locally and matched to its observed SHA256;
+it contains brush editing guidance, not Python. Sequential loads retained three
+bundled brush library references also represented among the inspected assets.
+The inspector did not invoke texts, drivers or rendering. Scene/node data still
+describes built-in Blender behavior. Exact per-path hashes, consumer evidence,
+data notices and inspection receipt hashes are in `inputs.lock.json`.
+
+This is source/data evidence, not a Marketplace scanner certificate, completed
+fresh fallback build, automatic-return test or complete license/security review.
+Signed apt repositories remain moving setup inputs. The standalone recipe has
+source-preparation and unit-test evidence; a fresh build is a separate gate.
 
 The installer can reuse existing immutable image
 `sha256:69504fa0aa66263511d356be871df4ab56c8332ea629525fbb832a7249abff62`

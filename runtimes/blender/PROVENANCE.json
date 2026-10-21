@@ -18,6 +18,19 @@
     "Default compiler parallelism reduced from 18 to 2",
     "COPY paths flattened for hash-checked bootstrap context",
     "Own sparkdev image title",
-    "Make EGL vendor metadata readable by nonroot runtime users after private bootstrap source copy"
-  ]
+    "Make EGL vendor metadata readable by nonroot runtime users after private bootstrap source copy",
+    "Replace Git source fetches with SHA256/size-locked archives at the same upstream commits and verify all selected LFS pointers before hydration",
+    "Fetch all 66 dependency archives only from SHA256-addressed HTTPS Blender mirror objects, replace CMake downloader with local SHA256 checks and upgrade MD5/SHA1 checks",
+    "Replace nine implicit source-index Python downloads with locked universal wheels at the same versions and an offline no-dependency pip install",
+    "Fail on cache mismatch; validate VCO geometry/image/asset formats and bounded single-stream font contents before pointer hydration"
+  ],
+  "input_lock": "inputs.lock.json",
+  "mirror_commit": "15315f480287ffb8b7de857cadb590680874b5dc",
+  "source_archive_sha256": {
+    "blender": "41e8682083bd096cb25ee6c5ab2e484351030af90919b4c38415fddff0a5cf8a",
+    "optix": "eca772dfede56ba073a1048ecf43de5af9c4e13a537222a21ee95ffa2164c5f6"
+  },
+  "dependency_lock_evidence": "66 SHA256 values/sizes recovered from Git LFS pointer blobs whose Git blob hashes match the immutable mirror tree. Original CMake checks used 39 MD5, 26 SHA256 and one SHA1; none are misrepresented as SHA256. Installer verifies actual downloaded bytes.",
+  "data_inventory": "198 source paths,187 distinct SHA256 objects. All actual payload bytes hash/size verified. Geometry icons, EXR/PNG, bounded single-stream SplineFontDB font and18 physically inspected Blender assets; exact findings/limits in inputs.lock.json runtime_data.",
+  "acceptance_limit": "This changes the standalone source-build download policy. Unit and source-preparation checks do not establish a completed fresh Blender build. Signed apt repositories still resolve package versions during setup."
 }

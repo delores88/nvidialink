@@ -17,7 +17,8 @@ from bootstrap import CUDA_SOURCES, RuntimeRefreshError, bounded_json, ensure_ru
 BASE = "nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130"
 BLENDER_EXISTING = "sha256:69504fa0aa66263511d356be871df4ab56c8332ea629525fbb832a7249abff62"
 BLENDER_FILES = ("Dockerfile.blender", "prune_deps.py", "patch_deps_cuda13.py", "patch_deps_toolchain.py",
-                 "patch_deps_ispc.py", "patch_deps_oidn_cudart.py", "patch_deps_numpy.py", "10_nvidia.json")
+                 "patch_deps_ispc.py", "patch_deps_oidn_cudart.py", "patch_deps_numpy.py", "10_nvidia.json",
+                 "locked_sources.py", "inputs.lock.json")
 
 
 def helpers():

@@ -255,25 +255,61 @@ def blender_sources(commit):
             'Unsupported Blender fallback base recipe')
     require(not re.search(r'^\s*ADD(?:\s|$)', recipe, re.M | re.I), 'Unsupported Blender ADD download')
     provenance = json.loads(source(commit, 'runtimes/blender/PROVENANCE.json'))
-    pins = {}
-    for name, url, directory in [('BLENDER', 'https://projects.blender.org/blender/blender.git', 'blender'),
-                                 ('OPTIX', 'https://github.com/NVIDIA/optix-dev.git', '/opt/optix-dev')]:
-        matches = re.findall(r'^ARG ' + name + r'_COMMIT=([0-9a-f]{40})$', recipe, re.M)
-        require(len(matches) == 1 and provenance.get(name.lower() + '_commit') == matches[0], 'Blender source provenance and recipe differ')
-        require(url in recipe and f'test "$(git -C {directory} rev-parse HEAD)" = "${{{name}_COMMIT}}"' in recipe,
-                'Blender source checkout lacks exact commit verification')
-        pins[name.lower()] = {'url': url, 'commit': matches[0]}
+    pins, lock_evidence = {}, {}
+    if 'COPY locked_sources.py inputs.lock.json /build-scripts/' in recipe:
+        require('python3 /build-scripts/locked_sources.py sources /src/blender /opt/optix-dev' in recipe
+                and 'python3 /build-scripts/locked_sources.py dependencies' in recipe
+                and 'git clone ' not in recipe and 'PACKAGE_USE_UPSTREAM_SOURCES=ON' not in recipe,
+                'Blender recipe bypasses the locked input helper')
+        raw_lock = source(commit, 'runtimes/blender/inputs.lock.json')
+        lock = json.loads(raw_lock)
+        require(lock.get('v') == 1 and len(lock.get('sources', [])) == 2 and len(lock.get('dependencies', [])) == 66
+                and len(lock.get('python_wheels', [])) == 9 and len(lock.get('lfs_assets', [])) == 198,
+                'Unexpected Blender locked input inventory')
+        for group in ['sources', 'dependencies', 'python_wheels', 'lfs_assets']:
+            for row in lock[group]:
+                parsed = urlsplit(row['url'])
+                require(parsed.scheme == 'https' and parsed.hostname in {'codeload.github.com', 'projects.blender.org', 'files.pythonhosted.org'}
+                        and not parsed.username and not parsed.password and not parsed.port and not parsed.query and not parsed.fragment
+                        and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) and type(row['bytes']) is int and row['bytes'] > 0,
+                        'Blender download lacks a supported HTTPS SHA256/size pin')
+                if group in ('dependencies', 'lfs_assets'):
+                    repository = 'lib-source' if group == 'dependencies' else 'blender'
+                    require(row['url'] == f'https://projects.blender.org/blender/{repository}.git/info/lfs/objects/' + row['sha256'],
+                            'Blender mirror input is not content-addressed')
+        for row in lock['sources']:
+            name = row['name']
+            require(name in ('blender', 'optix') and HEX40.fullmatch(row['commit']) and provenance.get(name + '_commit') == row['commit'],
+                    'Blender archive provenance and recipe differ')
+            pins[name] = {'url': row['url'], 'commit': row['commit'], 'sha256': row['sha256'], 'bytes': row['bytes']}
+        require(set(pins) == {'blender', 'optix'}, 'Duplicate Blender source identity')
+        lock_evidence = {'inputsLockSha256': hashlib.sha256(raw_lock).hexdigest(),
+                         'inputHelperSha256': hashlib.sha256(source(commit, 'runtimes/blender/locked_sources.py')).hexdigest(),
+                         'executableInputs': lock['sources'] + lock['dependencies'] + lock['python_wheels'],
+                         'runtimeDataPaths': len(lock['lfs_assets']), 'runtimeDataObjects': len({r['sha256'] for r in lock['lfs_assets']}),
+                         'runtimeDataInventory': f'https://github.com/{REPOSITORY}/blob/{commit}/runtimes/blender/inputs.lock.json',
+                         'runtimeDataClassification': lock['lfs_classification'],
+                         'runtimeDataEvidence': lock['runtime_data']}
+    else:
+        for name, url, directory in [('BLENDER', 'https://projects.blender.org/blender/blender.git', 'blender'),
+                                     ('OPTIX', 'https://github.com/NVIDIA/optix-dev.git', '/opt/optix-dev')]:
+            matches = re.findall(r'^ARG ' + name + r'_COMMIT=([0-9a-f]{40})$', recipe, re.M)
+            require(len(matches) == 1 and provenance.get(name.lower() + '_commit') == matches[0], 'Blender source provenance and recipe differ')
+            require(url in recipe and f'test "$(git -C {directory} rev-parse HEAD)" = "${{{name}_COMMIT}}"' in recipe,
+                    'Blender source checkout lacks exact commit verification')
+            pins[name.lower()] = {'url': url, 'commit': matches[0]}
     installer = source(commit, 'remote/install-cuda.py').decode()
     existing = re.findall(r'^BLENDER_EXISTING = "(sha256:[0-9a-f]{64})"$', installer, re.M)
     require(len(existing) == 1 and '"BLENDER_IMAGE=" + blender' in installer and 'image["Id"] != identity' in installer,
             'Dynamic Blender stage lacks the supported immutable image selection')
-    return {'bases': bases, 'sources': pins, 'recipeSha256': hashlib.sha256(recipe_raw).hexdigest(),
+    return {'bases': bases, 'sources': pins, 'recipeSha256': hashlib.sha256(recipe_raw).hexdigest(), **lock_evidence,
             'existingLocalImage': existing[0],
             'downloadDeclarationComplete': False,
-            'declarationGaps': ['Blender/OptiX Git source and Blender LFS object inventories need exact downloadable SHA256 evidence.',
-                                'Blender transitive source archive URLs/hashes, mirror/upstream variants and licenses need a complete inventory.',
-                                'Setup apt packages use moving signed repositories; resolved package inventory/hashes require physical setup evidence and draft review.'],
-            'sourceIntegrity': 'Git source commits are SHA-1 identities, not SHA-256 archive hashes. Blender dependency archives and LFS objects use upstream pinned hashes. Signed apt repository packages are resolved at setup.',
+            'declarationGaps': (['The source-bound non-code data inventory has payload and Blender inspection evidence; final Marketplace draft classification/admission remains separate.',
+                                 'Setup apt packages use moving signed repositories; resolved package inventory/hashes and license coverage require physical setup evidence and draft review.'] if lock_evidence else
+                                ['Blender/OptiX Git source, LFS data and transitive archives need exact downloadable SHA256 inventories; setup apt resolution needs physical evidence.']),
+            'sourceIntegrity': ('All source archives, Python wheels and runtime LFS data are SHA256/size-locked; dependencies use only content-addressed HTTPS Blender mirror URLs. No upstream/HTTP fallback. Apt packages still resolve at setup.' if lock_evidence else
+                                'Git source commits are SHA-1 identities, not SHA-256 archive hashes. Blender dependency archives and LFS objects use upstream pinned hashes. Signed apt repository packages are resolved at setup.'),
             'scope': 'Optional Spark setup only; not bundled Windows executables. Existing local image reuse makes no network download. Otherwise build the standalone recipe.'}
 
 
@@ -307,6 +343,10 @@ def runtime_downloads(commit, evidence=None):
             digest = base.rsplit('sha256:', 1)[1]
             downloads.append({'url': f'https://registry-1.docker.io/v2/{repository}/manifests/sha256:{digest}', 'sha256': digest,
                               'purpose': 'Optional standalone Blender source-build OCI base. Docker verifies manifest/layer digests; Blender/OptiX source commits and dependency hashes are disclosed separately. Signed apt package versions resolve during setup.'})
+        for row in details.get('executableInputs', []):
+            downloads.append({'url': row['url'], 'sha256': row['sha256'],
+                              'purpose': f"Optional standalone Blender build input: {row['filename']}. SHA256 and size are checked before use; no HTTP or upstream fallback. Source and wheel licenses remain separate from DGXBridge's MIT license."})
+        require(len(downloads) <= 128, 'Runtime inputs exceed the Marketplace declaration limit')
         if evidence is not None:
             evidence['blender'] = details
     return downloads
@@ -438,15 +478,16 @@ def manifest(value, downloads, runtime_evidence=None):
             'Write verified returned outputs and eligible project changes to the original local project; preserve conflicting local edits and retain delivery checkpoints.',
             'Install a per-user background result worker and Windows sign-in entry; updates preserve pairing, job state and pending returns.',
             'Prepare hash-locked Debian/Ubuntu packages in separate Spark images using signed repository metadata; do not install them on the host.']
-        document['permissions']['domains'] += ['ports.ubuntu.com', 'archive.ubuntu.com', 'security.ubuntu.com', 'projects.blender.org', 'github.com']
+        document['permissions']['domains'] += ['ports.ubuntu.com', 'archive.ubuntu.com', 'security.ubuntu.com', 'projects.blender.org', 'github.com', 'codeload.github.com']
         document['privacy']['retention'] += ' Automatic-return manifests, verified chunks, conflict copies and delivery records persist until removed by the owner; updates preserve pending delivery.'
         document['featureNotices'].append({'name': 'Automatic file return and GPU tools', 'status': 'beta', 'description': 'The local background worker retries unfinished delivery after reconnect or restart. Workload exit status and file delivery status are separate. GPU video is reported only from cached actual probes bound to the active image; Blender render and GPU denoising acceptance require physical receipts. No phone-hotspot, sleep or hardware success is inferred from source tests.'})
     blender = (runtime_evidence or {}).get('blender')
     if blender:
         pins = blender['sources']
         document['description'] += ('\n\nThe standalone Blender fallback builds upstream Blender at ' + pins['blender']['commit'] +
-            ' and NVIDIA OptiX headers at ' + pins['optix']['commit'] + '. These are verified Git commit identities, not archive SHA-256 values. '
-            'Its two OCI base digests are in executableDownloads. Blender dependency archives and Git LFS data are checked against upstream hashes; source archives may use the Blender mirror or their upstream URLs. '
+            ' and NVIDIA OptiX headers at ' + pins['optix']['commit'] + '. These are verified Git commit identities, not archive SHA-256 values. ' +
+            ('Its OCI base digests, two source archives, 66 dependency archives and nine Python wheels are declared with SHA256. The fallback uses only content-addressed HTTPS mirror objects, verifies all hashes and sizes including cache hits, and installs those Python wheels offline. A separate source-bound inventory covers 198 paths backed by 187 data objects: geometry icons, images, a bounded single-stream font and 18 Blender assets inspected with script autoexecution disabled. Nine embedded README Text blocks are prose; no drivers or OSL script nodes were observed. Built-in scene/node behavior remains available. Inventory SHA256: ' + blender['inputsLockSha256'] + '. Inventory: ' + blender['runtimeDataInventory'] + '. ' if blender.get('inputsLockSha256') else
+             'Its two OCI base digests are in executableDownloads. Blender dependency archives and Git LFS data are checked against upstream hashes; source archives may use the Blender mirror or their upstream URLs. ') +
             'The source build can take substantial time and disk. If the exact already-present owner image ' + blender['existingLocalImage'] +
             ' is available, setup may reuse it read-only; no PhaseForge installation is required. The source pins, image-selection policy and remaining transitive download-declaration gaps are recorded in the manifest validation receipt; direct declarations do not claim a complete fallback build inventory. '
             'Blender and its dependencies have their own upstream licenses; the MIT declaration applies to DGXBridge first-party code. The Windows Cargo notice collection does not represent a complete optional Spark runtime license inventory.')

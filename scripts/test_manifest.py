@@ -195,7 +195,8 @@ class MultiStageRuntime(unittest.TestCase):
                 manifest.docker_stages(recipe, ('BLENDER_IMAGE',))
 
     def sources(self):
-        paths = ['runtimes/Dockerfile.blender', 'runtimes/blender/PROVENANCE.json', 'remote/install-cuda.py']
+        paths = ['runtimes/Dockerfile.blender', 'runtimes/blender/PROVENANCE.json', 'remote/install-cuda.py',
+                 'runtimes/blender/locked_sources.py', 'runtimes/blender/inputs.lock.json']
         return {p: (manifest.ROOT / p).read_bytes() for p in paths}
 
     def test_blender_bases_and_source_pins_come_from_selected_commit(self):
@@ -205,10 +206,13 @@ class MultiStageRuntime(unittest.TestCase):
         self.assertEqual(len(details['bases']), 2)
         self.assertEqual(details['sources']['blender']['commit'], '8bf95cbd38d1456c94e9d751f3804eea4d5b137b')
         self.assertTrue(details['existingLocalImage'].startswith('sha256:'))
+        self.assertEqual(len(details['executableInputs']), 77)
+        self.assertEqual(details['runtimeDataObjects'], 187)
+        self.assertFalse(details['downloadDeclarationComplete'])
         self.assertTrue(all(call.args[0] == 'selected-commit' for call in read.call_args_list))
 
     def test_blender_provenance_mismatch_or_new_add_fails_closed(self):
-        for change in ('provenance', 'add', 'unverified-image'):
+        for change in ('provenance', 'add', 'unverified-image', 'floating-mirror'):
             sources = self.sources()
             if change == 'provenance':
                 p = json.loads(sources['runtimes/blender/PROVENANCE.json'])
@@ -216,8 +220,12 @@ class MultiStageRuntime(unittest.TestCase):
                 sources['runtimes/blender/PROVENANCE.json'] = json.dumps(p).encode()
             elif change == 'add':
                 sources['runtimes/Dockerfile.blender'] += b'\nADD https://example.com/code /tmp/\n'
-            else:
+            elif change == 'unverified-image':
                 sources['remote/install-cuda.py'] = b'BLENDER_EXISTING = "ubuntu:latest"\n'
+            else:
+                lock = json.loads(sources['runtimes/blender/inputs.lock.json'])
+                lock['dependencies'][0]['url'] = 'https://projects.blender.org/floating-branch/file'
+                sources['runtimes/blender/inputs.lock.json'] = json.dumps(lock).encode()
             with self.subTest(change=change), patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path]), self.assertRaises(ValueError):
                 manifest.blender_sources('selected-commit')
 
@@ -232,10 +240,15 @@ class MultiStageRuntime(unittest.TestCase):
         with patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path]), \
                 patch.object(manifest.urllib.request, 'urlopen', side_effect=lambda *a, **k: io.BytesIO(json.dumps(metadata).encode())):
             downloads = manifest.runtime_downloads('selected-commit', evidence)
-        self.assertEqual(len(downloads), 6)  # Historical no-Pillow CUDA fixture + two Blender bases.
-        self.assertIn('/v2/nvidia/cuda/', downloads[-2]['url'])
-        self.assertIn('/v2/library/ubuntu/', downloads[-1]['url'])
+        self.assertEqual(len(downloads), 83)  # 84 with the separately tested CUDA Pillow wheel.
+        self.assertIn('/v2/nvidia/cuda/', downloads[4]['url'])
+        self.assertIn('/v2/library/ubuntu/', downloads[5]['url'])
+        self.assertTrue(any('/codeload.github.com/blender/' in row['url'] for row in downloads))
+        self.assertEqual(sum('/lib-source.git/info/lfs/objects/' in row['url'] for row in downloads), 66)
+        self.assertTrue(all(len(row['purpose']) <= 300 for row in downloads))
         self.assertIn('blender', evidence)
+        document = manifest.manifest(release_input(version='0.5.0'), downloads, evidence)
+        self.assertIn('66 dependency archives and nine Python wheels', document['description'])
 
 
 def fake_nsis(files):
