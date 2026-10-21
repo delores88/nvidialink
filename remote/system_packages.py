@@ -406,7 +406,9 @@ class SystemPackages:
     def __init__(self, controller, api):
         self.c, self.a, self.db = controller, api, controller.db
         self.db.execute("CREATE TABLE IF NOT EXISTS system_images(key TEXT PRIMARY KEY,project TEXT,base TEXT,lock_sha TEXT,image TEXT,created REAL)")
-        self.db.execute("CREATE TABLE IF NOT EXISTS system_preparations(job TEXT PRIMARY KEY,plan TEXT,phase TEXT,started REAL,failures INTEGER NOT NULL DEFAULT 0)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS system_preparations(job TEXT PRIMARY KEY,plan TEXT,phase TEXT,started REAL,failures INTEGER NOT NULL DEFAULT 0,start_failures INTEGER NOT NULL DEFAULT 0)")
+        if "start_failures" not in {row[1] for row in self.db.execute("PRAGMA table_info(system_preparations)")}:
+            self.db.execute("ALTER TABLE system_preparations ADD COLUMN start_failures INTEGER NOT NULL DEFAULT 0")
 
     def _reject(self, message):
         self.a.reject("system_packages_invalid", message)
@@ -503,7 +505,7 @@ class SystemPackages:
         args = ["create", "--name", name, "--pull", "never", "--network", "none" if builder else "sparkdev-fetch-" + row["id"],
                 "--user", "0:0" if builder else self.user(), "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--cpus", str(row["cpu"]), "--cpu-shares", "128", "--memory", f"{row['memory']}g", "--memory-swap", f"{row['memory']}g",
-                "--pids-limit", "512", "--init", "--restart", "no", "--log-driver", "local", "--log-opt", "max-size=8m", "--log-opt", "max-file=1",
+                "--pids-limit", "512", "--init", "--restart", "no", "--log-driver", "local", "--log-opt", "max-size=8m", "--log-opt", "max-file=1", "--log-opt", "compress=false",
                 "--ulimit", f"fsize={DEB_LIMIT}:{DEB_LIMIT}", "--tmpfs", "/tmp:rw,nosuid,nodev,size=" + str(row["scratch_mb"] * 1024 * 1024),
                 "--env", "NVIDIA_VISIBLE_DEVICES=void", "--env", "PYTHONDONTWRITEBYTECODE=1", "--env", "PYTHONUNBUFFERED=1",
                 "--label", "com.delores.sparkdev.job=" + row["id"], "--label", PREFIX + "key=" + plan["key"],
@@ -644,16 +646,37 @@ class SystemPackages:
             if fresh and fresh[0]:
                 self._finish(row, name, "cancelled", 130, "system_packages_cancelled")
                 return True
-            self.c.docker.call(["start", name])
-            self.db.execute("UPDATE system_preparations SET started=COALESCE(started,?) WHERE job=?", (time.time(), row["id"]))
+            try:
+                self.c.docker.call(["start", name])
+            except (self.a.Rejected, OSError, subprocess.SubprocessError):
+                # A lost reply can follow a successful start. Only an inspected,
+                # identity-matched container still in created counts as failure.
+                observed = self.c.docker.inspect(name)
+                if observed is None:
+                    raise
+                self._matches(observed, row, plan, phase)
+                state = observed["State"]["Status"]
+                if state == "created":
+                    self.db.execute("UPDATE system_preparations SET start_failures=start_failures+1 WHERE job=?", (row["id"],))
+                    failures = self.db.execute("SELECT start_failures FROM system_preparations WHERE job=?", (row["id"],)).fetchone()[0]
+                    if failures >= 3:
+                        self._finish(row, name, "failed", 125, "system_packages_start_failed")
+                        return True
+                    raise
+                if state not in ("running", "exited", "dead"):
+                    raise
+                info = observed
+            else:
+                state = "running"
+            self.db.execute("UPDATE system_preparations SET started=COALESCE(started,?),start_failures=0 WHERE job=?", (time.time(), row["id"]))
             self.db.execute("UPDATE jobs SET state='running',started=COALESCE(started,?) WHERE id=?", (time.time(), row["id"]))
-        elif state in ("exited", "dead"):
+        if state in ("exited", "dead"):
             code = int(info["State"]["ExitCode"])
             if code:
                 self._finish(row, name, "failed", min(255, max(1, code)), "system_packages_" + phase + "_failed")
             elif phase == "fetch":
                 # Do not execute package code while any public network is attached.
-                self.db.execute("UPDATE system_preparations SET phase='build',started=NULL,failures=0 WHERE job=?", (row["id"],))
+                self.db.execute("UPDATE system_preparations SET phase='build',started=NULL,failures=0,start_failures=0 WHERE job=?", (row["id"],))
                 self.c.docker.call(["rm", name])
                 self.c.remove_proxy(row)
             else:

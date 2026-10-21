@@ -332,6 +332,8 @@ class SchedulerTests(unittest.TestCase):
             self.assertNotIn("--privileged", args)
             self.assertFalse(any("docker.sock" in a for a in args))
             self.assertIn("NVIDIA_VISIBLE_DEVICES=void", args)
+            log_options = [arg for i, arg in enumerate(args) if i and args[i-1] == "--log-opt"]
+            self.assertEqual(log_options, ["max-size=8m", "max-file=1", "compress=false"])
         self.assertTrue(all(arg.endswith(",readonly") for i, arg in enumerate(build) if i and build[i-1] == "--mount"))
         self.assertNotIn("SYS_ADMIN", build)
         self.assertFalse(any("dst=/work" in a for a in build))
@@ -350,6 +352,95 @@ class SchedulerTests(unittest.TestCase):
             with self.assertRaises(controller.Rejected): self.manager.reconcile(self.row())
         self.assertEqual(self.finished[-1], ("failed", 125, "system_packages_launch_failed"))
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM system_images").fetchone()[0], 0)
+
+    def test_failed_created_start_is_bounded_across_controller_restart(self):
+        self.plan()
+        original = self.docker.call
+        def fail_start(args, **kwargs):
+            if args[0] == "start":
+                self.docker.calls.append(args)
+                self.docker.containers[args[1]]["State"].update(Status="created", ExitCode=128,
+                    Error="failed to initialize logging driver: compression cannot be enabled when max file count is 1")
+                raise controller.Rejected("docker_failed", "fixture")
+            return original(args, **kwargs)
+        self.db.execute("UPDATE system_preparations SET failures=2")
+        with mock.patch.object(self.docker, "call", side_effect=fail_start):
+            for expected in (1, 2):
+                with self.assertRaises(controller.Rejected): self.manager.reconcile(self.row())
+                self.assertFalse(self.finished)
+                self.assertEqual(self.db.execute("SELECT start_failures FROM system_preparations").fetchone()[0], expected)
+                self.manager = sp.SystemPackages(self.c, controller)
+            self.assertTrue(self.manager.reconcile(self.row()))
+        self.assertEqual(self.finished, [("failed", 125, "system_packages_start_failed")])
+        self.assertNotIn("sparkdev-system-fetch-j1", self.docker.containers)
+        self.assertEqual(sum(c[0] == "start" for c in self.docker.calls), 3)
+        self.assertFalse(self.manager.reconcile(self.row()))
+        self.assertFalse(any(c[0] == "commit" for c in self.docker.calls))
+
+    def test_uncertain_start_preserves_verified_running_container(self):
+        self.plan()
+        original = self.docker.call
+        def lost_reply(args, **kwargs):
+            result = original(args, **kwargs)
+            if args[0] == "start": raise subprocess.TimeoutExpired("docker", 30)
+            return result
+        with mock.patch.object(self.docker, "call", side_effect=lost_reply):
+            self.assertTrue(self.manager.reconcile(self.row()))
+            self.assertTrue(self.manager.reconcile(self.row()))
+        self.assertEqual(self.row()["state"], "running")
+        self.assertEqual(self.db.execute("SELECT start_failures FROM system_preparations").fetchone()[0], 0)
+        self.assertEqual(sum(c[0] == "start" for c in self.docker.calls), 1)
+        self.assertFalse(self.finished)
+        self.assertFalse(any(c[0] == "rm" for c in self.docker.calls))
+
+    def test_uncertain_start_uses_verified_exit_result(self):
+        self.plan()
+        original = self.docker.call
+        def lost_reply(args, **kwargs):
+            result = original(args, **kwargs)
+            if args[0] == "start":
+                self.exited("fetch", 65)
+                raise controller.Rejected("docker_failed", "fixture")
+            return result
+        with mock.patch.object(self.docker, "call", side_effect=lost_reply):
+            self.assertTrue(self.manager.reconcile(self.row()))
+        self.assertEqual(self.finished, [("failed", 65, "system_packages_fetch_failed")])
+        self.assertEqual(self.db.execute("SELECT start_failures FROM system_preparations").fetchone()[0], 0)
+
+    def test_uncertain_start_does_not_charge_unavailable_or_foreign_container(self):
+        self.plan()
+        original, inspect = self.docker.call, self.docker.inspect
+        attempted = [False]
+        def fail_start(args, **kwargs):
+            if args[0] == "start":
+                attempted[0] = True
+                raise controller.Rejected("docker_failed", "fixture")
+            return original(args, **kwargs)
+        def unavailable(name):
+            if attempted[0]: raise controller.Rejected("docker_unavailable", "fixture")
+            return inspect(name)
+        with mock.patch.object(self.docker, "call", side_effect=fail_start), mock.patch.object(self.docker, "inspect", side_effect=unavailable):
+            with self.assertRaises(controller.Rejected): self.manager.reconcile(self.row())
+        self.assertEqual(self.db.execute("SELECT start_failures FROM system_preparations").fetchone()[0], 0)
+        def foreign(args, **kwargs):
+            if args[0] == "start":
+                self.docker.containers[args[1]]["Config"]["Labels"][sp.PREFIX + "key"] = "other"
+                raise controller.Rejected("docker_failed", "fixture")
+            return original(args, **kwargs)
+        with mock.patch.object(self.docker, "call", side_effect=foreign):
+            with self.assertRaises(controller.Rejected) as raised: self.manager.reconcile(self.row())
+        self.assertEqual(raised.exception.code, "container_conflict")
+        self.assertEqual(self.db.execute("SELECT start_failures FROM system_preparations").fetchone()[0], 0)
+        self.assertFalse(self.finished)
+        self.assertFalse(any(c[0] == "rm" for c in self.docker.calls))
+
+    def test_legacy_preparation_schema_migrates_without_changing_existing_state(self):
+        self.db.execute("DROP TABLE system_preparations")
+        self.db.execute("CREATE TABLE system_preparations(job TEXT PRIMARY KEY,plan TEXT,phase TEXT,started REAL,failures INTEGER NOT NULL DEFAULT 0)")
+        self.db.execute("INSERT INTO system_preparations VALUES('old','{}','fetch',NULL,2)")
+        for _ in range(2): self.manager = sp.SystemPackages(self.c, controller)
+        row = self.db.execute("SELECT * FROM system_preparations").fetchone()
+        self.assertEqual(dict(row), {"job": "old", "plan": "{}", "phase": "fetch", "started": None, "failures": 2, "start_failures": 0})
 
     def test_unknown_container_never_stopped_or_committed(self):
         self.plan(); self.manager.reconcile(self.row())
