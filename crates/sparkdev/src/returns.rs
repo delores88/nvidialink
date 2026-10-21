@@ -428,6 +428,7 @@ fn download(
     let mut buffer = vec![0; inventory::CHUNK];
     let mut verified = 0u64;
     let mut space_checked = false;
+    let mut advanced = false;
     for (index, expected) in entry.chunks.iter().enumerate() {
         let size = (entry.bytes - index as u64 * inventory::MIB).min(inventory::MIB) as usize;
         file.seek(SeekFrom::Start(verified))?;
@@ -438,7 +439,9 @@ fn download(
             continue;
         }
         file.set_len(verified)?;
-        if Instant::now() >= until {
+        // Prefix verification may itself consume the pump budget for a large
+        // render. Always accept one new verified chunk so each retry advances.
+        if advanced && Instant::now() >= until {
             return Ok(false);
         }
         if !space_checked {
@@ -469,6 +472,7 @@ fn download(
         file.write_all(&bytes)?;
         file.sync_data()?;
         verified += bytes.len() as u64;
+        advanced = true;
     }
     file.set_len(entry.bytes)?;
     file.sync_all()?;
@@ -1161,6 +1165,28 @@ mod tests {
             )
             .unwrap()
         );
+        assert_eq!(rpc.calls, vec![1, 2]);
+        assert_eq!(fs::read(stage).unwrap(), bytes);
+    }
+    #[test]
+    fn expired_budget_after_prefix_validation_still_advances_one_chunk() {
+        let temp = tempdir().unwrap();
+        let stage = temp.path().join("part");
+        let bytes = vec![42; inventory::CHUNK * 3];
+        fs::write(&stage, &bytes[..inventory::CHUNK]).unwrap();
+        let mut rpc = ChunkRpc {
+            bytes: bytes.clone(),
+            calls: vec![],
+            corrupt: false,
+        };
+        let item = entry("render.mp4", &bytes, None);
+        assert!(!download(&mut rpc, "job1", &item, &stage, Instant::now()).unwrap());
+        assert_eq!(rpc.calls, vec![1]);
+        assert_eq!(
+            fs::metadata(&stage).unwrap().len(),
+            (inventory::CHUNK * 2) as u64
+        );
+        assert!(download(&mut rpc, "job1", &item, &stage, Instant::now()).unwrap());
         assert_eq!(rpc.calls, vec![1, 2]);
         assert_eq!(fs::read(stage).unwrap(), bytes);
     }
