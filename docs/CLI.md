@@ -11,7 +11,7 @@ sparkdev setup --ssh-alias my-spark --host 192.0.2.10 --host-key-alias pinned-sp
 sparkdev doctor --json
 ```
 
-The key path is referenced, never read, copied, or uploaded by DGXBridge. OpenSSH performs authentication in BatchMode with strict known-host verification.
+The key path is referenced, never read, copied, or uploaded by DGXBridge. OpenSSH performs authentication in BatchMode with strict known-host verification. Setup, connection changes and a Find my Spark save all write the configuration under one lock, so two of them running at once never overwrite each other.
 
 LAN connection order: within one command, an address that already authenticated is reused alone. Otherwise DGXBridge tries up to four remembered verified addresses (newest first), then the `--host` values in order, then the SSH alias's own `HostName`. That `HostName` is read locally with `ssh -G`, which opens no connection. Remembered addresses only reorder these current addresses: an address that is no longer a `--host` value or the alias's `HostName` is never dialed, so a re-run of setup takes effect at once. Each address is tried once. Every `--host` value is planned; the alias's `HostName` is added only while fewer than eight addresses are planned. Without `--host` values only the alias is dialed, through OpenSSH, as before. With them the bare alias is never dialed, only its concrete `HostName`.
 

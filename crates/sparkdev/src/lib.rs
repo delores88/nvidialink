@@ -243,8 +243,10 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             if state::diagnostics()["redirected"] == true {
                 return Err(AppError::new(3, REDIRECTED_STATE));
             }
-            let previous = state::config().ok();
-            let config = state::Config {
+            // Under config.lock, like every config writer: the connection
+            // settings it keeps are read under the lock, and a concurrent
+            // Find my Spark save or mode change cannot interleave.
+            state::replace_config(|previous| state::Config {
                 ssh_alias,
                 hosts,
                 host_key_alias,
@@ -256,9 +258,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                 connection_enabled: previous.as_ref().is_none_or(|c| c.connection_enabled),
                 laptop_jobs: previous.as_ref().map(|c| c.laptop_jobs).unwrap_or(2),
                 local_build_gate,
-            };
-            state::validate_config(&config)?;
-            state::atomic_json(&state::root()?.join("config.json"), &config)?;
+            })?;
             Ok(json!({"ok":true,"configured":true,"remote_enabled":allow_remote}))
         }
         Commands::Sync { dir, check } => {
@@ -864,6 +864,64 @@ pub fn logs(job: &str, since: u64, limit: usize) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn setup_holds_the_config_lock_and_keeps_settings_read_under_it() {
+        let home = state::TestHome::new();
+        let setup = |alias: &str| -> Vec<String> {
+            [
+                "--json",
+                "setup",
+                "--ssh-alias",
+                alias,
+                "--host",
+                "192.0.2.40",
+                "--host-key-alias",
+                "fixture-pin",
+            ]
+            .map(String::from)
+            .to_vec()
+        };
+        execute(setup("fixture-spark")).unwrap();
+        state::update_config(|config| {
+            config.connection_mode = Some(state::ConnectionMode::LanOnly);
+            config.laptop_jobs = 1;
+        })
+        .unwrap();
+        // Another writer, such as a Find my Spark save, holds the lock: setup
+        // waits for it instead of renaming over its write.
+        let lock = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(home.path.join("config.lock"))
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = execute(setup("other-spark")).map(|out| out["configured"].clone());
+            let _ = sender.send(());
+            result
+        });
+        assert!(receiver.recv_timeout(Duration::from_millis(400)).is_err());
+        // The holder's write lands first, as a save's would.
+        state::atomic_json(
+            &home.path.join("config.json"),
+            &state::Config {
+                laptop_jobs: 2,
+                connection_mode: Some(state::ConnectionMode::Both),
+                ..state::config().unwrap()
+            },
+        )
+        .unwrap();
+        fs2::FileExt::unlock(&lock).unwrap();
+        assert_eq!(worker.join().unwrap().unwrap(), json!(true));
+        // Setup read what the holder wrote, under the lock.
+        let saved = state::config().unwrap();
+        assert_eq!(saved.ssh_alias, "other-spark");
+        assert_eq!(saved.mode(), state::ConnectionMode::Both);
+        assert_eq!(saved.laptop_jobs, 2);
+    }
     #[test]
     fn argv_is_exact() {
         let v = vec![

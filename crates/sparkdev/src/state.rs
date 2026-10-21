@@ -65,9 +65,11 @@ impl Config {
     }
 }
 
-/// Serialize config updates under one owner-local lock so route changes cannot
-/// overwrite SSH edits made by another CLI or desktop process.
-pub fn update_config(change: impl FnOnce(&mut Config)) -> Result<Config> {
+/// Run `write` while holding the owner-local config.lock. Every writer of
+/// config.json goes through it (setup, connection, connect, disconnect and
+/// Find my Spark's save), so none can overwrite another's change between its
+/// read and its rename, whichever CLI or desktop process runs it.
+fn with_config_lock<T>(write: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
     let directory = root()?;
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -76,11 +78,29 @@ pub fn update_config(change: impl FnOnce(&mut Config)) -> Result<Config> {
         .truncate(false)
         .open(directory.join("config.lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
-    let mut result = config()?;
-    change(&mut result);
-    validate_config(&result)?;
-    atomic_json(&directory.join("config.json"), &result)?;
-    Ok(result)
+    write(&directory)
+}
+/// Change the saved configuration under config.lock: read, change, validate
+/// and write, so route changes cannot overwrite SSH edits made by another
+/// CLI or desktop process.
+pub fn update_config(change: impl FnOnce(&mut Config)) -> Result<Config> {
+    with_config_lock(|directory| {
+        let mut result = config()?;
+        change(&mut result);
+        validate_config(&result)?;
+        atomic_json(&directory.join("config.json"), &result)?;
+        Ok(result)
+    })
+}
+/// Replace the saved configuration with what `build` makes of the current
+/// one (None when there is none or it cannot be read), under the same lock.
+pub fn replace_config(build: impl FnOnce(Option<Config>) -> Config) -> Result<Config> {
+    with_config_lock(|directory| {
+        let result = build(config().ok());
+        validate_config(&result)?;
+        atomic_json(&directory.join("config.json"), &result)?;
+        Ok(result)
+    })
 }
 fn default_port() -> u16 {
     22
