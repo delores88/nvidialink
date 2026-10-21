@@ -250,7 +250,7 @@ fn credential_pattern() -> &'static Regex {
     // mode with ASCII word boundaries: no lossy decoding, and a token beside a
     // non-ASCII byte is still found.
     static PATTERN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    PATTERN.get_or_init(|| Regex::new(r"(?-u)-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-[0-9]|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{40,}\b|\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b").unwrap())
+    PATTERN.get_or_init(|| Regex::new(r"(?-u)-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-[0-9]|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{40,}\b|\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b|\bhf_[A-Za-z]{34}\b").unwrap())
 }
 fn credential_refusal() -> AppError {
     AppError::new(
@@ -852,6 +852,7 @@ mod tests {
             ]
             .concat(),
             ["sk-proj-", "abcdefghijklmnopqrstuvwxyz0123456789ABCD"].concat(),
+            ["hf_", "abcdefghijklmnopqrstuvwxyzABCDEFGH"].concat(),
         ]
         .into_iter()
         .map(String::into_bytes)

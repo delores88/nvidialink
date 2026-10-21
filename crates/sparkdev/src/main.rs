@@ -14,7 +14,7 @@ fn main() {
             3
         });
     }
-    let json_mode = args.iter().any(|a| a == "--json");
+    let json_mode = sparkdev::json_output(&args);
     match sparkdev::execute_with_events(args, &mut |event| {
         if json_mode {
             println!("{event}");
@@ -29,6 +29,14 @@ fn main() {
                 "{}",
                 if json_mode {
                     serde_json::to_string(&value).unwrap()
+                } else if value.get("downloads").is_some() && value["message"].is_string() {
+                    value["message"].as_str().unwrap().to_owned()
+                } else if let Some(file) = value["file"].as_str() {
+                    let inline = value
+                        .get("json")
+                        .map(|v| format!("\n{}", serde_json::to_string_pretty(v).unwrap()))
+                        .unwrap_or_default();
+                    format!("{file}{inline}")
                 } else {
                     serde_json::to_string_pretty(&value).unwrap()
                 }

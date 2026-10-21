@@ -2,6 +2,7 @@ pub mod discover;
 pub mod inventory;
 pub mod local;
 pub mod mcp;
+mod servers;
 pub mod state;
 pub mod transport;
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -47,6 +48,18 @@ pub type Result<T> = std::result::Result<T, AppError>;
 /// Setup's refusal for a redirected state folder, shared with Find my Spark's
 /// save, which writes the same configuration.
 pub(crate) const REDIRECTED_STATE: &str = "Windows redirected this process's state folder. Configure SSH in the normally installed DGXBridge app, or set SPARKDEV_HOME to the verified owner state location; no configuration was copied or saved.";
+/// Output formatting follows parsed flags, not literal command arguments or call bodies.
+pub fn json_output(args: &[String]) -> bool {
+    let normalized = servers::normalize_call_args(args.to_vec());
+    Cli::try_parse_from(std::iter::once("sparkdev".into()).chain(normalized.clone()))
+        .map(|cli| cli.json)
+        .unwrap_or_else(|_| {
+            normalized
+                .iter()
+                .take_while(|a| a.as_str() != "--")
+                .any(|a| a == "--json")
+        })
+}
 #[derive(Parser)]
 #[command(
     name = "sparkdev",
@@ -81,6 +94,11 @@ enum Placement {
     Auto,
     Laptop,
     Spark,
+}
+#[derive(Clone, Copy, ValueEnum)]
+enum Switch {
+    On,
+    Off,
 }
 #[derive(Subcommand)]
 enum Commands {
@@ -142,6 +160,52 @@ enum Commands {
         file: Option<PathBuf>,
         #[arg(long, conflicts_with = "file")]
         stdin: bool,
+        #[arg(long, value_enum)]
+        internet: Option<Switch>,
+    },
+    Downloads {
+        #[arg(long)]
+        keep_gb: Option<u64>,
+        #[arg(long)]
+        free_up: bool,
+    },
+    Serve {
+        dir: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+        #[arg(long, default_value_t = 16)]
+        memory: u64,
+        #[arg(long)]
+        runtime: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        idle_minutes: u64,
+        #[arg(long)]
+        replace: bool,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long)]
+        argv_json: Option<PathBuf>,
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+    Call {
+        name: String,
+        #[arg(long = "body-json", conflicts_with = "input")]
+        body_json: Option<String>,
+        #[arg(long)]
+        input: Option<PathBuf>,
+        #[arg(long, default_value = "/")]
+        path: String,
+        #[arg(long)]
+        content_type: Option<String>,
+        #[arg(long)]
+        save: Option<PathBuf>,
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+        #[arg(long)]
+        request_id: Option<String>,
     },
     Plan {
         dir: PathBuf,
@@ -228,8 +292,10 @@ fn owner_only(raw: &[String], parsed: Client) -> Result<()> {
 }
 pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) -> Result<Value> {
     let raw = args.clone();
-    let cli = Cli::try_parse_from(std::iter::once("sparkdev".into()).chain(args))
-        .map_err(|e| AppError::new(if e.use_stderr() { 2 } else { 0 }, e.to_string()))?;
+    let cli = Cli::try_parse_from(
+        std::iter::once("sparkdev".into()).chain(servers::normalize_call_args(args)),
+    )
+    .map_err(|e| AppError::new(if e.use_stderr() { 2 } else { 0 }, e.to_string()))?;
     let parsed_client = cli.client;
     let client = cli.client.name();
     match cli.command {
@@ -324,14 +390,65 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             let config = state::update_config(|config| config.connection_enabled = false)?;
             Ok(connection_response(&config))
         }
-        Commands::Resources { file, stdin } => {
+        Commands::Resources {
+            file,
+            stdin,
+            internet,
+        } => {
             let policy = if stdin {
                 Some(read_resource_input(std::io::stdin().lock())?)
             } else {
                 file.map(|file| state::read_json(&file)).transpose()?
             };
-            resource_limits(policy)
+            resource_settings(policy, internet.map(|v| matches!(v, Switch::On)))
         }
+        Commands::Downloads { keep_gb, free_up } => downloads(client, keep_gb, free_up),
+        Commands::Serve {
+            dir,
+            name,
+            port,
+            memory,
+            runtime,
+            idle_minutes,
+            replace,
+            request_id,
+            argv_json,
+            command,
+        } => {
+            let argv = load_argv(command, argv_json)?;
+            servers::serve(
+                &dir,
+                &name,
+                port,
+                memory,
+                runtime,
+                idle_minutes,
+                replace,
+                request_id,
+                argv,
+                client,
+            )
+        }
+        Commands::Call {
+            name,
+            body_json,
+            input,
+            path,
+            content_type,
+            save,
+            timeout,
+            request_id,
+        } => servers::call(
+            &name,
+            body_json,
+            input,
+            &path,
+            content_type,
+            save,
+            timeout,
+            request_id,
+            client,
+        ),
         Commands::Plan {
             dir,
             runtime,
@@ -496,6 +613,10 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             state::validate_id(&job)?;
             if job.starts_with("laptop-") {
                 local::cancel(&job)
+            } else if servers::valid_name(&job) {
+                // A name is resolved now, never queued for a future server with that name.
+                let mut tr = transport::Transport::new()?;
+                tr.rpc(json!({"v":1,"op":"cancel","name":job}))
             } else {
                 let file = state::root()?
                     .join("pending-cancels")
@@ -532,14 +653,59 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
     }
 }
 pub fn resource_limits(policy: Option<Value>) -> Result<Value> {
+    resource_settings(policy, None)
+}
+pub fn resource_settings(policy: Option<Value>, internet: Option<bool>) -> Result<Value> {
     let mut request = json!({"v":1,"op":"resources"});
     if let Some(policy) = policy {
         request["limits"] = policy;
     }
+    if let Some(enabled) = internet {
+        request["internet"] = json!(enabled);
+    }
     let mut tr = transport::Transport::new()?;
-    let mut response = tr.rpc(request)?;
+    let mut response = tr.rpc(request).map_err(|e| {
+        if internet.is_some() && e.message.starts_with("invalid_request:") {
+            AppError::new(6, "This Spark bridge has no internet switch yet. Repair the Spark bridge from DGXBridge.")
+        } else { e }
+    })?;
     response["transport"] = tr.info();
     Ok(response)
+}
+fn downloads(client: &str, keep_gb: Option<u64>, free_up: bool) -> Result<Value> {
+    if client != "human" && (keep_gb.is_some() || free_up) {
+        return Err(AppError::new(
+            2,
+            "Only the owner can change or clear saved downloads.",
+        ));
+    }
+    let mut request = json!({"v":1,"op":"downloads","client":client});
+    if let Some(keep) = keep_gb {
+        request["keep_gb"] = json!(keep);
+    }
+    if free_up {
+        request["free_up"] = json!(true);
+    }
+    let mut tr = transport::Transport::new()?;
+    let mut value = tr.rpc(request).map_err(|e| {
+        if e.message.starts_with("unknown_operation:") {
+            AppError::new(6, "Update your Spark setup to use saved downloads.")
+        } else {
+            e
+        }
+    })?;
+    let d = &value["downloads"];
+    let used = d["used_bytes"]
+        .as_u64()
+        .map(|v| format!("{:.1} GB", v as f64 / 1e9))
+        .unwrap_or_else(|| "not measured yet".into());
+    value["message"] = json!(format!(
+        "Saved downloads: {used} of {:.1} GB. Spark has {:.1} GB free.",
+        d["keep_bytes"].as_u64().unwrap_or(0) as f64 / 1e9,
+        d["free_bytes"].as_u64().unwrap_or(0) as f64 / 1e9
+    ));
+    value["transport"] = tr.info();
+    Ok(value)
 }
 fn read_resource_input(input: impl Read) -> Result<Value> {
     let mut bytes = Vec::new();
@@ -569,7 +735,7 @@ fn devices() -> Result<Value> {
         Ok(jobs) => laptop["jobs"] = jobs,
         Err(e) => laptop["state_error"] = json!({"code":e.code,"message":e.message}),
     }
-    let mut spark = json!({"id":"spark","availability":"unconfigured","reachable":false,"os":null,"architecture":null,"free_cpu":null,"free_memory_bytes":null,"network":null,"transport":{"selected":"unselected","route":"none","authenticated":false,"attempted_routes":[]}});
+    let mut spark = json!({"id":"spark","availability":"unconfigured","reachable":false,"os":null,"architecture":null,"free_cpu":null,"free_memory_bytes":null,"network":null,"internet":null,"downloads":null,"transport":{"selected":"unselected","route":"none","authenticated":false,"attempted_routes":[]}});
     let mut board = Value::Null;
     let mut scheduler_reachable = false;
     let mut scheduler_healthy = false;
@@ -595,6 +761,16 @@ fn devices() -> Result<Value> {
             spark["hardware"] = status["hardware"].clone();
             spark["runtimes"] = status["runtimes"].clone();
             spark["network"] = spark_network(&status);
+            spark["internet"] = status
+                .get("internet")
+                .filter(|v| v.is_object() && v["enabled"].is_boolean())
+                .cloned()
+                .unwrap_or(Value::Null);
+            spark["downloads"] = status
+                .get("downloads")
+                .filter(|v| v.is_object() && v["v"] == 1)
+                .cloned()
+                .unwrap_or(Value::Null);
             // Absent (null) from a controller that predates disk reporting.
             spark["storage"] = status.get("storage").cloned().unwrap_or(Value::Null);
             spark["sync_limits"] = status.get("sync_limits").cloned().unwrap_or(Value::Null);
@@ -1440,6 +1616,15 @@ mod tests {
     #[test]
     fn command_parser_bounds_wait() {
         assert!(Cli::try_parse_from(["sparkdev", "wait", "abc", "--timeout", "61"]).is_err())
+    }
+    #[test]
+    fn output_json_does_not_confuse_call_body_or_workload_flags() {
+        let args = |values: &[&str]| values.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(json_output(&args(&[
+            "--json", "call", "tts", "--json", "{}"
+        ])));
+        assert!(!json_output(&args(&["call", "tts", "--json", "{}"])));
+        assert!(!json_output(&args(&["run", ".", "--", "python", "--json"])));
     }
     #[test]
     fn resource_stdin_is_exclusive_bounded_and_object_only() {

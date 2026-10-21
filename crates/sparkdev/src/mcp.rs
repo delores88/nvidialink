@@ -11,16 +11,18 @@ fn schema(properties: Value, required: &[&str]) -> Value {
 fn tools() -> Value {
     let job = json!({"type":"string","minLength":1});
     json!([
-      {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access and known capacity; unknown capacity remains unknown. This is an observation, not a reservation. Includes the Spark's observed network link; never SSIDs or addresses.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access, job-internet policy and shared model-cache capacity; unknown capacity remains unknown. This is an observation, not a reservation. Includes the Spark's observed network link; never SSIDs or addresses.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"connection","description":"Read the owner's saved route preference and enabled/disconnected state. Does not connect, change settings or reveal SSH credentials. Existing admitted jobs retain their connections after disconnect.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
       {"name":"resources","description":"Read the authenticated Spark scheduler resource policy and detected hardware bounds. Settings apply to new requests and admissions; this tool cannot change them. Laptop native CPU and memory are not capped by Spark settings.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"plan","description":"Preview job placement and validate source and exact argv without uploading files, claiming a worktree or launching a job. Does not verify runtime availability or reserve capacity; use devices for current connectivity.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"}}), &["dir","argv"]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
-      {"name":"prepare","description":"Sync a project and submit fixed locked dependency preparation on Spark for Rust, Node, Python or CUDA (requirements-cuda.lock; packages the CUDA image provides are refused). No caller commands accepted. Reconnection also delivers cancellations previously queued by the owner. Retain the detached job ID and poll wait/logs to completion before running an offline workload. Reuse request_id when retrying.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"request_id":{"type":"string"}}), &["dir","runtime"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
-      {"name":"run","description":"Sync a project and submit a detached build/test job. Returns durable job ID; follow with wait/logs. Laptop commands run natively with owner permissions and can change files outside the project. Reuse request_id to retry without duplicate execution.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"},"request_id":{"type":"string"},"no_cache":{"type":"boolean","default":false}}), &["dir","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
-      {"name":"wait","description":"Bound the remote job wait to timeout seconds (0–60) and return status and exit code when terminal. Connection and queued-cancellation delivery add overhead. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"timeout":{"type":"integer","minimum":0,"maximum":60,"default":10}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
-      {"name":"logs","description":"Read and save a bounded chunk of retained output from a byte offset; next_offset supports lossless repeated polling. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"since":{"type":"integer","minimum":0,"default":0}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"prepare","description":"Sync a project and submit fixed locked dependency preparation on Spark for Rust, Node, Python or CUDA (requirements-cuda.lock; packages the CUDA image provides are refused). No caller commands accepted. Preparation remains the allowlisted locked-dependency path, separate from owner-controlled job internet and shared model downloads. Reconnection also delivers cancellations previously queued by the owner. Retain the detached job ID and poll wait/logs to completion before running an offline workload. Reuse request_id when retrying.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"request_id":{"type":"string"}}), &["dir","runtime"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"run","description":"Sync a project and submit a detached build/test job. Returns durable job ID; follow with wait/logs. Spark job internet follows the owner's policy, defaults on with private/home networks blocked, and reuses the shared model-download cache. Check devices for current availability; cached results are segregated by internet policy, and no_cache forces a fresh run. Laptop commands run natively with owner permissions and can change files outside the project. Reuse request_id to retry without duplicate execution.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"},"request_id":{"type":"string"},"no_cache":{"type":"boolean","default":false}}), &["dir","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"serve","description":"Sync and start a named Spark-only HTTP model server in an isolated approved runtime. Returns immediately with a durable job ID; logs and wait accept its name. It stops when idle and eligible stops wake on a later call. The shared model cache avoids repeated model downloads. Reuse request_id after uncertain submission; replace=true can stop another client's server with this name.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"name":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"},"argv":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":1024},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"port":{"type":"integer","minimum":1,"maximum":65535,"default":8000},"memory_gb":{"type":"integer","minimum":1,"maximum":48,"default":16},"idle_minutes":{"type":"integer","minimum":5,"maximum":240,"default":30},"replace":{"type":"boolean","default":false},"request_id":{"type":"string"}}), &["dir","name","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"call","description":"Call a named Spark model server over the authenticated bridge, with no published server port. Send body_json or an input file (up to 1 MiB). Retain request_id to retry safely; eligible stopped servers wake automatically. Polls for at most 45 seconds plus connection overhead, then returns waiting with request_id. Responses are saved locally and verified by SHA-256; only small JSON responses are inline. An HTTP error is a tool error.","inputSchema":schema(json!({"server":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"},"body_json":{"type":"string","maxLength":1048576},"input":{"type":"string","minLength":1},"path":{"type":"string","pattern":"^/[!-~]{0,1023}$","default":"/"},"content_type":{"type":"string","minLength":1,"maxLength":128},"save":{"type":"string","minLength":1},"timeout":{"type":"integer","minimum":0,"maximum":45,"default":45},"request_id":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"}}), &["server"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"wait","description":"Bound the remote job wait to timeout seconds (0–60) and return status and exit code when terminal. job also accepts a model-server name, resolving active first then newest. Connection and queued-cancellation delivery add overhead. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"timeout":{"type":"integer","minimum":0,"maximum":60,"default":10}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"logs","description":"Read and save a bounded chunk of retained output from a byte offset; next_offset supports lossless repeated polling. job also accepts a model-server name, resolving active first then newest. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"since":{"type":"integer","minimum":0,"default":0}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"status","description":"Read the shared job board for Claude Code, Codex and human jobs on the laptop and Spark, with transport and cache details. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
-      {"name":"cancel","description":"Cancel an owned job, or queue its cancellation for the next authenticated connection when disconnected.","inputSchema":schema(json!({"job":job}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}}
+      {"name":"cancel","description":"Cancel by job ID or a live model-server name (exactly one of job/name). Job-ID cancellations can be queued when disconnected. A name cancellation requires a live connection and is never queued, so it cannot stop a newer server later.","inputSchema":schema(json!({"job":job,"name":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"}}), &[]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}}
     ])
 }
 
@@ -41,15 +43,84 @@ fn number(v: &Value, name: &str, default: u64, max: u64) -> Result<u64, String> 
     }
 }
 
+fn service_name(v: &Value, key: &str) -> Result<String, String> {
+    let name = required_string(v, key)?;
+    if name.len() > 24
+        || name.starts_with("laptop")
+        || !name.as_bytes()[0].is_ascii_lowercase()
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    {
+        return Err(format!(
+            "{key} must be a lowercase server name, at most 24 characters, not beginning with laptop"
+        ));
+    }
+    Ok(name.into())
+}
+
+fn bounded_number(v: &Value, key: &str, default: u64, min: u64, max: u64) -> Result<u64, String> {
+    let value = number(v, key, default, max)?;
+    if value < min {
+        return Err(format!("{key} must be from {min} to {max}"));
+    }
+    Ok(value)
+}
+
+fn call_request_id(v: &Value) -> Result<Option<String>, String> {
+    if v.get("request_id").is_none() {
+        return Ok(None);
+    }
+    let id = required_string(v, "request_id")?;
+    if id.len() > 64
+        || !id.as_bytes()[0].is_ascii_alphanumeric()
+        || !id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+    {
+        return Err("request_id must use 1-64 letters, digits, underscores or hyphens and begin with a letter or digit".into());
+    }
+    Ok(Some(id.into()))
+}
+
+fn result_failed(value: &Value) -> bool {
+    value.get("ok") == Some(&Value::Bool(false))
+        || value
+            .get("process_exit_code")
+            .and_then(Value::as_i64)
+            .is_some_and(|code| code != 0)
+}
+
 fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> {
     let allowed: &[&str] = match name {
         "run" => &["dir", "argv", "where", "runtime", "request_id", "no_cache"],
         "plan" => &["dir", "argv", "where", "runtime"],
         "prepare" => &["dir", "runtime", "request_id"],
+        "serve" => &[
+            "dir",
+            "name",
+            "argv",
+            "runtime",
+            "port",
+            "memory_gb",
+            "idle_minutes",
+            "replace",
+            "request_id",
+        ],
+        "call" => &[
+            "server",
+            "body_json",
+            "input",
+            "path",
+            "content_type",
+            "save",
+            "timeout",
+            "request_id",
+        ],
         "wait" => &["job", "timeout"],
         "logs" => &["job", "since"],
         "status" | "devices" | "connection" | "resources" => &[],
-        "cancel" => &["job"],
+        "cancel" => &["job", "name"],
         _ => return Err("Unknown tool".into()),
     };
     let object = v.as_object().ok_or("arguments must be an object")?;
@@ -63,6 +134,116 @@ fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> 
         name.into(),
     ];
     match name {
+        "serve" => {
+            let dir = required_string(v, "dir")?;
+            if dir.starts_with('-') {
+                return Err("dir must be an absolute or dot-relative project path".into());
+            }
+            out.extend([dir.into(), "--name".into(), service_name(v, "name")?]);
+            for (key, flag, default, min, max) in [
+                ("port", "--port", 8000, 1, 65535),
+                ("memory_gb", "--memory", 16, 1, 48),
+                ("idle_minutes", "--idle-minutes", 30, 5, 240),
+            ] {
+                out.extend([
+                    flag.into(),
+                    bounded_number(v, key, default, min, max)?.to_string(),
+                ]);
+            }
+            if v.get("runtime").is_some() {
+                let runtime = required_string(v, "runtime")?;
+                if !["rust", "node", "python", "cuda"].contains(&runtime) {
+                    return Err("Unknown server runtime".into());
+                }
+                out.extend(["--runtime".into(), runtime.into()]);
+            }
+            if v.get("request_id").is_some() {
+                let id = required_string(v, "request_id")?;
+                if !id.as_bytes()[0].is_ascii_alphanumeric()
+                    || id.len() > 128
+                    || !id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.'))
+                {
+                    return Err("Invalid server request_id".into());
+                }
+                out.extend(["--request-id".into(), id.into()]);
+            }
+            match v.get("replace") {
+                Some(Value::Bool(true)) => out.push("--replace".into()),
+                Some(Value::Bool(false)) | None => {}
+                _ => return Err("replace must be boolean".into()),
+            }
+            let argv = v
+                .get("argv")
+                .and_then(Value::as_array)
+                .filter(|a| !a.is_empty() && a.len() <= 1024)
+                .ok_or("argv must contain 1-1024 strings")?;
+            let mut bytes = 0;
+            out.push("--".into());
+            for (index, arg) in argv.iter().enumerate() {
+                let arg = arg
+                    .as_str()
+                    .filter(|s| !s.contains('\0'))
+                    .ok_or("argv entries must be strings without NUL")?;
+                if index == 0 && arg.is_empty() {
+                    return Err("Command cannot be empty".into());
+                }
+                bytes += arg.len();
+                if bytes > 65536 {
+                    return Err("argv exceeds 65536 bytes".into());
+                }
+                out.push(arg.into());
+            }
+        }
+        "call" => {
+            out.push(service_name(v, "server")?);
+            if v.get("body_json").is_some() && v.get("input").is_some() {
+                return Err("Use either body_json or input, not both".into());
+            }
+            if v.get("body_json").is_some() {
+                let body = required_string(v, "body_json")?;
+                if body.len() > 1048576 || serde_json::from_str::<Value>(body).is_err() {
+                    return Err("body_json must contain valid JSON up to 1 MiB".into());
+                }
+                out.extend(["--body-json".into(), body.into()]);
+            }
+            for (key, flag) in [("input", "--input"), ("save", "--save")] {
+                if v.get(key).is_some() {
+                    let path = required_string(v, key)?;
+                    if path.starts_with('-') {
+                        return Err(format!("{key} must be a filesystem path"));
+                    }
+                    out.extend([flag.into(), path.into()]);
+                }
+            }
+            if v.get("path").is_some() {
+                let path = required_string(v, "path")?;
+                if !path.starts_with('/')
+                    || path.len() > 1024
+                    || !path.bytes().all(|c| (33..=126).contains(&c))
+                {
+                    return Err(
+                        "path must start with / and use visible ASCII up to 1024 bytes".into(),
+                    );
+                }
+                out.extend(["--path".into(), path.into()]);
+            }
+            if v.get("content_type").is_some() {
+                let value = required_string(v, "content_type")?;
+                if value.len() > 128 || !value.bytes().all(|c| (32..=126).contains(&c)) {
+                    return Err("content_type must be printable ASCII up to 128 bytes".into());
+                }
+                out.extend(["--content-type".into(), value.into()]);
+            }
+            out.extend([
+                "--timeout".into(),
+                number(v, "timeout", 45, 45)?.to_string(),
+            ]);
+            if let Some(id) = call_request_id(v)? {
+                out.extend(["--request-id".into(), id]);
+            }
+        }
         "run" | "plan" | "prepare" => {
             let dir = required_string(v, "dir")?;
             if dir.starts_with('-') {
@@ -123,6 +304,13 @@ fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> 
         "status" => out.push("--all".into()),
         "devices" | "connection" | "resources" => {}
         _ => {
+            if name == "cancel" && v.get("name").is_some() {
+                if v.get("job").is_some() {
+                    return Err("Specify job or name, not both".into());
+                }
+                out.push(service_name(v, "name")?);
+                return Ok(out);
+            }
             let job = required_string(v, "job")?;
             if job.starts_with('-') {
                 return Err("Invalid job ID".into());
@@ -219,7 +407,7 @@ pub fn serve(client: &str) -> io::Result<()> {
                 } else {
                     "2025-06-18"
                 };
-                json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"sparkdev","version":env!("CARGO_PKG_VERSION")},"instructions":"Check devices for authenticated Spark reachability, connection route and scheduler access; plan previews placement without reservation. Use prepare for locked dependency downloads, then run for offline workloads, bounded wait and incremental logs. Initial sync precedes job admission and may take time. Check status for both machines. Laptop admission also requires the shared Spark scheduler. Client identity is bound by server launch arguments. Agent conversations and delegation belong to CodaClauda, not this scheduler."}})
+                json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"sparkdev","version":env!("CARGO_PKG_VERSION")},"instructions":"Check devices for authenticated Spark reachability, route, scheduler access, job-internet policy and shared model downloads; plan previews placement without reservation. Use prepare for locked dependencies, run for detached workloads, bounded wait and incremental logs. Use serve/call for named isolated HTTP model servers; retain request IDs across uncertain responses. Internet defaults on for Spark jobs with private/home networks blocked, subject to owner policy. Initial sync precedes job admission and may take time. Check status for both machines. Laptop admission also requires the shared Spark scheduler. Client identity is bound by server launch arguments. Agent conversations and delegation belong to CodaClauda, not this scheduler."}})
             }
             "ping" => json!({"jsonrpc":"2.0","id":id,"result":{}}),
             _ if !initialized => error(id, -32002, "Initialize first"),
@@ -231,7 +419,10 @@ pub fn serve(client: &str) -> io::Result<()> {
                     Err(message) => error(id, -32602, &message),
                     Ok(args) => {
                         let (value, failed) = match crate::execute(args) {
-                            Ok(v) => (v, false),
+                            Ok(v) => {
+                                let failed = result_failed(&v);
+                                (v, failed)
+                            }
                             Err(e) => (
                                 json!({"ok":false,"error":{"code":e.code,"message":e.message}}),
                                 true,
@@ -252,6 +443,88 @@ pub fn serve(client: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn model_server_tools_preserve_exact_argv_and_bound_polling() {
+        let args = cli_args("serve", &json!({"dir":"./project","name":"tts","argv":["python3","server.py","a b",""],"memory_gb":32,"request_id":"serve-1"}), "codex").unwrap();
+        assert_eq!(
+            &args[args.len() - 4..],
+            &["python3", "server.py", "a b", ""]
+        );
+        assert!(args.windows(2).any(|v| v == ["--memory", "32"]));
+        assert!(!args.iter().any(|v| v == "--where" || v == "--detach"));
+        let call = cli_args(
+            "call",
+            &json!({"server":"tts","body_json":"{\"text\":\"hello\"}","request_id":"call-1"}),
+            "claude",
+        )
+        .unwrap();
+        assert!(
+            call.windows(2)
+                .any(|v| v == ["--body-json", "{\"text\":\"hello\"}"])
+        );
+        assert!(call.windows(2).any(|v| v == ["--timeout", "45"]));
+        assert!(call.windows(2).any(|v| v == ["--client", "claude"]));
+        assert_eq!(call.iter().filter(|v| v.as_str() == "--json").count(), 1);
+        assert!(cli_args("call", &json!({"server":"tts","timeout":46}), "codex").is_err());
+        assert!(cli_args("call", &json!({"server":"tts","timeout":0}), "codex").is_ok());
+    }
+    #[test]
+    fn model_tools_reject_ambiguous_input_client_spoofing_and_invalid_bounds() {
+        for extra in [
+            json!({"body_json":"{}","input":"./request.json"}),
+            json!({"body_json":"not JSON"}),
+            json!({"path":"/x\r\nHost: other"}),
+            json!({"content_type":"text/plain\n"}),
+            json!({"client":"claude"}),
+            json!({"request_id":"../escape"}),
+        ] {
+            let mut value = json!({"server":"tts"});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(cli_args("call", &value, "codex").is_err(), "{value}");
+        }
+        for extra in [
+            json!({"memory_gb":49}),
+            json!({"memory_gb":true}),
+            json!({"port":0}),
+            json!({"idle_minutes":4}),
+            json!({"replace":"yes"}),
+            json!({"name":"laptop-tts"}),
+            json!({"where":"laptop"}),
+            json!({"argv":[""]}),
+            json!({"request_id":".not-valid"}),
+        ] {
+            let mut value = json!({"dir":"./tree","name":"tts","argv":["python3","server.py"]});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(cli_args("serve", &value, "codex").is_err(), "{value}");
+        }
+    }
+    #[test]
+    fn name_cancellation_is_explicit_and_does_not_add_a_pending_mode() {
+        assert_eq!(
+            cli_args("cancel", &json!({"name":"tts"}), "codex").unwrap(),
+            ["--json", "--client", "codex", "cancel", "tts"]
+        );
+        assert!(cli_args("cancel", &json!({"name":"tts","job":"123"}), "codex").is_err());
+        assert!(cli_args("cancel", &json!({}), "codex").is_err());
+        assert!(cli_args("cancel", &json!({"name":"laptop-job"}), "codex").is_err());
+    }
+    #[test]
+    fn workload_http_exit_codes_become_mcp_tool_errors() {
+        assert!(result_failed(
+            &json!({"ok":true,"process_exit_code":1,"status":502})
+        ));
+        assert!(result_failed(&json!({"ok":false})));
+        assert!(!result_failed(
+            &json!({"ok":true,"process_exit_code":0,"status":200})
+        ));
+        assert!(!result_failed(&json!({"ok":true,"state":"waiting"})));
+    }
     #[test]
     fn exact_argv_and_client_are_preserved() {
         let args = cli_args(
@@ -416,7 +689,7 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(tools().as_array().unwrap().len(), 10);
+        assert_eq!(tools().as_array().unwrap().len(), 12);
         for tool in tools().as_array().unwrap() {
             let name = tool["name"].as_str().unwrap();
             if ["prepare", "wait", "logs", "status"].contains(&name) {
