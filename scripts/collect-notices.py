@@ -73,7 +73,9 @@ for package in sorted(packages.values(), key=lambda p: (p['name'], p['version'])
                  'source': package['source'], 'texts': sorted(set(texts)), 'text_provenance': sorted(set(origins)),
                  'text_sha256': {text: hashlib.sha256((OUT / text).read_bytes()).hexdigest() for text in sorted(set(texts))}})
 status = {'packages': len(rows), 'missing_license_texts': missing, 'pinned_supplements': len(supplements),
-          'complete': not missing, 'scope': 'Union of locked Cargo-resolved packages for Windows CLI/link/desktop and Linux ARM64 link; includes build and development dependencies.'}
+          'complete': not missing, 'scope': 'Union of locked Cargo-resolved packages for Windows CLI/link/result-worker/desktop and Linux ARM64 CLI/link; includes build and development dependencies.',
+          'artifact_sboms': 'This source-license union is not an artifact SBOM. Ship separate Cargo-auditable Syft SBOMs for the exact NSIS GUI, CLI, link and sparkdev-return.exe plus each Linux release binary.',
+          'runtime_scope': 'Optional Spark OCI bases, apt packages, Python wheels, Blender, OptiX and Blender source-built dependencies are provisioned separately and are not covered by this Cargo license collection.'}
 (OUT / 'COLLECTION-STATUS.json').write_text(json.dumps(status, indent=2) + '\n', encoding='utf-8')
 if missing:
     raise SystemExit('Full license-text evidence missing for: ' + ', '.join(missing))

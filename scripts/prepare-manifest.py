@@ -7,8 +7,10 @@ import argparse
 import hashlib
 import io
 import json
+import lzma
 from pathlib import Path
 import re
+import struct
 import subprocess
 import tempfile
 from urllib.parse import quote, urlsplit
@@ -212,17 +214,83 @@ def cuda_wheel_downloads(cuda):
              'purpose': f'Hash-locked Pillow {wheel[1]} ARM64 CPython 3.12 wheel installed only inside the optional owner-requested Spark CUDA runtime during setup.'}]
 
 
-def runtime_downloads(commit):
+def docker_stages(recipe, variables=()):
+    """Understand only pinned OCI bases, named prior stages, and fixed ARG defaults."""
+    defaults, stages, result = {}, set(), []
+    for line in re.sub(r'\\\n[ \t]*', ' ', recipe).splitlines():
+        line = line.strip()
+        if re.match(r'ARG\s', line, re.I):
+            match = re.fullmatch(r'ARG ([A-Z][A-Z0-9_]*)(?:=([^\s]+))?', line)
+            if match and match[2]:
+                require(match[1] not in defaults, 'Duplicate Docker base ARG')
+                defaults[match[1]] = match[2]
+        if not re.match(r'FROM(?:\s|$)', line, re.I):
+            continue
+        match = re.fullmatch(r'FROM ([^\s]+)(?: AS ([a-z][a-z0-9_-]*))?', line)
+        require(match is not None, 'Unsupported Docker FROM recipe')
+        base, stage = match[1], match[2]
+        variable = re.fullmatch(r'\$\{([A-Z][A-Z0-9_]*)\}', base)
+        if variable:
+            if variable[1] in variables:
+                require(variable[1] not in defaults, 'Dynamic Blender image must come from the digest-checking installer')
+                base = variable[1]
+            else:
+                require(variable[1] in defaults, 'Docker FROM variable lacks a pinned default')
+                base = defaults[variable[1]]
+        require(base in variables or base in stages or re.fullmatch(r'[a-z0-9./_-]+(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}', base),
+                'Docker FROM image is not pinned')
+        result.append(base)
+        if stage:
+            require(stage not in stages, 'Duplicate Docker stage')
+            stages.add(stage)
+    require(result, 'Docker recipe has no FROM')
+    return result
+
+
+def blender_sources(commit):
+    recipe_raw = source(commit, 'runtimes/Dockerfile.blender')
+    recipe = recipe_raw.decode().replace('\r\n', '\n')
+    bases = docker_stages(recipe)
+    require(len(bases) == 2 and bases[0].startswith('nvidia/cuda:') and bases[1].startswith('ubuntu:'),
+            'Unsupported Blender fallback base recipe')
+    require(not re.search(r'^\s*ADD(?:\s|$)', recipe, re.M | re.I), 'Unsupported Blender ADD download')
+    provenance = json.loads(source(commit, 'runtimes/blender/PROVENANCE.json'))
+    pins = {}
+    for name, url, directory in [('BLENDER', 'https://projects.blender.org/blender/blender.git', 'blender'),
+                                 ('OPTIX', 'https://github.com/NVIDIA/optix-dev.git', '/opt/optix-dev')]:
+        matches = re.findall(r'^ARG ' + name + r'_COMMIT=([0-9a-f]{40})$', recipe, re.M)
+        require(len(matches) == 1 and provenance.get(name.lower() + '_commit') == matches[0], 'Blender source provenance and recipe differ')
+        require(url in recipe and f'test "$(git -C {directory} rev-parse HEAD)" = "${{{name}_COMMIT}}"' in recipe,
+                'Blender source checkout lacks exact commit verification')
+        pins[name.lower()] = {'url': url, 'commit': matches[0]}
+    installer = source(commit, 'remote/install-cuda.py').decode()
+    existing = re.findall(r'^BLENDER_EXISTING = "(sha256:[0-9a-f]{64})"$', installer, re.M)
+    require(len(existing) == 1 and '"BLENDER_IMAGE=" + blender' in installer and 'image["Id"] != identity' in installer,
+            'Dynamic Blender stage lacks the supported immutable image selection')
+    return {'bases': bases, 'sources': pins, 'recipeSha256': hashlib.sha256(recipe_raw).hexdigest(),
+            'existingLocalImage': existing[0],
+            'downloadDeclarationComplete': False,
+            'declarationGaps': ['Blender/OptiX Git source and Blender LFS object inventories need exact downloadable SHA256 evidence.',
+                                'Blender transitive source archive URLs/hashes, mirror/upstream variants and licenses need a complete inventory.',
+                                'Setup apt packages use moving signed repositories; resolved package inventory/hashes require physical setup evidence and draft review.'],
+            'sourceIntegrity': 'Git source commits are SHA-1 identities, not SHA-256 archive hashes. Blender dependency archives and LFS objects use upstream pinned hashes. Signed apt repository packages are resolved at setup.',
+            'scope': 'Optional Spark setup only; not bundled Windows executables. Existing local image reuse makes no network download. Otherwise build the standalone recipe.'}
+
+
+def runtime_downloads(commit, evidence=None):
     downloads = []
     cpu = source(commit, 'runtimes/Dockerfile').decode().replace('\r\n', '\n')
-    match = re.search(r'^FROM rust:[^\s]+@sha256:([0-9a-f]{64})$', cpu, re.M)
-    require(match is not None, 'CPU OCI base pin is missing')
-    downloads.append({'url': 'https://registry-1.docker.io/v2/library/rust/manifests/sha256:' + match[1],
-                      'sha256': match[1], 'purpose': 'CPU base OCI manifest; Docker verifies its digest and layer digests. Setup installs Debian repository packages and locked wheels, then pins the final local image ID.'})
+    cpu_bases = docker_stages(cpu)
+    require(len(cpu_bases) == 1 and cpu_bases[0].startswith('rust:'), 'Unsupported CPU OCI base recipe')
+    digest = cpu_bases[0].rsplit('sha256:', 1)[1]
+    downloads.append({'url': 'https://registry-1.docker.io/v2/library/rust/manifests/sha256:' + digest,
+                      'sha256': digest, 'purpose': 'CPU base OCI manifest; Docker verifies its digest and layer digests. Setup installs Debian repository packages and locked wheels, then pins the final local image ID.'})
     cuda = source(commit, 'runtimes/Dockerfile.cuda').decode().replace('\r\n', '\n')
-    match = re.search(r'^FROM nvcr.io/nvidia/pytorch@sha256:([0-9a-f]{64})$', cuda, re.M)
-    require(match is not None, 'Optional CUDA OCI base pin is missing')
-    downloads.append({'url': 'https://nvcr.io/v2/nvidia/pytorch/manifests/sha256:' + match[1], 'sha256': match[1],
+    cuda_bases = docker_stages(cuda, ('BLENDER_IMAGE',))
+    blender = len(cuda_bases) == 2 and cuda_bases[0] == 'BLENDER_IMAGE'
+    require((len(cuda_bases) == 1 or blender) and cuda_bases[-1].startswith('nvcr.io/nvidia/pytorch@'), 'Unsupported CUDA OCI base recipe')
+    digest = cuda_bases[-1].rsplit('sha256:', 1)[1]
+    downloads.append({'url': 'https://nvcr.io/v2/nvidia/pytorch/manifests/sha256:' + digest, 'sha256': digest,
                       'purpose': 'Optional owner-requested CUDA base OCI manifest; Docker checks its digest and layer digests. No model weights are bundled in this runtime declaration. Owner-directed job code may download models into the shared cache.'})
     wheels = source(commit, 'runtimes/requirements.txt').decode().replace('\r\n', '\n')
     for name, version, digest in re.findall(r'^([A-Za-z0-9_-]+)==([^\s]+) --hash=sha256:([0-9a-f]{64})$', wheels, re.M):
@@ -233,13 +301,90 @@ def runtime_downloads(commit):
         downloads.append({'url': files[0]['url'], 'sha256': digest, 'purpose': f'Hash-locked {name} {version} wheel installed only inside the Spark CPU runtime during setup.'})
     require(len(downloads) == 4, 'Expected two OCI manifests and two hash-locked CPU runtime wheels')
     downloads.extend(cuda_wheel_downloads(cuda))
+    if blender:
+        details = blender_sources(commit)
+        for base, repository in zip(details['bases'], ['nvidia/cuda', 'library/ubuntu']):
+            digest = base.rsplit('sha256:', 1)[1]
+            downloads.append({'url': f'https://registry-1.docker.io/v2/{repository}/manifests/sha256:{digest}', 'sha256': digest,
+                              'purpose': 'Optional standalone Blender source-build OCI base. Docker verifies manifest/layer digests; Blender/OptiX source commits and dependency hashes are disclosed separately. Signed apt package versions resolve during setup.'})
+        if evidence is not None:
+            evidence['blender'] = details
     return downloads
 
 
-def manifest(value, downloads):
+WINDOWS_PAYLOAD = {'gui': ('dgxbridge.exe', 'dgxbridge-windows-gui.sbom.json'),
+                   'cli': ('sparkdev.exe', 'sparkdev-windows-cli.sbom.json'),
+                   'link': ('sparkdev-link.exe', 'sparkdev-windows-link.sbom.json'),
+                   'return': ('sparkdev-return.exe', 'sparkdev-windows-return.sbom.json')}
+
+
+def nsis_records(data):
+    """Read bounded solid-LZMA NSIS records; never run or unpack an installer."""
+    offsets = [n for n in range(0, len(data) - 28, 512) if data[n + 4:n + 20] == b'\xef\xbe\xad\xdeNullsoftInst']
+    require(len(offsets) == 1, 'Expected one NSIS archive header')
+    offset = offsets[0]
+    flags, header_size, total = struct.unpack_from('<I16xII', data, offset)
+    require(flags == 0 and 33 <= total <= len(data) - offset, 'Unsupported or truncated NSIS archive')
+    stream = data[offset + 28:offset + total]
+    decoder = lzma.LZMADecompressor(lzma.FORMAT_ALONE, memlimit=128 * 1024**2)
+    try:
+        output = decoder.decompress(stream[:5] + b'\xff' * 8 + stream[5:], max_length=512 * 1024**2 + 1)
+    except lzma.LZMAError as error:
+        raise ValueError('Invalid NSIS solid-LZMA stream') from error
+    require(len(output) <= 512 * 1024**2 and len(output) >= header_size + 4, 'NSIS data exceeds limits or lacks its header')
+    records, position = {}, 0
+    while position + 4 <= len(output):
+        length = struct.unpack_from('<I', output, position)[0]
+        require(length < 0x80000000 and position + 4 + length <= len(output), 'Unsupported or truncated NSIS file record')
+        if position == 0:
+            require(length == header_size, 'NSIS header record length differs')
+        else:
+            raw = output[position + 4:position + 4 + length]
+            records[hashlib.sha256(raw).hexdigest()] = length
+        position += 4 + length
+    require(position == len(output), 'NSIS record stream has trailing partial bytes')
+    return records
+
+
+def windows_payload_evidence(installer, evidence_file):
+    require(evidence_file is not None, '0.5+ requires --windows-evidence with four exact binary/Syft SBOM pairs')
+    evidence_file = Path(evidence_file).resolve()
+    evidence = json.loads(evidence_file.read_text(encoding='utf-8'))
+    object_keys(evidence, WINDOWS_PAYLOAD, 'Windows evidence')
+    records = nsis_records(installer.read_bytes())
+    checked = {}
+    for name, (filename, sbom_filename) in WINDOWS_PAYLOAD.items():
+        item = evidence[name]
+        object_keys(item, ['binary', 'sbom'], 'Windows ' + name + ' evidence')
+        binary = (evidence_file.parent / item['binary']).resolve()
+        sbom_file = (evidence_file.parent / item['sbom']).resolve()
+        require(binary.name == filename and sbom_file.name == sbom_filename, 'Use canonical Windows binary and artifact SBOM names')
+        require(0 < binary.stat().st_size <= 128 * 1024**2, 'Windows binary exceeds verification limit')
+        raw = binary.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        require(raw.startswith(b'MZ') and records.get(digest) == len(raw), 'NSIS does not contain the exact ' + filename)
+        if name == 'gui':
+            require(raw.count(b'__TAURI_BUNDLE_TYPE_VAR_NSS') == 1 and b'__TAURI_BUNDLE_TYPE_VAR_UNK' not in raw,
+                    'GUI evidence must describe the shipped NSS-marked executable')
+        sbom_raw = sbom_file.read_bytes()
+        sbom = json.loads(sbom_raw)
+        origin = sbom.get('source', {})
+        digests = origin.get('metadata', {}).get('digests', [])
+        require(sbom.get('descriptor', {}).get('name') == 'syft' and origin.get('type') == 'file'
+                and origin.get('name') == filename and origin.get('version') == 'sha256:' + digest
+                and {'algorithm': 'sha256', 'value': digest} in digests,
+                'Artifact SBOM does not identify the exact ' + filename)
+        packages = [p for p in sbom.get('artifacts', []) if p.get('foundBy') == 'cargo-auditable-binary-cataloger' and p.get('type') == 'rust-crate']
+        require(packages, 'Artifact SBOM lacks Cargo-auditable components: ' + filename)
+        checked[name] = {'filename': filename, 'sha256': digest, 'bytes': len(raw), 'sbom': sbom_filename,
+                         'sbomSha256': hashlib.sha256(sbom_raw).hexdigest(), 'auditableComponents': len(packages), 'insideInstaller': True}
+    return {'installerSha256': hashlib.sha256(installer.read_bytes()).hexdigest(), 'method': 'Read-only NSIS solid-LZMA file records', 'binaries': checked}
+
+
+def manifest(value, downloads, runtime_evidence=None):
     commit = value['sourceCommit']
     repo_url = 'https://github.com/' + REPOSITORY
-    return {
+    document = {
         'schemaVersion': 1, 'appId': 'dgxbridge', 'publisherId': value['publisherId'],
         'name': 'DGXBridge', 'slug': 'dgxbridge',
         'repository': {'id': REPOSITORY_ID, 'url': repo_url},
@@ -286,6 +431,26 @@ def manifest(value, downloads):
         'artifacts': [{'os': 'windows', 'architectures': ['x64'], 'format': 'nsis', 'assetId': value['assetId'], 'filename': value['installer']['filename'], 'installationAdapter': 'windows-nsis', 'preferred': True,
                        'requirements': {**value['requirements'], 'gpu': None, 'runtimes': ['Microsoft Edge WebView2'], 'distributions': []}}]
     }
+    if tuple(map(int, value['version'].split('-', 1)[0].split('.'))) >= (0, 5, 0):
+        document['description'] += '\n\nCompleted Spark job outputs and eligible project changes return automatically to the originating laptop by default. A separate per-user sparkdev-return.exe background worker resumes durable delivery checkpoints without keeping the desktop window open and starts at Windows sign-in. Files from /work return to their original project paths; /sparkdev-output files land in the per-job results folder under local bridge state. Returned bytes are hash-verified; concurrent local edits are preserved as conflicts, and paths, secrets and size limits are checked. Delivery failures remain visible and retryable. Delivery completion is separate from workload success; consult release receipts for physical interruption tests. During upgrades, setup stops and restarts the result worker while preserving configuration, pairing, jobs and pending returns. Uninstall removes its sign-in registration and preserves retained state.\n\nProjects can prepare Debian/Ubuntu system packages in a separate derived Spark image using a signed repository index and a hash-locked package list. Preparation uses independent temporary resources; ordinary jobs remain nonroot and cannot alter the Spark host. Repository package versions resolved at setup and prepared project packages are outside the Windows installer scan. Optional CUDA setup includes FFmpeg and Blender tools. NVENC/NVDEC capability is reported from actual cached encode/decode probes tied to the active image, not from encoder names. Blender CUDA/OptiX/CPU render and OIDN acceptance must be read from the separate physical receipts; their presence in a recipe is not proof of GPU operation.'
+        document['intelligence']['capabilities'].append('Automatically return verified Spark outputs and eligible project changes, preserving concurrent local edits and resumable delivery state.')
+        document['permissions']['filesystem'] += [
+            'Write verified returned outputs and eligible project changes to the original local project; preserve conflicting local edits and retain delivery checkpoints.',
+            'Install a per-user background result worker and Windows sign-in entry; updates preserve pairing, job state and pending returns.',
+            'Prepare hash-locked Debian/Ubuntu packages in separate Spark images using signed repository metadata; do not install them on the host.']
+        document['permissions']['domains'] += ['ports.ubuntu.com', 'archive.ubuntu.com', 'security.ubuntu.com', 'projects.blender.org', 'github.com']
+        document['privacy']['retention'] += ' Automatic-return manifests, verified chunks, conflict copies and delivery records persist until removed by the owner; updates preserve pending delivery.'
+        document['featureNotices'].append({'name': 'Automatic file return and GPU tools', 'status': 'beta', 'description': 'The local background worker retries unfinished delivery after reconnect or restart. Workload exit status and file delivery status are separate. GPU video is reported only from cached actual probes bound to the active image; Blender render and GPU denoising acceptance require physical receipts. No phone-hotspot, sleep or hardware success is inferred from source tests.'})
+    blender = (runtime_evidence or {}).get('blender')
+    if blender:
+        pins = blender['sources']
+        document['description'] += ('\n\nThe standalone Blender fallback builds upstream Blender at ' + pins['blender']['commit'] +
+            ' and NVIDIA OptiX headers at ' + pins['optix']['commit'] + '. These are verified Git commit identities, not archive SHA-256 values. '
+            'Its two OCI base digests are in executableDownloads. Blender dependency archives and Git LFS data are checked against upstream hashes; source archives may use the Blender mirror or their upstream URLs. '
+            'The source build can take substantial time and disk. If the exact already-present owner image ' + blender['existingLocalImage'] +
+            ' is available, setup may reuse it read-only; no PhaseForge installation is required. The source pins, image-selection policy and remaining transitive download-declaration gaps are recorded in the manifest validation receipt; direct declarations do not claim a complete fallback build inventory. '
+            'Blender and its dependencies have their own upstream licenses; the MIT declaration applies to DGXBridge first-party code. The Windows Cargo notice collection does not represent a complete optional Spark runtime license inventory.')
+    return document
 
 
 def runtime_validate(document, checkout):
@@ -293,7 +458,9 @@ def runtime_validate(document, checkout):
     require((contracts / 'index.ts').is_file() and (contracts / 'artwork.ts').is_file(), 'Marketplace contract checkout is required')
     loader = checkout / 'node_modules/tsx/dist/loader.mjs'
     require(loader.is_file(), 'The existing Marketplace checkout needs its installed tsx dependency; this script does not install it')
-    code = f"import {{readFileSync}} from 'node:fs';import {{manifestSchema}} from {json.dumps((contracts/'index.ts').as_uri())};import {{publicationArtworkIssues}} from {json.dumps((contracts/'artwork.ts').as_uri())};const p=manifestSchema.safeParse(JSON.parse(readFileSync(process.argv[1],'utf8')));const issues=p.success?publicationArtworkIssues(p.data):p.error.issues;console.log(JSON.stringify({{ok:p.success&&!issues.length,issues}}));process.exit(p.success&&!issues.length?0:1);"
+    policy = checkout / 'packages/policy/src/evidence.ts'
+    require(policy.is_file(), 'Marketplace parsed canonical digest implementation is required')
+    code = f"import {{readFileSync}} from 'node:fs';import {{manifestSchema}} from {json.dumps((contracts/'index.ts').as_uri())};import {{publicationArtworkIssues}} from {json.dumps((contracts/'artwork.ts').as_uri())};import {{digestJson}} from {json.dumps(policy.as_uri())};const p=manifestSchema.safeParse(JSON.parse(readFileSync(process.argv[1],'utf8')));const issues=p.success?publicationArtworkIssues(p.data):p.error.issues;console.log(JSON.stringify({{ok:p.success&&!issues.length,issues,parsedCanonicalSha256:p.success?digestJson(p.data):null}}));process.exit(p.success&&!issues.length?0:1);"
     (ROOT / '.local').mkdir(exist_ok=True)
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', prefix='manifest-validation-', dir=ROOT / '.local', delete=False, encoding='utf-8') as file:
         temporary = Path(file.name)
@@ -301,11 +468,15 @@ def runtime_validate(document, checkout):
     try:
         result = subprocess.run(['node', '--import', loader.as_uri(), '--input-type=module', '--eval', code, str(temporary)], capture_output=True, timeout=30)
         require(result.returncode == 0, 'Marketplace runtime validation failed: ' + result.stdout.decode(errors='replace')[:6000])
+        validation = json.loads(result.stdout)
+        require(re.fullmatch(r'[0-9a-f]{64}', validation.get('parsedCanonicalSha256', '')), 'Marketplace canonical digest is missing')
     finally:
         temporary.unlink(missing_ok=True)
     revision = subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'], timeout=10).decode().strip()
     return {'contractCommit': revision, 'manifestSchema': True, 'publicationArtworkIssues': [],
-            'contractSha256': {name: hashlib.sha256((contracts / name).read_bytes()).hexdigest() for name in ['index.ts', 'artwork.ts']}}
+            'parsedCanonicalSha256': validation['parsedCanonicalSha256'],
+            'contractSha256': {**{name: hashlib.sha256((contracts / name).read_bytes()).hexdigest() for name in ['index.ts', 'artwork.ts']},
+                               'packages/policy/src/evidence.ts': hashlib.sha256(policy.read_bytes()).hexdigest()}}
 
 
 def main():
@@ -314,14 +485,20 @@ def main():
     parser.add_argument('--marketplace-checkout', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--require-published', action='store_true')
+    parser.add_argument('--windows-evidence', type=Path, help='JSON mapping gui/cli/link/return to canonical binary and Syft SBOM paths; required for 0.5+')
     args = parser.parse_args()
     value = json.loads(args.input.read_text(encoding='utf-8'))
     validate_input(value)
     input_directory = args.input.resolve().parent
     identity = verify_release(value, input_directory, args.require_published)
+    windows = None
+    if tuple(map(int, value['version'].split('-', 1)[0].split('.'))) >= (0, 5, 0) or args.windows_evidence:
+        windows = windows_payload_evidence((input_directory / value['installer']['localPath']).resolve(), args.windows_evidence)
+        require(windows['installerSha256'] == identity['sha256'], 'Installer changed during payload verification')
     media = {name: verify_media(value['artwork'][name], name, input_directory) for name in ['icon', 'thumbnail']}
     media['screenshots'] = [verify_media({'url': item['url'], 'localPath': item['localPath']}, 'screenshot', input_directory) for item in value['screenshots']]
-    document = manifest(value, runtime_downloads(value['sourceCommit']))
+    runtime_evidence = {}
+    document = manifest(value, runtime_downloads(value['sourceCommit'], runtime_evidence), runtime_evidence)
     checked = runtime_validate(document, args.marketplace_checkout.resolve())
     raw = (json.dumps(document, indent=2, ensure_ascii=False) + '\n').encode('utf-8')
     require(len(raw) <= 128000, 'Manifest exceeds the Marketplace size limit')
@@ -330,6 +507,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(raw)
     receipt = {'manifestSha256': hashlib.sha256(raw).hexdigest(), 'release': identity, 'media': media, 'validation': checked, 'testedHost': value['testedHost'],
+               'windowsPayload': windows, 'runtimeSources': runtime_evidence,
                'publisherIdentity': 'Supplied by the release operator; account ownership is checked by the Marketplace submission workflow.',
                'submitted': False, 'admissionApproved': False}
     args.output.with_name('manifest-validation.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')

@@ -3,7 +3,9 @@ import hashlib
 import importlib.util
 import io
 import json
+import lzma
 from pathlib import Path
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -65,6 +67,19 @@ class Compatibility(unittest.TestCase):
         # Manifest schema v1 caps each entry at 200 characters. The 0.4.0
         # shared-cache disclosure previously exceeded that admission limit.
         for entry in manifest.manifest(release_input(), [])['permissions']['filesystem']:
+            self.assertLessEqual(len(entry), 200)
+
+    def test_050_discloses_return_worker_without_gpu_success_claim(self):
+        document = manifest.manifest(release_input(version='0.5.0'), [])
+        self.assertIn('sparkdev-return.exe', document['description'])
+        self.assertIn('concurrent local edits', document['description'])
+        self.assertIn('preserving configuration, pairing, jobs and pending returns', document['description'])
+        self.assertIn('not proof of GPU operation', document['description'])
+        self.assertTrue(document['permissions']['backgroundServices'])
+        self.assertLessEqual(len(document['description']), 12000)
+        for entry in document['permissions']['filesystem']:
+            self.assertLessEqual(len(entry), 200)
+        for entry in document['intelligence']['capabilities']:
             self.assertLessEqual(len(entry), 200)
 
 
@@ -167,6 +182,117 @@ class RuntimeDownloads(unittest.TestCase):
             with self.subTest(changes=changes), patch.object(manifest.urllib.request, 'urlopen', return_value=self.metadata(**changes)), \
                     self.assertRaises(ValueError):
                 manifest.cuda_wheel_downloads(self.recipe())
+
+
+class MultiStageRuntime(unittest.TestCase):
+    def test_exact_multistage_from_and_reject_unpinned_variants(self):
+        pin = 'nvidia/cuda:13.0@sha256:' + '1' * 64
+        self.assertEqual(manifest.docker_stages(f'ARG BASE={pin}\nFROM ${{BASE}} AS builder\nFROM builder AS copied'), [pin, 'builder'])
+        self.assertEqual(manifest.docker_stages('ARG BLENDER_IMAGE\nFROM ${BLENDER_IMAGE} AS blender', ('BLENDER_IMAGE',)), ['BLENDER_IMAGE'])
+        for recipe in ('FROM ubuntu:latest', 'FROM ${UNKNOWN}', 'FROM --platform=linux/arm64 ubuntu:latest',
+                       'ARG BLENDER_IMAGE=ubuntu:latest\nFROM ${BLENDER_IMAGE}', f'FROM {pin}\nFROM surprise:latest'):
+            with self.subTest(recipe=recipe), self.assertRaises(ValueError):
+                manifest.docker_stages(recipe, ('BLENDER_IMAGE',))
+
+    def sources(self):
+        paths = ['runtimes/Dockerfile.blender', 'runtimes/blender/PROVENANCE.json', 'remote/install-cuda.py']
+        return {p: (manifest.ROOT / p).read_bytes() for p in paths}
+
+    def test_blender_bases_and_source_pins_come_from_selected_commit(self):
+        sources = self.sources()
+        with patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path]) as read:
+            details = manifest.blender_sources('selected-commit')
+        self.assertEqual(len(details['bases']), 2)
+        self.assertEqual(details['sources']['blender']['commit'], '8bf95cbd38d1456c94e9d751f3804eea4d5b137b')
+        self.assertTrue(details['existingLocalImage'].startswith('sha256:'))
+        self.assertTrue(all(call.args[0] == 'selected-commit' for call in read.call_args_list))
+
+    def test_blender_provenance_mismatch_or_new_add_fails_closed(self):
+        for change in ('provenance', 'add', 'unverified-image'):
+            sources = self.sources()
+            if change == 'provenance':
+                p = json.loads(sources['runtimes/blender/PROVENANCE.json'])
+                p['blender_commit'] = 'a' * 40
+                sources['runtimes/blender/PROVENANCE.json'] = json.dumps(p).encode()
+            elif change == 'add':
+                sources['runtimes/Dockerfile.blender'] += b'\nADD https://example.com/code /tmp/\n'
+            else:
+                sources['remote/install-cuda.py'] = b'BLENDER_EXISTING = "ubuntu:latest"\n'
+            with self.subTest(change=change), patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path]), self.assertRaises(ValueError):
+                manifest.blender_sources('selected-commit')
+
+    def test_blender_download_declarations_include_both_additional_bases(self):
+        sources = self.sources()
+        sources.update({'runtimes/Dockerfile': b'FROM rust:1@sha256:' + b'a' * 64,
+                        'runtimes/Dockerfile.cuda': b'ARG BLENDER_IMAGE\nFROM ${BLENDER_IMAGE} AS blender\nFROM nvcr.io/nvidia/pytorch@sha256:' + b'b' * 64,
+                        'runtimes/requirements.txt': b'numpy==1 --hash=sha256:' + b'c' * 64 + b'\npillow==13 --hash=sha256:' + b'd' * 64})
+        metadata = {'urls': [{'url': 'https://files.pythonhosted.org/a.whl', 'digests': {'sha256': 'c' * 64}},
+                             {'url': 'https://files.pythonhosted.org/b.whl', 'digests': {'sha256': 'd' * 64}}]}
+        evidence = {}
+        with patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path]), \
+                patch.object(manifest.urllib.request, 'urlopen', side_effect=lambda *a, **k: io.BytesIO(json.dumps(metadata).encode())):
+            downloads = manifest.runtime_downloads('selected-commit', evidence)
+        self.assertEqual(len(downloads), 6)  # Historical no-Pillow CUDA fixture + two Blender bases.
+        self.assertIn('/v2/nvidia/cuda/', downloads[-2]['url'])
+        self.assertIn('/v2/library/ubuntu/', downloads[-1]['url'])
+        self.assertIn('blender', evidence)
+
+
+def fake_nsis(files):
+    header = b'header'
+    records = b''.join(struct.pack('<I', len(raw)) + raw for raw in [header, *files])
+    compressed = lzma.compress(records, format=lzma.FORMAT_ALONE)
+    stream = compressed[:5] + compressed[13:]
+    return struct.pack('<I', 0) + b'\xef\xbe\xad\xdeNullsoftInst' + struct.pack('<II', len(header), 28 + len(stream)) + stream
+
+
+class WindowsArtifactEvidence(unittest.TestCase):
+    def test_reads_records_and_rejects_truncated_installer(self):
+        raw = b'MZworker'
+        self.assertEqual(manifest.nsis_records(fake_nsis([raw]))[hashlib.sha256(raw).hexdigest()], len(raw))
+        with self.assertRaises(ValueError):
+            manifest.nsis_records(fake_nsis([raw])[:-2])
+
+    def verify_fixture(self, mutation=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence, binaries = {}, []
+            for name, (filename, sbom_filename) in manifest.WINDOWS_PAYLOAD.items():
+                raw = b'MZ' + filename.encode() + (b'__TAURI_BUNDLE_TYPE_VAR_NSS' if name == 'gui' else b'')
+                binaries.append(raw)
+                digest = hashlib.sha256(raw).hexdigest()
+                sbom = {'descriptor': {'name': 'syft'}, 'source': {'name': filename, 'type': 'file', 'version': 'sha256:' + digest,
+                        'metadata': {'digests': [{'algorithm': 'sha256', 'value': digest}]}},
+                        'artifacts': [{'foundBy': 'cargo-auditable-binary-cataloger', 'type': 'rust-crate'}]}
+                if name == 'return' and mutation == 'wrong-sbom':
+                    sbom['source']['version'] = 'sha256:' + 'a' * 64
+                if name == 'return' and mutation == 'empty-sbom':
+                    sbom['artifacts'] = []
+                (root / filename).write_bytes(raw)
+                (root / sbom_filename).write_text(json.dumps(sbom))
+                evidence[name] = {'binary': filename, 'sbom': sbom_filename}
+            if mutation == 'missing-worker':
+                binaries.pop()
+            if mutation == 'unshipped-gui':
+                p = root / 'dgxbridge.exe'
+                p.write_bytes(p.read_bytes().replace(b'_NSS', b'_UNK'))
+            (root / 'setup.exe').write_bytes(fake_nsis(binaries))
+            (root / 'evidence.json').write_text(json.dumps(evidence))
+            return manifest.windows_payload_evidence(root / 'setup.exe', root / 'evidence.json')
+
+    def test_four_independent_sboms_bind_actual_installer_bytes(self):
+        result = self.verify_fixture()
+        self.assertEqual(set(result['binaries']), {'gui', 'cli', 'link', 'return'})
+        self.assertEqual(result['binaries']['return']['sbom'], 'sparkdev-windows-return.sbom.json')
+
+    def test_missing_worker_or_wrong_sbom_or_unshipped_gui_rejected(self):
+        for mutation in ('missing-worker', 'wrong-sbom', 'empty-sbom', 'unshipped-gui'):
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                self.verify_fixture(mutation)
+
+    def test_missing_evidence_never_silently_passes(self):
+        with self.assertRaises(ValueError):
+            manifest.windows_payload_evidence(Path('not-read'), None)
 
 
 if __name__ == '__main__':
