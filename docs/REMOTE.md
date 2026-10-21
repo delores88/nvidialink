@@ -127,7 +127,7 @@ queued and none holds the lock, so it runs inside `sparkdev-controller.service`,
 `KillMode=process` keeps it alive across scheduler restarts. A new session is not a
 new cgroup, so a materializer forked by an RPC would belong to whatever served that
 RPC (`sparkdev-link.service` on the paired route) and die when that unit restarts.
-Only when the scheduler's heartbeat is 15 seconds old does a sync start the
+Only when the scheduler's heartbeat is at least 15 seconds old does a sync start the
 materializer itself; if that serving unit then restarts, the partial file restarts
 from zero when the scheduler resumes the queue.
 
