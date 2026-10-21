@@ -432,6 +432,11 @@ def relay(client, upstream, counters, response_started, body_remaining, guard, e
             guard.check(epoch)
             # EOF from one peer is propagated only after its queued data is delivered.
             for source, destination in ((client, upstream), (upstream, client)):
+                # Content-Length completion is HTTP framing, not a TCP EOF.
+                # Several real HTTP origins discard a request on premature FIN.
+                # Keep that connection readable until its response completes.
+                if source is client and body_remaining == 0:
+                    continue
                 if eof[source] and not buffers[destination] and not shut[destination]:
                     try:
                         destination.shutdown(socket.SHUT_WR)

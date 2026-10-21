@@ -140,7 +140,16 @@ class InternetProxyTests(unittest.TestCase):
         peer, upstream = socket.socketpair()
         received = []
         def origin():
-            received.append(receive_all(peer))
+            header = proxy.read_header(peer)
+            body = bytearray()
+            while len(body) < 3:
+                body.extend(peer.recv(3 - len(body)))
+            peer.settimeout(.05)
+            try:
+                extra = peer.recv(1)
+            except TimeoutError:
+                extra = None
+            received.append((header + body, extra))
             peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
             peer.close()
         origin_thread = threading.Thread(target=origin, daemon=True)
@@ -150,9 +159,31 @@ class InternetProxyTests(unittest.TestCase):
                 client.sendall(b"POST http://example.com/a HTTP/1.1\r\nContent-Length: 3\r\n\r\nabcGET http://other.com/ HTTP/1.1\r\n\r\n")
                 self.assertTrue(receive_all(client).endswith(b"OK"))
             origin_thread.join(2)
-            self.assertTrue(received[0].endswith(b"\r\n\r\nabc"))
-            self.assertNotIn(b"other.com", received[0])
+            self.assertTrue(received[0][0].endswith(b"\r\n\r\nabc"))
+            self.assertNotIn(b"other.com", received[0][0])
+            self.assertIsNone(received[0][1], "No pipelined bytes or premature TCP EOF may reach this origin")
             self.assertEqual(counters.values["http_requests"], 1)
+
+    def test_head_origin_can_reply_without_premature_tcp_half_close(self):
+        peer, upstream = socket.socketpair()
+        def origin():
+            proxy.read_header(peer)
+            peer.settimeout(.05)
+            try:
+                # Model an origin that discards an early TCP FIN.
+                if peer.recv(1) == b"":
+                    return
+            except TimeoutError:
+                peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 123\r\n\r\n")
+            finally:
+                peer.close()
+        worker = threading.Thread(target=origin, daemon=True)
+        worker.start()
+        with self.server(lambda *_: upstream) as (server, _):
+            with socket.create_connection(server.server_address, timeout=2) as client:
+                client.sendall(b"HEAD http://example.com/ HTTP/1.1\r\n\r\n")
+                self.assertEqual(receive_all(client), b"HTTP/1.1 200 OK\r\nContent-Length: 123\r\n\r\n")
+        worker.join(2)
 
     def test_connect_half_close_delivers_final_response(self):
         peer, upstream = socket.socketpair()
