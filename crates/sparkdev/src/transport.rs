@@ -149,7 +149,11 @@ pub fn repeat_for(request: &Value) -> Repeat {
             "missing" | "put" | "put_many" | "sync" | "status" | "logs" | "wait" | "doctor"
             | "cancel" | "heartbeat" | "release" | "lan_routes",
         ) => Repeat::Idempotent,
-        Some("resources") if request.get("limits").is_none() => Repeat::Idempotent,
+        Some("resources")
+            if request.get("limits").is_none() && request.get("internet").is_none() =>
+        {
+            Repeat::Idempotent
+        }
         Some("run" | "prepare" | "claim") if request_id => Repeat::Idempotent,
         _ => Repeat::HandshakeOnly,
     }
@@ -4290,6 +4294,9 @@ mod tests {
         for request in [
             json!({"v":1,"op":"resources","limits":{"cpu_per_job":4}}),
             json!({"v":1,"op":"resources","limits":null}),
+            json!({"v":1,"op":"resources","internet":true}),
+            json!({"v":1,"op":"resources","internet":false}),
+            json!({"v":1,"op":"resources","internet":null}),
             json!({"v":1,"op":"unknown"}),
             json!({"v":1,"op":"Status"}),
             json!({"v":1,"op":7}),
