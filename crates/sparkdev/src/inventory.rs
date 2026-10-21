@@ -416,9 +416,12 @@ pub fn collect(path: &Path) -> Result<Inventory> {
 pub fn collect_readonly(path: &Path) -> Result<Inventory> {
     collect_with(path, None, Limits::default())
 }
+/// Test helper that always stages: the machine's real free space (a 512 MiB job
+/// sandbox, for one) must not decide what these tests observe. Low-space
+/// staging has its own tests with injected limits.
 #[cfg(test)]
 fn collect_into(path: &Path, cas: &Path) -> Result<Inventory> {
-    collect_with(path, Some(cas), Limits::default())
+    collect_with(path, Some(cas), Limits { available_space: |_| Some(u64::MAX), ..Limits::default() })
 }
 /// Inventory with explicit limits; with `cas`, files of at most `large_file`
 /// bytes are staged there while `CAS_RESERVE` stays free.
