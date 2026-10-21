@@ -709,7 +709,9 @@ class SizeLimitTests(unittest.TestCase):
             else:
                 Path(path).write_bytes(b"")  # Stand-in where Windows refuses unprivileged links.
         symlinks_supported_here = symlinks_supported()
-        with mock.patch.object(controller.os, "symlink", record):
+        # This is a path/mount fixture, not a host network probe. FakeDocker
+        # supplies healthy helper state; select the workload create explicitly.
+        with mock.patch.object(controller.os, "symlink", record), mock.patch.object(controller, "internet_deny", return_value=["192.168.0.0/24"]):
             self.c.tick()
         self.assertEqual(self.c.get_job(job["job"])["state"], "running")
         self.assertEqual(made, [("/sparkdev-source/" + name, name)])
@@ -719,7 +721,9 @@ class SizeLimitTests(unittest.TestCase):
         self.assertEqual((work / "run.sh").read_bytes(), small)
         if os.name == "posix":
             self.assertEqual(os.stat(work / "run.sh").st_mode & 0o777, 0o755)
-        args = next(call for call in self.docker.calls if call[0] == "create")
+        creates = [call for call in self.docker.calls if call[0] == "create" and call[call.index("--name") + 1] == self.c.container_name(job["job"])]
+        self.assertEqual(len(creates), 1)
+        args = creates[0]
         self.assertIn(f"type=bind,src={self.root / 'snapshots' / mid},dst=/sparkdev-source,readonly", args)
         for arg in args:
             self.assertNotIn("a,b", arg)
