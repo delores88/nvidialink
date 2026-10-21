@@ -488,6 +488,60 @@ class SizeLimitTests(unittest.TestCase):
         self.free = RESERVE - 1
         self.assertEqual(self.sync(entry("t.txt", tiny))["error"]["code"], "insufficient_disk")
 
+    def test_queued_snapshot_bytes_are_promised_to_uploads_and_admission(self):
+        queued = large(19)
+        self.upload(queued)
+        self.assertEqual(self.sync(entry("queued.bin", queued))["error"]["code"], "materializing")
+        self.assertEqual(self.c.queued_bytes(), len(queued))
+        self.assertEqual(self.c.queued_bytes(), sum(item["remaining_bytes"] for item in self.c.queue_view()))
+        chunks = [bytes([0x41 + i]) * CHUNK for i in range(3)]
+        self.free = RESERVE + len(queued) + 2 * CHUNK
+        self.rpc("put", sha256=sha(chunks[0]), data=base64.b64encode(chunks[0]).decode())
+        batch = [{"sha256": sha(raw), "data": base64.b64encode(raw).decode()} for raw in chunks]
+        self.assertEqual(self.error("put_many", chunks=batch)["code"], "insufficient_disk")  # Free alone would admit it.
+        # A job's work copy waits for the queued snapshot's bytes too.
+        content = b"print('admission')\n"
+        self.free = PLENTY
+        self.upload(content)
+        mid = self.sync(entry("main.py", content))["manifest_id"]
+        job = self.job(mid)
+        self.free = RESERVE + len(content) + len(queued) - 1
+        self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["state"], "queued")
+        blocked = next(j for j in self.rpc("status")["jobs"] if j["job"] == job["job"])
+        self.assertIn("snapshots being assembled", blocked["admission_blocked"])
+        self.free = RESERVE + len(content) + len(queued)
+        self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["state"], "running")
+        # Written bytes are no longer owed.
+        self.c.materialize_queue()
+        self.assertEqual(self.c.queued_bytes(), 0)
+
+    def test_assembly_stops_before_cutting_into_the_reserve(self):
+        first, second = large(17), large(18)
+        self.upload(first, second)
+        manifest = [entry("a.bin", first), entry("b.bin", second)]
+        self.assertEqual(self.sync(*manifest)["error"]["code"], "materializing")
+
+        def written():
+            inodes = {}
+            for folder in ("files", "snapshots"):
+                for path in (self.root / folder).rglob("*"):
+                    if path.is_file():
+                        info = path.stat()
+                        inodes[(info.st_dev, info.st_ino)] = info.st_size
+            return sum(inodes.values())
+        # Another writer took space after admission: room for the first file, not the second.
+        base = RESERVE + len(first) + len(second) // 2
+        self.c.disk_probe = lambda: (base - written(), PLENTY)
+        self.c.materialize_queue()
+        error = self.sync(*manifest)["error"]
+        self.assertEqual(error["code"], "insufficient_disk")
+        self.assertIn("64 GiB in reserve", error["message"])
+        self.assertTrue((self.root / "files" / (sha(first) + "-644")).is_file())
+        self.assertFalse(os.path.lexists(self.root / "files" / (sha(second) + "-644")))
+        self.assertGreaterEqual(base - written(), RESERVE)
+
     def test_admission_waits_for_disk_and_work_copy_failure_finishes_the_job(self):
         content = b"print('disk')\n" * 10
         self.upload(content)

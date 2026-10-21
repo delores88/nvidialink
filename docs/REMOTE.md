@@ -134,10 +134,14 @@ A failure leaves a one-shot marker that the next sync returns (`insufficient_dis
 for a full disk) and removes the partial tree; `files/` is kept. No prune operation
 exists yet.
 
-`DISK_RESERVE` is 64 GiB of free space on the state filesystem. `put` and `put_many`
-refuse with `insufficient_disk` when the incoming bytes would cut into it, `sync`
-counts the bytes of snapshots already queued, and the scheduler leaves a job queued
-while its work copy would cut into it (`status` shows `admission_blocked`). This also
+`DISK_RESERVE` is 64 GiB of free space on the state filesystem. Bytes that queued
+snapshots will still write are already promised, so every guard counts them: `put` and
+`put_many` refuse with `insufficient_disk` when the incoming bytes would cut into the
+reserve, `sync` refuses before any upload as above, and the scheduler leaves a job
+queued while its work copy would cut into it (`status` shows `admission_blocked`).
+Assembly checks again before each file it writes and fails the snapshot with
+`insufficient_disk` instead of crossing the reserve, because uploads and jobs may have
+used space since the snapshot was queued. This also
 blocks small syncs when the Spark has less than 64 GiB free; that is intentional,
 because a full disk would also break running jobs, caches and the controller's own
 database. Refusals and `status.storage` report free and reserve figures in GiB only.

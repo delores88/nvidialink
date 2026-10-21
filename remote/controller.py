@@ -61,6 +61,8 @@ CLIENTS = ("claude", "codex", "human")
 ACTIVE = ("queued", "starting", "running")
 TERMINAL = ("succeeded", "failed", "cancelled")
 HASH = re.compile(r"^[0-9a-f]{64}$")
+# A queued record is canonical JSON with sorted keys, so its outstanding bytes end it.
+RECORD_TAIL = re.compile(rb'"remaining":(\d{1,20}),"v":1\}$')
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 RUNTIME_NAMES = {"rust", "node", "python", "cuda"}
 DENY_DIRS = {".git", "target", "node_modules", "dist", "build", "__pycache__",
@@ -1075,7 +1077,7 @@ class Controller:
     def put(self, request):
         fields(request, ("v", "op", "sha256", "data"))
         raw = self.chunk_bytes(request["sha256"], request["data"])
-        self.require_disk(len(raw))
+        self.require_disk(len(raw), self.queued_bytes())
         atomic_write(self.object_path(request["sha256"]), raw)
         return {"sha256": request["sha256"], "size": len(raw)}
 
@@ -1088,7 +1090,8 @@ class Controller:
             fields(chunk, ("sha256", "data"))
         # Every chunk is verified before any is stored, and the disk guard sees the whole batch.
         raws = [self.chunk_bytes(chunk["sha256"], chunk["data"]) for chunk in chunks]
-        self.require_disk(sum(len(raw) for raw in raws))
+        # Space a queued snapshot will still write is already promised; uploads cannot spend it too.
+        self.require_disk(sum(len(raw) for raw in raws), self.queued_bytes())
         accepted = []
         for chunk, raw in zip(chunks, raws):
             atomic_write(self.object_path(chunk["sha256"]), raw)
@@ -1197,6 +1200,23 @@ class Controller:
         except FileNotFoundError:
             return []
         return [manifest_id for _, manifest_id in sorted(entries)]
+
+    def record_remaining(self, manifest_id):
+        """One queued record's outstanding bytes, read from its tail without parsing its manifest."""
+        try:
+            with os.fdopen(safe_open(self.pending / (manifest_id + ".json")), "rb") as stream:
+                size = os.fstat(stream.fileno()).st_size
+                stream.seek(max(0, size - 128))
+                match = RECORD_TAIL.search(stream.read(128))
+        except (OSError, Rejected):
+            return 0
+        progress = self.progress(manifest_id)
+        remaining = min(int(match.group(1)), MAX_TREE) if match else 0
+        return max(0, remaining - (progress["written_bytes"] if progress else 0))
+
+    def queued_bytes(self):
+        """Bytes queued snapshots will still write: cheap enough for every upload batch and admission."""
+        return sum(self.record_remaining(manifest_id) for manifest_id in self.pending_ids())
 
     def queue_view(self):
         """Pending snapshots in FIFO order with their outstanding new bytes."""
@@ -1486,11 +1506,15 @@ class Controller:
         out.parent.mkdir(parents=True, exist_ok=True)
         temporary = partial / str(index)
         if not large:
+            # Uploads and jobs may have spent space since this snapshot was admitted:
+            # stop before any file would cut into the reserve.
+            self.require_disk(entry["size"])
             self.assemble(entry, temporary, meter, durable=False)
             os.replace(temporary, out)
             return
         store = self.files / store_name(entry)
         if not self.store_ready(entry):
+            self.require_disk(entry["size"])
             self.assemble(entry, temporary, meter, durable=True)
             os.replace(temporary, store)
         else:
@@ -1501,6 +1525,7 @@ class Controller:
             if error.errno != errno.EMLINK:
                 raise
             # The store inode reached its link limit: give this snapshot its own durable copy.
+            self.require_disk(entry["size"])
             shutil.copyfile(store, temporary, follow_symlinks=False)
             with open(temporary, "rb+") as stream:
                 os.fsync(stream.fileno())
@@ -1771,9 +1796,10 @@ class Controller:
                 job["admission_blocked"] = "Saved per-job caps are below this existing job's immutable allocation; raise caps or cancel and resubmit"
             elif job["state"] == "queued":
                 small = self.work_bytes(job["manifest_id"])
-                if small is not None and storage["free_bytes"] - small < DISK_RESERVE:
-                    job["admission_blocked"] = (f"Spark has {gib(storage['free_bytes'])} GiB free; this job's work copy needs {gib(small)} GiB "
-                                                f"and DGXBridge keeps {DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space; the job stays queued")
+                if small is not None and storage["free_bytes"] - small - storage["queued_bytes"] < DISK_RESERVE:
+                    job["admission_blocked"] = (f"Spark has {gib(storage['free_bytes'])} GiB free; this job's work copy needs {gib(small)} GiB, "
+                                                f"snapshots being assembled {gib(storage['queued_bytes'])} GiB, and DGXBridge keeps "
+                                                f"{DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space; the job stays queued")
         for row in self.db.execute("SELECT * FROM leases ORDER BY created DESC LIMIT 200"):
             jobs.append({"job": row["job"] or row["id"], "project": row["project"], "client": row["client"], "where": "laptop",
                          "state": "lease_lost" if row["state"] == "running" and row["expires"] < time.time() else row["state"],
@@ -1858,7 +1884,7 @@ class Controller:
 
     def disk_admits(self, row):
         needed = self.work_bytes(row["manifest"])
-        return needed is None or self.free_bytes() - needed >= DISK_RESERVE
+        return needed is None or self.free_bytes() - needed - self.queued_bytes() >= DISK_RESERVE
 
     def prepare_work(self, row):
         """Build the writable /work copy from the manifest alone; it never stats through a link.
@@ -1874,9 +1900,7 @@ class Controller:
         remove_tree(staging)
         entries = self.manifest_entries(row["manifest"])
         small = sum(entry["size"] for entry in entries if entry["size"] <= LARGE_FILE)
-        free = self.free_bytes()
-        if free - small < DISK_RESERVE:
-            disk_refusal(free, small)
+        self.require_disk(small, self.queued_bytes())
         source = self.snapshots / digest(row["manifest"])
         staging.mkdir(mode=0o700)
         try:
