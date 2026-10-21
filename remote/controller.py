@@ -30,6 +30,9 @@ import uuid
 
 import model_cache
 import model_server
+import outputs
+import system_packages
+import media_probe
 
 CHUNK = 1024 * 1024
 GIB = 1024**3
@@ -1077,7 +1080,7 @@ class Progress:
 
 class Controller:
     def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None, link_probe=None, *,
-                 disk_probe=None, spawn=None, clock=None, sleep=None, lan_probe=None):
+                 disk_probe=None, spawn=None, clock=None, sleep=None, lan_probe=None, output_spawn=None):
         self.root = Path(root or os.environ.get("SPARKDEV_STATE", Path.home() / "sparkdev/state")).absolute()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.root.is_symlink():
@@ -1138,8 +1141,12 @@ class Controller:
         self.hardware_probe = hardware_probe or hardware_capacity
         self.link_probe = link_probe or network_link
         self.lan_probe = lan_probe or lan_addresses
+        self.system_packages = system_packages.SystemPackages(self, sys.modules[__name__])
         self.services = model_server.ServiceManager(self, sys.modules[__name__])
         self.download_cache = model_cache.CacheManager(self, sys.modules[__name__])
+        # Injected Docker fixtures never launch real background processes.
+        self.outputs_manager = outputs.OutputManager(self, sys.modules[__name__],
+                                                     output_spawn if output_spawn is not None else ((lambda job: None) if docker is not None else None))
         if "launch_failures" not in columns:
             self.db.execute("ALTER TABLE jobs ADD COLUMN launch_failures INTEGER NOT NULL DEFAULT 0")
         self._docker_unavailable = False
@@ -1806,7 +1813,8 @@ class Controller:
                 "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"],
                 "reserved_cpu": reserved_cpu(row), "reserved_memory_gb": reserved_memory(row),
                 "scratch_mb": row["scratch_mb"], "headroom_gb": row["headroom_gb"],
-                **self.internet_status(row), **model_server.status_fields(row)}
+                **self.internet_status(row), **model_server.status_fields(row), **self.system_packages.status(row),
+                "outputs": self.outputs_manager.metadata(row)}
 
     def claim_conflict(self, project):
         remote = self.db.execute("SELECT id FROM jobs WHERE project=? AND kind<>'service' AND state IN ('queued','starting','running')", (project,)).fetchone()
@@ -1817,7 +1825,7 @@ class Controller:
             reject("worktree_claimed", "This worktree already has an active job on the shared board")
 
     def run(self, request):
-        fields(request, ("v", "op", "project", "manifest_id", "argv", "runtime", "client", "request_id"), ("no_cache",))
+        fields(request, ("v", "op", "project", "manifest_id", "argv", "runtime", "client", "request_id"), ("no_cache", "no_return"))
         project, manifest_id = digest(request["project"]), digest(request["manifest_id"])
         client, request_id = client_name(request["client"]), identifier(request["request_id"])
         args = request["argv"]
@@ -1827,6 +1835,9 @@ class Controller:
             reject("secret_detected", "Command contains credential material")
         if type(request.get("no_cache", False)) is not bool:
             reject("invalid_request", "no_cache must be boolean")
+        if type(request.get("no_return", False)) is not bool:
+            reject("invalid_request", "no_return must be boolean")
+        return_outputs = request["op"] == "run" and not request.get("no_return", False)
         encoded = canonical(request).decode()
         with self.transaction():
             if self.db.execute("SELECT 1 FROM service_requests WHERE request_id=?", (request_id,)).fetchone():
@@ -1844,6 +1855,7 @@ class Controller:
                 reject("runtime_unavailable", "Preparation also requires the approved Python proxy runtime")
             if not self.db.execute("SELECT 1 FROM projects WHERE project=? AND manifest=?", (project, manifest_id)).fetchone():
                 reject("manifest_not_found", "Sync this manifest before submitting the job")
+            runtime, system_plan = self.system_packages.runtime(project, manifest_id, runtime, preparing=request["op"] == "prepare")
             if self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= MAX_JOBS:
                 reject("capacity", "Retained job capacity reached; owner must archive receipts")
             worker = Path(__file__).with_name("worker.py").read_bytes()
@@ -1883,9 +1895,12 @@ class Controller:
                           "cpu": cpu, "memory": memory, "scratch_mb": scratch_mb}
             if network["egress"] == "internet":
                 cache_body["egress"] = "internet"
+            cache_body["outputs_policy"] = 1 if return_outputs else 0
             cache_key = sha(canonical(cache_body))
             cached = None if request.get("no_cache") else self.db.execute(
                 "SELECT id FROM jobs WHERE cache_key=? AND egress IS ? AND state='succeeded' AND cached_from IS NULL ORDER BY finished DESC LIMIT 1", (cache_key, network["egress"])).fetchone()
+            if cached and return_outputs and not self.outputs_manager.cache_ready(cached[0]):
+                cached = None
             if not cached:
                 self.claim_conflict(project)
             job = uuid.uuid4().hex
@@ -1905,6 +1920,8 @@ class Controller:
                              cache_key, cached[0] if cached else None))
             self.db.execute("UPDATE jobs SET proxy_image=?,egress=? WHERE id=?", (network["proxy_image"] if not cached else None, network["egress"], job))
             self.db.execute("UPDATE jobs SET cpu=?,memory=?,scratch_mb=?,headroom_gb=? WHERE id=?", (cpu, memory, scratch_mb, limits["headroom_gb"], job))
+            self.system_packages.stage(self.get_job(job), system_plan)
+            self.outputs_manager.register(job, return_outputs, cached[0] if cached and return_outputs else None)
             self.audit("job_cached" if cached else "job_queued", job, client, cache_key=cache_key, cached_from=cached[0] if cached else None)
         return self.job_status(self.get_job(job))
 
@@ -2094,6 +2111,7 @@ class Controller:
                 **policy, "dependency_preparation": "isolated_allowlist_proxy", "network": network,
                 # `limits` above is the resource policy; transfer limits use their own key.
                 "storage": storage, "sync_limits": sync_limits(), "materializing": queue,
+                "gpu_video": media_probe.cached_gpu_video(self.root.parent, registry.get("cuda", {}).get("image")),
                 "downloads": self.download_cache.status(storage)}
 
     def lan_routes(self, request):
@@ -2126,6 +2144,8 @@ class Controller:
                 return {"ok": True, **getattr(self.services, op)(request)}
             if op == "downloads":
                 return {"ok": True, **self.download_cache.downloads(request)}
+            if op in {"outputs", "output_chunk", "outputs_ack"}:
+                return {"ok": True, **getattr(self.outputs_manager, op)(request)}
             if op not in {"put", "put_many", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources", "lan_routes"}:
                 reject("unknown_operation", "Unsupported operation")
             return {"ok": True, **getattr(self, op)(request)}
@@ -2284,7 +2304,7 @@ class Controller:
             # No "--runtime runc": a failing create would raise out of reconcile() and stall tick().
             args += ["--env", "NVIDIA_VISIBLE_DEVICES=void"]
         elif row["runtime"] == "cuda":
-            args += ["--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics"]
+            args += ["--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video"]
         if preparing:
             args += ["--mount", f"type=bind,src={root / 'prepare.py'},dst=/sparkdev-prepare.py,readonly"]
             for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"):
@@ -2293,6 +2313,7 @@ class Controller:
                 args += ["--env", value]
         args += self.download_cache.create_args(row, preparing=preparing, network_open=online)
         self.services.create_args(row, args)
+        self.system_packages.create_args(row, args)
         args += ["--entrypoint", "/usr/bin/python3", row["image"], "/sparkdev-worker.py"]
         return args
 
@@ -2300,6 +2321,9 @@ class Controller:
         if not row["proxy_image"] or row["egress"] in ("cut", "setup_failed", "network_changed", "guard_failed"):
             return
         online = row["egress"] == "internet"
+        # Public package fetch uses the same guard with the preparation helper
+        # charged inside the admitted CPU/memory budget, never extra quota.
+        public_job = online and not is_preparation(row)
         root = self.root / "jobs" / row["id"]
         if online:
             deny = root / "egress-deny.json"
@@ -2330,8 +2354,8 @@ class Controller:
             uid = os.getuid() if hasattr(os, "getuid") else 1000
             gid = os.getgid() if hasattr(os, "getgid") else 1000
             args = ["create", "--name", name, "--pull", "never", "--network", "bridge", "--read-only", "--cap-drop", "ALL",
-                              "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}", "--cpus", "1" if online else str(PROXY_CPU), "--cpu-shares", "512" if online else "128",
-                              "--memory", "256m" if online else f"{int(PROXY_MEMORY_GB * 1024)}m", "--memory-swap", "256m" if online else f"{int(PROXY_MEMORY_GB * 1024)}m", "--pids-limit", "512" if online else "64", "--log-driver", "none",
+                              "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}", "--cpus", "1" if public_job else str(PROXY_CPU), "--cpu-shares", "512" if public_job else "128",
+                              "--memory", "256m" if public_job else f"{int(PROXY_MEMORY_GB * 1024)}m", "--memory-swap", "256m" if public_job else f"{int(PROXY_MEMORY_GB * 1024)}m", "--pids-limit", "512" if online else "64", "--log-driver", "none",
                               "--label", "com.delores.sparkdev.job=" + row["id"], "--mount",
                               f"type=bind,src={root / 'proxy.py'},dst=/sparkdev-proxy.py,readonly"]
             if online:
@@ -2395,6 +2419,7 @@ class Controller:
             self.audit("job_internet_use", row["id"], row["client"], **values)
 
     def cleanup_proxy(self, row):
+        self.system_packages.cleanup(row)
         if not row["proxy_image"] or row["proxy_cleaned"]:
             return
         network = "sparkdev-fetch-" + row["id"]
@@ -2422,6 +2447,8 @@ class Controller:
                 self.scheduler_error("reconcile", error)
 
     def reconcile_row(self, row):
+        if self.system_packages.reconcile(row):
+            return
         name = self.container_name(row["id"])
         info = self.docker.inspect(name)
         if info is None:
@@ -2591,6 +2618,7 @@ class Controller:
             row = self.db.execute("SELECT * FROM jobs WHERE state='running' ORDER BY started DESC LIMIT 1").fetchone()
             if row:
                 try:
+                    self.system_packages.cleanup(row)
                     info = self.docker.inspect(self.container_name(row["id"]))
                     if info:
                         self.container_matches(info, row)
@@ -2667,6 +2695,7 @@ class Controller:
             while True:
                 try:
                     self.tick()
+                    self.outputs_manager.step()
                     self.download_cache.tidy_step()
                 except (Rejected, OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
                     # Deliberately never log argv, Docker stderr, paths or user input.
@@ -2679,10 +2708,14 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser()
     # `materialize` is the detached snapshot builder; it is not an RPC operation.
-    parser.add_argument("mode", choices=("rpc", "serve", "tick", "materialize"))
+    parser.add_argument("mode", choices=("rpc", "serve", "tick", "materialize", "collect-outputs"))
     parser.add_argument("--state", type=Path)
+    parser.add_argument("--job")
     args = parser.parse_args()
     controller = Controller(args.state)
+    if args.mode == "collect-outputs":
+        controller.outputs_manager.collect(identifier(args.job))
+        return 0
     if args.mode == "materialize":
         controller.materialize_queue()
         return 0

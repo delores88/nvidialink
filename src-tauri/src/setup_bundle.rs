@@ -7,7 +7,19 @@ use std::{collections::BTreeSet, fs, io::Read, path::Path};
 
 const MAX_MANIFEST: u64 = 64 * 1024;
 const MAX_TOTAL: u64 = 192 * 1024 * 1024;
-const ALLOWED: [&str; 15] = [
+const ALLOWED: [&str; 26] = [
+    "outputs.py",
+    "system_packages.py",
+    "media_probe.py",
+    "runtime/Dockerfile.blender",
+    "runtime/blender/prune_deps.py",
+    "runtime/blender/patch_deps_cuda13.py",
+    "runtime/blender/patch_deps_toolchain.py",
+    "runtime/blender/patch_deps_ispc.py",
+    "runtime/blender/patch_deps_oidn_cudart.py",
+    "runtime/blender/patch_deps_numpy.py",
+    "runtime/blender/10_nvidia.json",
+
     "controller.py",
     "worker.py",
     "proxy.py",
@@ -24,7 +36,11 @@ const ALLOWED: [&str; 15] = [
     "sparkdev-link.service",
     "bin/sparkdev-link",
 ];
-const REQUIRED: [&str; 11] = [
+const REQUIRED: [&str; 14] = [
+    "outputs.py",
+    "system_packages.py",
+    "media_probe.py",
+
     "controller.py",
     "worker.py",
     "proxy.py",

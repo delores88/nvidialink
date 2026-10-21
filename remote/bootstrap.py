@@ -20,9 +20,9 @@ import tempfile
 import time
 import uuid
 
-ALLOWED = {"controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "install-runtime.py", "install-cuda.py", "bootstrap.py",
+ALLOWED = {"outputs.py", "system_packages.py", "media_probe.py", "runtime/Dockerfile.blender", "runtime/blender/prune_deps.py", "runtime/blender/patch_deps_cuda13.py", "runtime/blender/patch_deps_toolchain.py", "runtime/blender/patch_deps_ispc.py", "runtime/blender/patch_deps_oidn_cudart.py", "runtime/blender/patch_deps_numpy.py", "runtime/blender/10_nvidia.json", "controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "install-runtime.py", "install-cuda.py", "bootstrap.py",
            "runtime/Dockerfile", "runtime/Dockerfile.cuda", "runtime/requirements.txt", "sparkdev-controller.service", "sparkdev-link.service", "bin/sparkdev-link"}
-REQUIRED = {"controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "bootstrap.py", "install-runtime.py",
+REQUIRED = {"outputs.py", "system_packages.py", "media_probe.py", "controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "bootstrap.py", "install-runtime.py",
             "runtime/Dockerfile", "runtime/requirements.txt", "sparkdev-controller.service"}
 
 
@@ -47,7 +47,7 @@ def write(path, raw, mode=0o600):
 
 
 RUNTIME_SOURCES = ("runtime/Dockerfile", "runtime/requirements.txt")
-CUDA_SOURCES = ("runtime/Dockerfile.cuda",)
+CUDA_SOURCES = ("runtime/Dockerfile.cuda", "media_probe.py", "runtime/Dockerfile.blender", "runtime/blender/prune_deps.py", "runtime/blender/patch_deps_cuda13.py", "runtime/blender/patch_deps_toolchain.py", "runtime/blender/patch_deps_ispc.py", "runtime/blender/patch_deps_oidn_cudart.py", "runtime/blender/patch_deps_numpy.py", "runtime/blender/10_nvidia.json",)
 
 
 class RuntimeRefreshError(ValueError):

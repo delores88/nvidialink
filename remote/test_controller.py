@@ -472,7 +472,7 @@ class ControllerTests(unittest.TestCase):
         argv = self.c.create_args(self.c.get_job(job["job"]))
         self.assertEqual(argv[argv.index("--gpus") + 1], "all")
         self.assertEqual(argv[argv.index("--network") + 1], "none")
-        self.assertIn("NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics", argv)
+        self.assertIn("NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video", argv)
         self.assertNotIn("NVIDIA_VISIBLE_DEVICES=void", argv)
         self.assertNotIn("HTTPS_PROXY=http://sparkdev-proxy:3128", argv)
 

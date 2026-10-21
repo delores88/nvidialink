@@ -152,6 +152,7 @@ class ServiceManager:
                 return self.c.job_status(old)
             if not self.db.execute("SELECT 1 FROM projects WHERE project=? AND manifest=?", (project, manifest)).fetchone():
                 self.a.reject("manifest_not_found", "Sync this manifest before submitting the server")
+            runtime, system_plan = self.c.system_packages.runtime(project, manifest, registry[runtime_name])
             if self.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= self.a.MAX_JOBS:
                 self.a.reject("capacity", "Retained job capacity reached; owner must archive receipts")
             active = self.resolve(name, live=True)
@@ -180,13 +181,14 @@ class ServiceManager:
             self.db.execute("""INSERT INTO jobs(id,request_id,request,project,manifest,runtime,image,client,state,created,
                 cache_key,cpu,memory,scratch_mb,headroom_gb,kind,name,port,idle_seconds,last_activity)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (job, request_id, encoded, project, manifest, runtime_name, registry[runtime_name]["image"], client,
+                (job, request_id, encoded, project, manifest, runtime_name, runtime["image"], client,
                  "queued", now, self.a.sha(job.encode()), 2, memory, 2048, limits["headroom_gb"], "service", name, port, idle, now))
             self.db.execute("INSERT INTO service_requests VALUES(?,?,?)", (request_id, job, encoded))
             # Use exactly the same network snapshot and helper staging as run().
             network = self.c.job_network()
             self.c.stage_network(root, network)
             self.db.execute("UPDATE jobs SET egress=?,proxy_image=? WHERE id=?", (network["egress"], network["proxy_image"], job))
+            self.c.system_packages.stage(self.c.get_job(job), system_plan)
             self.c.audit("service_queued", job, client, name=name, memory_gb=memory)
         return self.c.job_status(self.c.get_job(job))
 
