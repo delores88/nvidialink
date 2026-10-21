@@ -23,11 +23,15 @@ def receive_all(sock):
 
 
 class InternetProxyTests(unittest.TestCase):
+    def setUp(self):
+        self.guard = proxy.EgressGuard(probe=lambda: "9.9.9.9")
+        self.assertTrue(self.guard.refresh())
+
     @contextlib.contextmanager
     def server(self, opener):
         with tempfile.TemporaryDirectory() as temporary:
             counters = proxy.Counters(Path(temporary) / "counters.json")
-            server = proxy.PublicServer(("127.0.0.1", 0), counters)
+            server = proxy.PublicServer(("127.0.0.1", 0), counters, self.guard)
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
             with patch.object(proxy, "open_upstream", side_effect=opener):
                 thread.start()
@@ -52,13 +56,13 @@ class InternetProxyTests(unittest.TestCase):
         answer = lambda ip: (socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 443))
         with patch.object(proxy.socket, "getaddrinfo", return_value=[answer("8.8.8.8"), answer("192.168.0.2")]) as dns, patch.object(proxy.socket, "socket") as create:
             with self.assertRaises(proxy.Refused) as error:
-                proxy.open_upstream("example.com", 443)
+                proxy.open_upstream("example.com", 443, self.guard, self.guard.check())
             self.assertEqual(error.exception.code, 403)
             dns.assert_called_once_with("example.com", 443, socket.AF_INET, socket.SOCK_STREAM)
             create.assert_not_called()
         attempt = Mock()
         with patch.object(proxy.socket, "getaddrinfo", return_value=[answer("8.8.8.8")]) as dns, patch.object(proxy.socket, "socket", return_value=attempt):
-            self.assertIs(proxy.open_upstream("example.com", 443), attempt)
+            self.assertIs(proxy.open_upstream("example.com", 443, self.guard, self.guard.check()), attempt)
             attempt.connect.assert_called_once_with(("8.8.8.8", 443))
             self.assertEqual(dns.call_count, 1)
 
@@ -72,7 +76,7 @@ class InternetProxyTests(unittest.TestCase):
         attempt.connect.side_effect = fail
         with patch.object(proxy.time, "monotonic", side_effect=lambda: now[0]), patch.object(proxy.socket, "getaddrinfo", return_value=answers), patch.object(proxy.socket, "socket", return_value=attempt):
             with self.assertRaises(proxy.Refused) as error:
-                proxy.open_upstream("example.com", 443)
+                proxy.open_upstream("example.com", 443, self.guard, self.guard.check())
         self.assertEqual(error.exception.code, 502)
         self.assertEqual(attempt.connect.call_count, 3)
 
@@ -182,7 +186,7 @@ class InternetProxyTests(unittest.TestCase):
 
     def test_no_status_written_after_http_response_starts(self):
         peer, upstream = socket.socketpair()
-        def broken_relay(client, _upstream, _counters, started, _remaining):
+        def broken_relay(client, _upstream, _counters, started, _remaining, _guard, _epoch):
             started[0] = True
             client.sendall(b"HTTP/1.1 200 OK\r\n\r\npartial")
             raise OSError("fixture interruption")
@@ -235,6 +239,18 @@ class InternetProxyTests(unittest.TestCase):
             counters.flush()
             self.assertEqual(first, path.stat().st_mtime_ns)
             self.assertEqual(json.loads(path.read_text()), {**dict.fromkeys(proxy.PUBLIC_KEYS, 0), "bytes_down": 2 ** 35})
+
+    def test_empty_loopback_readiness_probe_does_not_inflate_workload_counters(self):
+        with self.server(lambda *_: self.fail("must not open")) as (server, counters):
+            with socket.create_connection(server.server_address, timeout=2) as client:
+                client.shutdown(socket.SHUT_WR)
+                self.assertEqual(receive_all(client), b"")
+            self.assertEqual(counters.values, dict.fromkeys(proxy.PUBLIC_KEYS, 0))
+            with socket.create_connection(server.server_address, timeout=2) as client:
+                client.sendall(b"invalid\r\n\r\n")
+                self.assertIn(b"400 Invalid request", receive_all(client))
+            self.assertEqual(counters.values["connections"], 1)
+            self.assertEqual(counters.values["refused_invalid"], 1)
 
 
 if __name__ == "__main__":

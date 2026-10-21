@@ -44,9 +44,12 @@ class FakeDocker:
             if name in self.containers:
                 raise Rejected("already_exists", "Container already exists")
             labels = dict(a.split("=", 1) for i, a in enumerate(args) if i and args[i-1] == "--label")
+            sysctls = dict(a.split("=", 1) for i, a in enumerate(args) if i and args[i-1] == "--sysctl")
             network = args[args.index("--network")+1]
             # Job and proxy creates both end with IMAGE ENTRYPOINT-SCRIPT; record the real image.
-            self.containers[name] = {"Image": args[-2], "Config": {"Labels": labels}, "State": {"Status": "created", "ExitCode": 0}, "NetworkSettings": {"Networks": {network: {}}}}
+            self.containers[name] = {"Image": args[-2], "Config": {"Labels": labels}, "HostConfig": {"Sysctls": sysctls}, "State": {"Status": "created", "ExitCode": 0}, "NetworkSettings": {"Networks": {network: {}}}}
+            if "--health-cmd" in args:
+                self.containers[name]["State"]["Health"] = {"Status": "healthy"}
         elif args[0] == "start":
             self.containers[args[1]]["State"]["Status"] = "running"
         elif args[0] == "stop":

@@ -92,6 +92,8 @@ class InternetControllerTests(unittest.TestCase):
         self.assertEqual(env["GIT_CONFIG_VALUE_1"], "ssh://git@github.com/")
         self.assertIn(f"fsize={64 * controller.GIB}:{64 * controller.GIB}", args)
         self.assertEqual(args[args.index("--dns") + 1], "127.0.0.1")
+        sysctls = dict(value.split("=", 1) for index, value in enumerate(args) if index and args[index - 1] == "--sysctl")
+        self.assertEqual(sysctls, controller.INTERNET_IPV6_SYSCTLS)
         self.assertFalse(any("CERT" in key or key == "REQUESTS_CA_BUNDLE" for key in env))
         helper = next(call for call in self.docker.calls if call[0] == "create" and call[-1] == "/sparkdev-proxy.py")
         self.assertEqual(helper[-2], IMAGE)
@@ -178,15 +180,44 @@ class InternetControllerTests(unittest.TestCase):
         self.assertEqual((row["state"], row["error"]), ("failed", "internet_guard_failed"))
         self.assertTrue(any(call[:3] == ["stop", "--time", "10"] and call[-1] == self.c.container_name(job["job"]) for call in self.docker.calls))
 
-    def test_known_hairpin_gap_is_explicit_without_fabricated_canary(self):
+    def test_observed_egress_guard_limits_are_explicit_without_fabricated_canary(self):
         guard = self.rpc("resources")["internet"]["guard"]
-        self.assertFalse(guard["home_public_address_blocked"])
+        self.assertTrue(guard["observed_public_egress_blocked"])
+        self.assertEqual((guard["refresh_seconds"], guard["max_age_seconds"]), (30, 60))
         self.assertNotIn("active", guard)
-        self.assertIn("home public IP", guard["limitation"])
+        self.assertIn("Additional router public aliases", guard["limitation"])
+
+    def test_helper_first_guard_check_defers_job_without_offline_fallback(self):
+        first, _ = self.run_job()
+        original = self.docker.call
+        def starting(args, **kwargs):
+            result = original(args, **kwargs)
+            if args[0] == "start" and args[1].startswith("sparkdev-proxy-"):
+                self.docker.containers[args[1]]["State"]["Health"] = {"Status": "starting"}
+            return result
+        with mock.patch.object(self.docker, "call", side_effect=starting):
+            self.c.tick()
+        row = self.c.get_job(first["job"])
+        self.assertEqual((row["state"], row["egress"]), ("starting", "internet"))
+        self.assertNotIn(self.c.container_name(first["job"]), self.docker.containers)
+        self.docker.containers["sparkdev-proxy-" + first["job"]]["State"]["Health"]["Status"] = "healthy"
+        self.c.tick()
+        self.assertEqual(self.c.get_job(first["job"])["state"], "running")
+
+    def test_helper_guard_startup_timeout_falls_back_offline(self):
+        first, _ = self.run_job()
+        row = self.c.get_job(first["job"])
+        self.c.ensure_proxy(row)
+        self.c.db.execute("UPDATE jobs SET state='starting',started=1 WHERE id=?", (first["job"],))
+        self.docker.containers["sparkdev-proxy-" + first["job"]]["State"]["Health"]["Status"] = "starting"
+        self.c.tick()
+        row = self.c.get_job(first["job"])
+        self.assertEqual((row["state"], row["egress"]), ("running", "setup_failed"))
+        self.assertNotIn("sparkdev-proxy-" + first["job"], self.docker.containers)
 
     def test_helper_setup_failure_runs_offline_but_daemon_failure_does_not(self):
         first, _ = self.run_job()
-        with mock.patch.object(controller, "guard_bridge_ipv6", side_effect=Rejected("ipv6_link", "fixture")):
+        with mock.patch.object(controller, "internet_deny", side_effect=Rejected("network_facts", "fixture")):
             self.c.tick()
         row = self.c.get_job(first["job"])
         self.assertEqual((row["state"], row["egress"]), ("running", "setup_failed"))
@@ -197,6 +228,35 @@ class InternetControllerTests(unittest.TestCase):
             self.c.tick()
         self.assertEqual(self.c.get_job(second["job"])["egress"], "internet")
         self.assertNotIn(self.c.container_name(second["job"]), self.docker.containers)
+
+    def test_host_bridge_ipv6_does_not_block_verified_private_job_namespace(self):
+        job, _ = self.run_job()
+        with mock.patch.object(controller, "guard_bridge_ipv6", side_effect=AssertionError("must not change or depend on the host bridge")):
+            self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["state"], "running")
+        self.assertEqual(self.docker.containers[self.c.container_name(job["job"])]["HostConfig"]["Sysctls"], controller.INTERNET_IPV6_SYSCTLS)
+
+    def test_missing_ipv6_namespace_guard_never_starts_job(self):
+        job, _ = self.run_job()
+        call = self.docker.call
+        def create_without_sysctls(args, timeout=30):
+            result = call(args, timeout)
+            if args[0] == "create" and args[-1] == "/sparkdev-worker.py":
+                self.docker.containers[self.c.container_name(job["job"])]["HostConfig"]["Sysctls"] = {}
+            return result
+        with mock.patch.object(self.docker, "call", side_effect=create_without_sysctls):
+            self.c.tick()
+        row = self.c.get_job(job["job"])
+        self.assertEqual((row["state"], row["error"], row["egress"]), ("failed", "internet_guard_failed", "guard_failed"))
+        self.assertNotIn(["start", self.c.container_name(job["job"])], self.docker.calls)
+
+    def test_unverified_running_namespace_is_stopped_by_reconciliation(self):
+        job, _ = self.run_job()
+        self.c.tick()
+        self.docker.containers[self.c.container_name(job["job"])]["HostConfig"]["Sysctls"] = {}
+        self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["error"], "internet_guard_failed")
+        self.assertTrue(any(call[0] == "stop" and call[-1] == self.c.container_name(job["job"]) for call in self.docker.calls))
 
     def test_owner_switch_cuts_running_and_queued_helpers_not_workloads(self):
         first, _ = self.run_job()

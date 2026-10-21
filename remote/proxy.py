@@ -15,6 +15,7 @@ import selectors
 import signal
 import socket
 import socketserver
+import ssl
 import threading
 import time
 from urllib.parse import urlsplit
@@ -121,6 +122,10 @@ HEADER_LIMIT = 64 * 1024
 HEADER_TIMEOUT = 30
 BUFFER_LIMIT = 256 * 1024
 IDLE_TIMEOUT = 300
+EGRESS_HOST = "api.ipify.org"
+EGRESS_PROBE_TIMEOUT = 10
+EGRESS_REFRESH = 30
+EGRESS_MAX_AGE = 60
 HOST = re.compile(r"[A-Za-z0-9._-]{1,253}\Z")
 TOKEN = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 
@@ -128,6 +133,10 @@ TOKEN = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
 class Refused(Exception):
     def __init__(self, code, reason):
         self.code, self.reason = code, reason
+
+
+class EmptyRequest(Refused):
+    pass
 
 
 def load_extra(path):
@@ -149,14 +158,126 @@ def allowed(ip):
         return False
 
 
-def open_upstream(host, port):
+def observe_public_egress():
+    """Fixed HTTPS IPv4 echo, directly from this helper; never use ambient proxies.
+
+    EgressGuard bounds the whole operation, including libc DNS, in one daemon
+    thread. Socket deadlines and the response limit also bound normal I/O.
+    """
+    deadline = time.monotonic() + EGRESS_PROBE_TIMEOUT
+    answers = socket.getaddrinfo(EGRESS_HOST, 443, socket.AF_INET, socket.SOCK_STREAM)
+    if not answers or any(family != socket.AF_INET or not allowed(address[0]) for family, _, _, _, address in answers):
+        raise ValueError("unsafe public-address service")
+    context = ssl.create_default_context()
+    for family, kind, proto, _, address in answers:
+        raw = socket.socket(family, kind, proto)
+        try:
+            raw.settimeout(max(.001, min(5, deadline - time.monotonic())))
+            if time.monotonic() >= deadline:
+                raise TimeoutError()
+            raw.connect(address)  # Checked sockaddr, no second resolution.
+            with context.wrap_socket(raw, server_hostname=EGRESS_HOST) as secure:
+                secure.settimeout(max(.001, deadline - time.monotonic()))
+                secure.sendall(b"GET / HTTP/1.0\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n")
+                response = bytearray()
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or len(response) > 8256:
+                        raise ValueError("public-address response limit")
+                    secure.settimeout(remaining)
+                    piece = secure.recv(min(1024, 8257 - len(response)))
+                    if not piece:
+                        break
+                    response.extend(piece)
+                header, separator, body = bytes(response).partition(b"\r\n\r\n")
+                lines = header.split(b"\r\n")
+                status = lines[0].split(b" ")
+                if not separator or len(header) > 8192 or len(body) > 64 or len(status) < 2 or status[0] not in (b"HTTP/1.0", b"HTTP/1.1") or status[1] != b"200":
+                    raise ValueError("invalid public-address response")
+                for line in lines[1:]:
+                    name, colon, value = line.partition(b":")
+                    if not colon or name.lower() == b"transfer-encoding":
+                        raise ValueError("invalid public-address response")
+                    if name.lower() == b"content-length" and value.strip() != str(len(body)).encode():
+                        raise ValueError("invalid public-address length")
+                value = str(ipaddress.IPv4Address(body.decode("ascii").strip()))
+                if not allowed(value):
+                    raise ValueError("invalid public address")
+                return value
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+        finally:
+            raw.close()
+    raise ValueError("public-address service unavailable")
+
+
+class EgressGuard:
+    """An expiring observed-egress deny set and generation for active tunnels."""
+    def __init__(self, probe=observe_public_egress, clock=time.monotonic):
+        self.probe, self.clock = probe, clock
+        self.lock, self.refresh_lock = threading.Lock(), threading.Lock()
+        self.epoch, self.expires, self.current = 0, 0, None
+        self.observed = set()
+        self.pending = None
+
+    def invalidate(self):
+        with self.lock:
+            self.epoch += 1
+            self.expires = 0
+
+    def refresh(self):
+        # At most one unresolved libc DNS/probe thread per helper. A stuck
+        # resolver cannot leak threads every refresh, nor keep internet open.
+        with self.refresh_lock:
+            if self.pending is not None and self.pending.is_alive():
+                self.invalidate()
+                return False
+            result = []
+            def run():
+                try:
+                    result.append(self.probe())
+                except (OSError, ValueError, UnicodeError):
+                    pass
+            self.pending = threading.Thread(target=run, daemon=True)
+            self.pending.start()
+            self.pending.join(EGRESS_PROBE_TIMEOUT)
+            if self.pending.is_alive() or not result or not allowed(result[0]):
+                self.invalidate()
+                return False
+            with self.lock:
+                now = self.clock()
+                if result[0] != self.current or now >= self.expires:
+                    self.epoch += 1
+                # Retain old observed IPs as denied too, including after roaming.
+                if result[0] not in self.observed and len(self.observed) >= 256:
+                    self.epoch += 1
+                    self.expires = 0
+                    return False
+                self.observed.add(result[0])
+                self.current, self.expires = result[0], now + EGRESS_MAX_AGE
+            return True
+
+    def check(self, epoch=None, address=None):
+        with self.lock:
+            if self.clock() >= self.expires or epoch is not None and epoch != self.epoch:
+                raise Refused(503, "Internet safety check unavailable; retry later")
+            if address is not None and address in self.observed:
+                raise Refused(403, "Blocked: home or private network address")
+            return self.epoch
+
+
+def open_upstream(host, port, guard, epoch):
     """Resolve once, check every answer, connect only to the checked sockaddr."""
+    guard.check(epoch)
     try:
         answers = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
     except OSError:
         raise Refused(502, "Could not reach that site") from None
     if any(family != socket.AF_INET or not allowed(address[0]) for family, _, _, _, address in answers):
         raise Refused(403, "Blocked: home or private network address")
+    for _, _, _, _, address in answers:
+        guard.check(epoch, address[0])
     deadline = time.monotonic() + 30
     for family, kind, proto, _, address in answers:
         remaining = deadline - time.monotonic()
@@ -164,9 +285,14 @@ def open_upstream(host, port):
             break
         attempt = socket.socket(family, kind, proto)
         try:
+            guard.check(epoch, address[0])
             attempt.settimeout(min(10, remaining))
             attempt.connect(address)
+            guard.check(epoch, address[0])
             return attempt
+        except Refused:
+            attempt.close()
+            raise
         except OSError:
             attempt.close()
     raise Refused(502, "Could not reach that site")
@@ -199,7 +325,7 @@ def read_header(sock):
         except TimeoutError:
             raise Refused(400, "Invalid request") from None
         if not raw:
-            raise Refused(400, "Invalid request")
+            raise EmptyRequest(400, "Invalid request")
         end = raw.find(b"\r\n\r\n")
         if end >= 0:
             size = end + 4
@@ -292,7 +418,7 @@ class Counters:
             self.written = values
 
 
-def relay(client, upstream, counters, response_started, body_remaining=None):
+def relay(client, upstream, counters, response_started, body_remaining, guard, epoch):
     """Bounded streaming, with half-close and an idle (not lifetime) timeout."""
     sockets = (client, upstream)
     buffers = {client: bytearray(), upstream: bytearray()}
@@ -303,6 +429,7 @@ def relay(client, upstream, counters, response_started, body_remaining=None):
     last = time.monotonic()
     with selectors.DefaultSelector() as selector:
         while True:
+            guard.check(epoch)
             # EOF from one peer is propagated only after its queued data is delivered.
             for source, destination in ((client, upstream), (upstream, client)):
                 if eof[source] and not buffers[destination] and not shut[destination]:
@@ -326,6 +453,7 @@ def relay(client, upstream, counters, response_started, body_remaining=None):
             if not selector.get_map():
                 return
             for key, mask in selector.select(min(remaining, 1)):
+                guard.check(epoch)
                 source, destination = key.fileobj, key.data
                 if mask & selectors.EVENT_WRITE:
                     try:
@@ -363,11 +491,16 @@ def relay(client, upstream, counters, response_started, body_remaining=None):
 class PublicHandler(socketserver.BaseRequestHandler):
     def handle(self):
         counters = self.server.counters
-        counters.add("connections")
-        upstream, started = None, [False]
+        upstream, started, counted = None, [False], False
         try:
-            host, port, header, remaining = public_request(read_header(self.request))
-            upstream = open_upstream(host, port)
+            raw = read_header(self.request)
+            counters.add("connections")
+            counted = True
+            host, port, header, remaining = public_request(raw)
+            guard = self.server.guard
+            epoch = guard.check()
+            upstream = open_upstream(host, port, guard, epoch)
+            guard.check(epoch)
             if header is None:
                 self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 started[0] = True
@@ -375,8 +508,14 @@ class PublicHandler(socketserver.BaseRequestHandler):
                 counters.add("http_requests")
                 upstream.sendall(header)
                 counters.add("bytes_up", len(header))
-            relay(self.request, upstream, counters, started, remaining)
+            relay(self.request, upstream, counters, started, remaining, guard, epoch)
         except (Refused, OSError, ValueError) as error:
+            # Docker readiness connects from this helper's loopback and closes
+            # without a request. It is not workload traffic or a malformed URL.
+            if isinstance(error, EmptyRequest) and self.client_address[0] == "127.0.0.1":
+                return
+            if not counted:
+                counters.add("connections")
             if isinstance(error, Refused):
                 code, reason = error.code, error.reason
             else:
@@ -396,9 +535,10 @@ class PublicHandler(socketserver.BaseRequestHandler):
 class PublicServer(Server):
     request_queue_size = 256
 
-    def __init__(self, address, counters):
+    def __init__(self, address, counters, guard):
         self.slots = threading.BoundedSemaphore(256)
         self.counters = counters
+        self.guard = guard
         super().__init__(address, PublicHandler)
 
     def process_request(self, request, address):
@@ -436,18 +576,25 @@ def main():
         EXTRA = load_extra("/sparkdev-deny.json")
     except (OSError, ValueError, TypeError):
         return 3
+    guard = EgressGuard()
+    if not guard.refresh():
+        return 4
     counters = Counters("/sparkdev-egress/counters.json")
     stopping = threading.Event()
     def flush_loop():
         while not stopping.wait(5):
             counters.flush()
+    def guard_loop():
+        while not stopping.wait(EGRESS_REFRESH):
+            guard.refresh()
     def stop(_signum, _frame):
         counters.flush()
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, stop)
     threading.Thread(target=flush_loop, daemon=True).start()
+    threading.Thread(target=guard_loop, daemon=True).start()
     try:
-        with PublicServer(("0.0.0.0", 3128), counters) as server:
+        with PublicServer(("0.0.0.0", 3128), counters, guard) as server:
             server.serve_forever()
     finally:
         stopping.set()

@@ -971,6 +971,7 @@ def is_preparation(row):
 
 
 INTERNET_COUNTERS = ("connections", "http_requests", "bytes_down", "bytes_up", "blocked_private", "refused_invalid", "failed_connect")
+INTERNET_IPV6_SYSCTLS = {"net.ipv6.conf.all.disable_ipv6": "1", "net.ipv6.conf.default.disable_ipv6": "1"}
 
 
 def internet_deny(proc_root=Path("/proc")):
@@ -1188,9 +1189,9 @@ class Controller:
         return {"enabled": enabled, "saved": bool(stored), "available": "python" in self.registry(),
                 "blocks": "home and private networks, this Spark, cloud metadata",
                 "applies": "new jobs; turning off also cuts running jobs",
-                "guard": {"mode": "ipv4_snapshot", "host_network_checks": "before_start_and_each_scheduler_tick",
-                          "home_public_address_blocked": False,
-                          "limitation": "The home public IP is not detected; router port forwarding or hairpin access through that address is not blocked."}}
+                "guard": {"mode": "ipv4_observed_egress", "host_network_checks": "before_start_and_each_scheduler_tick",
+                          "observed_public_egress_blocked": True, "refresh_seconds": 30, "max_age_seconds": 60,
+                          "limitation": "Additional router public aliases or addresses used by different outbound routes are not discovered. Network changes are detected periodically, not instantly."}}
 
     def job_network(self):
         policy = self.internet_policy()
@@ -1203,10 +1204,11 @@ class Controller:
             atomic_write(job_root / "proxy.py", Path(__file__).with_name("proxy.py").read_bytes(), 0o444)
 
     def internet_status(self, row):
-        names = {"internet": "on", "off": "off", "cut": "cut_by_owner", "no_helper": "unavailable", "setup_failed": "unavailable", "network_changed": "unavailable"}
+        names = {"internet": "on", "off": "off", "cut": "cut_by_owner", "no_helper": "unavailable", "setup_failed": "unavailable", "network_changed": "unavailable", "guard_failed": "unavailable"}
         reason = {"cut": "Internet was turned off by the owner", "no_helper": "The Python runtime needed for internet is not installed",
                   "setup_failed": "The private connection could not be safely prepared; this job runs offline",
-                  "network_changed": "Spark network addresses changed or could not be checked; this job's internet was stopped. Submit a new job to reconnect."}.get(row["egress"])
+                  "network_changed": "Spark network addresses changed or could not be checked; this job's internet was stopped. Submit a new job to reconnect.",
+                  "guard_failed": "The job's IPv6 isolation could not be verified; it was stopped before further execution."}.get(row["egress"])
         return {"internet": names.get(row["egress"], "package_registries_only" if is_preparation(row) else None),
                 "internet_reason": reason, "internet_use": json.loads(row["internet_use"]) if row["internet_use"] else None}
 
@@ -2255,6 +2257,11 @@ class Controller:
             # Docker's embedded resolver still knows the helper alias, but must
             # not forward workload DNS queries through the host's resolver.
             args += ["--dns", "127.0.0.1"]
+            # Docker applies these only inside this job's private network
+            # namespace. A host bridge may keep its own link-local address;
+            # disabling IPv6 here removes the workload's route to that address.
+            for key, value in INTERNET_IPV6_SYSCTLS.items():
+                args += ["--sysctl", key + "=" + value]
             scratch = root / "scratch"
             if scratch.is_symlink():
                 reject("unsafe_state", "Job scratch is a symlink")
@@ -2290,7 +2297,7 @@ class Controller:
         return args
 
     def ensure_proxy(self, row):
-        if not row["proxy_image"] or row["egress"] in ("cut", "setup_failed", "network_changed"):
+        if not row["proxy_image"] or row["egress"] in ("cut", "setup_failed", "network_changed", "guard_failed"):
             return
         online = row["egress"] == "internet"
         root = self.root / "jobs" / row["id"]
@@ -2315,8 +2322,8 @@ class Controller:
             info = self.docker.network_inspect(network)
         if not info or not info.get("Internal") or (info.get("Labels") or {}).get("com.delores.sparkdev.job") != row["id"] or (info.get("Options") or {}).get("com.docker.network.bridge.gateway_mode_ipv4") != "isolated":
             reject("network_conflict", "Dependency network does not match its job")
-        if online:
-            guard_bridge_ipv6(info)
+        # Online workloads disable IPv6 in their own namespace, and reconciliation
+        # verifies Docker retained those exact settings before any workload starts.
         name = "sparkdev-proxy-" + row["id"]
         info = self.docker.inspect(name)
         if info is None:
@@ -2330,7 +2337,9 @@ class Controller:
             if online:
                 args += ["--env", "SPARKDEV_PROXY_MODE=public", "--restart", "on-failure:3", "--mount",
                          f"type=bind,src={root / 'egress-deny.json'},dst=/sparkdev-deny.json,readonly", "--mount",
-                         f"type=bind,src={root / 'egress'},dst=/sparkdev-egress"]
+                         f"type=bind,src={root / 'egress'},dst=/sparkdev-egress",
+                         "--health-cmd", "/usr/bin/python3 -c 'import socket; socket.create_connection((\"127.0.0.1\",3128),1).close()'",
+                         "--health-interval", "1s", "--health-timeout", "2s", "--health-retries", "15"]
             args += ["--entrypoint", "/usr/bin/python3", row["proxy_image"], "/sparkdev-proxy.py"]
             try:
                 self.docker.call(args)
@@ -2347,8 +2356,15 @@ class Controller:
             self.docker.call(["network", "connect", "--alias", "sparkdev-proxy", network, name])
         if info["State"]["Status"] == "created":
             self.docker.call(["start", name])
+            info = self.docker.inspect(name)
         elif info["State"]["Status"] != "running":
             reject("proxy_failed", "Dependency proxy stopped; cancel and retry preparation")
+        if online:
+            health = (info or {}).get("State", {}).get("Health", {}).get("Status")
+            if health == "starting" and time.time() - (row["started"] or row["created"]) < 30:
+                reject("proxy_starting", "The job's internet guard is completing its first safety check")
+            if health != "healthy":
+                reject("proxy_guard_unavailable", "The job's internet guard could not be verified")
 
     def remove_proxy(self, row, graceful=False):
         name = "sparkdev-proxy-" + row["id"]
@@ -2361,7 +2377,7 @@ class Controller:
             self.docker.call(["rm", "--force", name])
 
     def collect_internet_use(self, row):
-        if row["egress"] not in ("internet", "cut", "setup_failed", "network_changed") or row["internet_use"]:
+        if row["egress"] not in ("internet", "cut", "setup_failed", "network_changed", "guard_failed") or row["internet_use"]:
             return
         path = self.root / "jobs" / row["id"] / "egress" / "counters.json"
         try:
@@ -2430,6 +2446,8 @@ class Controller:
             try:
                 self.ensure_proxy(row)
             except Rejected as error:
+                if error.code == "proxy_starting":
+                    return
                 if row["egress"] != "internet" or error.code == "docker_unavailable":
                     raise
                 self.db.execute("UPDATE jobs SET egress='setup_failed' WHERE id=?", (row["id"],))
@@ -2455,6 +2473,15 @@ class Controller:
             if info is None:
                 reject("docker_unavailable", "Created container cannot be inspected")
         self.container_matches(info, row)
+        if row["egress"] == "internet":
+            settings = (info.get("HostConfig") or {}).get("Sysctls") or {}
+            if any(settings.get(key) != value for key, value in INTERNET_IPV6_SYSCTLS.items()):
+                if info["State"]["Status"] in ("running", "restarting", "paused"):
+                    self.docker.call(["stop", "--time", "5", name], timeout=15)
+                self.db.execute("UPDATE jobs SET egress='guard_failed' WHERE id=?", (row["id"],))
+                self.finish(row, "failed", 125, "internet_guard_failed")
+                self.audit("internet_guard_failed", row["id"], row["client"], code="ipv6_namespace")
+                return
         if self.services.reconcile(row, info):
             return
         state = info["State"]["Status"]
