@@ -1,0 +1,167 @@
+"""CUDA source-bound refresh tests; all Docker/GPU activity is mocked."""
+import base64
+import contextlib
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import unittest
+from unittest import mock
+
+import bootstrap
+import test_runtime_refresh as fixture
+
+spec = importlib.util.spec_from_file_location("cuda_installer", Path(__file__).with_name("install-cuda.py"))
+cuda = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cuda)
+
+
+class CudaRefreshTests(unittest.TestCase):
+    setUp = fixture.RefreshTests.setUp
+    tearDown = fixture.RefreshTests.tearDown
+    registry = fixture.RefreshTests.registry
+    fake_run = fixture.RefreshTests.fake_run
+    setup_context = fixture.RefreshTests.setup_context
+    active = fixture.RefreshTests.active
+    source_files = fixture.RefreshTests.source_files
+
+    def cuda_bundle(self):
+        for name in ("install-cuda.py", "runtime/Dockerfile.cuda"):
+            raw = ("fixture:" + name).encode()
+            self.files[name] = raw
+            self.envelope["files"][name] = {"data": base64.b64encode(raw).decode(), "sha256": hashlib.sha256(raw).hexdigest()}
+        self.envelope["build_cuda"] = True
+        return bootstrap.runtime_source_digest(self.files, bootstrap.CUDA_SOURCES)
+
+    def cuda_sources(self):
+        digest = self.cuda_bundle()
+        self.source_files()
+        (self.root / "runtime" / "Dockerfile.cuda").write_bytes(self.files["runtime/Dockerfile.cuda"])
+        return digest
+
+    @contextlib.contextmanager
+    def cuda_context(self, register=None):
+        helper = {"runtime_inputs": fixture.installer.runtime_inputs,
+                  "publish_runtime_status": fixture.installer.publish_runtime_status,
+                  "register_runtimes": register or mock.Mock()}
+        with mock.patch.object(cuda, "helpers", return_value=helper), mock.patch.object(cuda, "require_probe_headroom"), mock.patch.object(cuda.subprocess, "run", side_effect=self.fake_run), mock.patch("builtins.print"):
+            yield helper
+
+    def test_both_refreshes_use_one_sequential_launcher_with_distinct_receipts(self):
+        digest = self.cuda_bundle()
+        with self.setup_context():
+            receipt = bootstrap.install(self.envelope)
+        launched = [a for a in self.calls if a[0] == "systemd-run"]
+        self.assertEqual(len(launched), 1)
+        self.assertIn("--cuda-source-digest", launched[0])
+        self.assertIn(digest, launched[0])
+        self.assertEqual((receipt["runtime_state"], receipt["cuda_state"]), ("scheduled", "scheduled"))
+        self.assertNotEqual(receipt["runtime_attempt_id"], receipt["cuda_attempt_id"])
+        self.assertEqual(json.loads((self.root / receipt["cuda_build_receipt"]).read_text())["state"], "scheduled")
+
+    def test_existing_cuda_is_refreshed_by_runtime_setup_without_new_cuda_opt_in(self):
+        self.cuda_bundle()
+        self.envelope["build_cuda"] = False
+        value = self.registry()
+        value["runtimes"]["cuda"] = {"image": fixture.OLD_IMAGE, "gpu": True, "provenance": "fixture"}
+        (self.root / "runtimes.json").write_text(json.dumps(value))
+        with self.setup_context():
+            receipt = bootstrap.install(self.envelope)
+        self.assertEqual(receipt["cuda_state"], "scheduled")
+        self.assertTrue(any("--cuda-source-digest" in args for args in self.calls))
+
+    def test_matching_cuda_source_and_image_skips_rebuild_but_pruning_does_not(self):
+        digest = self.cuda_sources()
+        value = self.registry()
+        value["runtimes"]["cuda"] = {"image": fixture.IMAGE, "gpu": True, "provenance": "fixture"}
+        (self.root / "runtimes.json").write_text(json.dumps(value))
+        (self.root / "runtime-cuda-build.json").write_text(json.dumps({"state": "succeeded", "source_digest": digest, "image": fixture.IMAGE}))
+        with self.cuda_context():
+            self.assertEqual(cuda.build_cuda(self.root, digest), 0)
+        self.assertFalse(any(args[:2] == ["docker", "build"] for args in self.calls))
+        with mock.patch.object(bootstrap.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, stdout=b"", stderr=("No such image: " + fixture.IMAGE).encode())):
+            self.assertFalse(bootstrap.runtime_current(self.root, digest, cuda=True))
+
+    def test_active_work_and_source_drift_refuse_without_build_or_registry_change(self):
+        digest = self.cuda_sources()
+        original = self.registry()
+        (self.root / "runtime" / "Dockerfile.cuda").write_bytes(b"changed")
+        with self.cuda_context():
+            self.assertEqual(cuda.refresh_locked(self.root, digest, "a" * 32), 1)
+        self.assertEqual(json.loads((self.root / "runtime-cuda-build.json").read_text())["state"], "not_started")
+        self.active("running")
+        with self.cuda_context():
+            self.assertEqual(cuda.refresh_locked(self.root, digest, "b" * 32), 1)
+        self.assertEqual(json.loads((self.root / "runtime-cuda-build.json").read_text())["error"], "runtime_work_active")
+        self.assertEqual(json.loads((self.root / "runtimes.json").read_text()), original)
+        self.assertFalse(any(args[:2] == ["docker", "build"] for args in self.calls))
+
+    def test_failed_probe_keeps_registry_and_records_failure(self):
+        digest = self.cuda_sources()
+        original = self.registry()
+        outputs = [json.dumps([{"Id": fixture.IMAGE, "Architecture": "arm64"}]).encode(), subprocess.CalledProcessError(1, ["docker"])]
+        with self.cuda_context() as helper, mock.patch.object(cuda.subprocess, "check_output", side_effect=outputs):
+            self.assertEqual(cuda.build_cuda(self.root, digest, "a" * 32), 1)
+        helper["register_runtimes"].assert_not_called()
+        self.assertEqual(json.loads((self.root / "runtimes.json").read_text()), original)
+        self.assertEqual(json.loads((self.root / "runtime-cuda-build.json").read_text())["state"], "failed")
+
+    def test_success_uses_immutable_context_caps_exact_worker_python_and_probe(self):
+        digest = self.cuda_sources()
+        outputs = [json.dumps([{"Id": fixture.IMAGE, "Architecture": "arm64"}]).encode(), b'{"user_site":true}']
+        with self.cuda_context() as helper, mock.patch.object(cuda.subprocess, "check_output", side_effect=outputs) as check:
+            self.assertEqual(cuda.build_cuda(self.root, digest, "a" * 32), 0)
+        build = next(a for a in self.calls if a[:2] == ["docker", "build"])
+        self.assertEqual(build[-1], str(self.root / "runtime-build-inputs" / digest))
+        self.assertEqual(build[build.index("--cpu-quota") + 1], "100000")
+        self.assertEqual(build[build.index("--memory") + 1], "1g")
+        probe = check.call_args_list[-1]
+        self.assertEqual(probe.kwargs["timeout"], 120)
+        args = probe.args[0]
+        self.assertEqual(args[args.index("--entrypoint") + 1], "/usr/bin/python3")
+        self.assertEqual(args[args.index("--memory") + 1], "4g")
+        self.assertIn("site.ENABLE_USER_SITE", args[-1])
+        helper["register_runtimes"].assert_called_once()
+        receipt = json.loads((self.root / "runtime-cuda-build.json").read_text())
+        self.assertEqual((receipt["state"], receipt["source_digest"]), ("succeeded", digest))
+
+    def test_cuda_lock_timeout_preserves_active_builder_receipt(self):
+        active = {"state": "building", "attempt_id": "b" * 32}
+        (self.root / "runtime-cuda-build.json").write_text(json.dumps(active))
+        with mock.patch.object(cuda.Path, "home", return_value=self.home), mock.patch.object(cuda.os, "nice", create=True), mock.patch.object(cuda, "runtime_lock", side_effect=bootstrap.RuntimeRefreshError("runtime_refresh_lock_busy", "busy")) as lock, mock.patch("builtins.print"):
+            self.assertEqual(cuda.main(["--source-digest", "c" * 64, "--attempt-id", "a" * 32]), 1)
+        lock.assert_called_once_with(self.root, wait=30)
+        self.assertEqual(json.loads((self.root / "runtime-cuda-build.json").read_text()), active)
+        self.assertEqual(json.loads(bootstrap.runtime_attempt_path(self.root, "a" * 32).read_text())["state"], "not_started")
+
+    def test_cpu_child_runs_cuda_under_the_same_lock_after_cpu_success(self):
+        events = []
+        @contextlib.contextmanager
+        def lock(*_, **__):
+            events.append("lock")
+            try:
+                yield
+            finally:
+                events.append("unlock")
+        def cpu_build(*_):
+            events.append("cpu")
+            return 0
+        def cuda_build(*_):
+            events.append("cuda")
+            return 0
+        with mock.patch.object(fixture.installer.Path, "home", return_value=self.home), mock.patch.object(fixture.installer.os, "nice", create=True), mock.patch.object(fixture.installer, "runtime_lock", side_effect=lock), mock.patch.object(fixture.installer, "build_runtime", side_effect=cpu_build), mock.patch("runpy.run_path", return_value={"refresh_locked": cuda_build}):
+            self.assertEqual(fixture.installer.main(["--source-digest", self.digest, "--cuda-source-digest", "c" * 64, "--cuda-attempt-id", "a" * 32]), 0)
+        self.assertEqual(events, ["lock", "cpu", "cuda", "unlock"])
+
+    def test_cpu_failure_never_launches_cuda_and_preserves_its_failure_receipt(self):
+        with mock.patch.object(fixture.installer.Path, "home", return_value=self.home), mock.patch.object(fixture.installer.os, "nice", create=True), mock.patch.object(fixture.installer, "runtime_lock", return_value=contextlib.nullcontext()), mock.patch.object(fixture.installer, "build_runtime", return_value=7), mock.patch("runpy.run_path") as child:
+            self.assertEqual(fixture.installer.main(["--source-digest", self.digest, "--cuda-source-digest", "c" * 64, "--cuda-attempt-id", "a" * 32]), 7)
+        child.assert_not_called()
+        receipt = json.loads(bootstrap.runtime_attempt_path(self.root, "a" * 32).read_text())
+        self.assertEqual((receipt["state"], receipt["error"]), ("not_started", "cpu_runtime_refresh_failed"))
+
+
+if __name__ == "__main__":
+    unittest.main()

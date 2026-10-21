@@ -55,9 +55,9 @@ def register_runtimes(root, updates):
         atomic(path, merge_registry(previous, updates))
 
 
-def runtime_inputs(root, expected=None):
+def runtime_inputs(root, expected=None, sources=RUNTIME_SOURCES):
     files = {}
-    for name in RUNTIME_SOURCES:
+    for name in sources:
         path = root / name
         if any(part.is_symlink() for part in (path, *path.parents)):
             raise ValueError("Runtime input path is a symlink")
@@ -66,7 +66,7 @@ def runtime_inputs(root, expected=None):
         if len(raw) > 1024 ** 2:
             raise ValueError("Runtime input exceeds bounds")
         files[name] = raw
-    digest = runtime_source_digest(files)
+    digest = runtime_source_digest(files, sources)
     if expected is not None and digest != expected:
         raise ValueError("Runtime sources changed after setup; retry the current setup")
     context = root / "runtime-build-inputs" / digest
@@ -81,12 +81,12 @@ def runtime_inputs(root, expected=None):
     return digest, context
 
 
-def publish_runtime_status(root, receipt, attempt_id=None):
+def publish_runtime_status(root, receipt, attempt_id=None, cuda=False):
     # Only call while holding the exclusive refresh lock. Attempt receipts are
     # independently addressable so a failed handoff cannot conceal its outcome.
     if attempt_id:
         receipt = {**receipt, "attempt_id": attempt_id}
-    atomic(root / "runtime-build.json", receipt)
+    atomic(root / ("runtime-cuda-build.json" if cuda else "runtime-build.json"), receipt)
     if attempt_id:
         write_runtime_attempt(root, attempt_id, receipt)
 
@@ -140,11 +140,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-digest")
     parser.add_argument("--attempt-id")
+    parser.add_argument("--cuda-source-digest")
+    parser.add_argument("--cuda-attempt-id")
     args = parser.parse_args(argv)
     if args.source_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", args.source_digest):
         parser.error("source digest must be a SHA-256")
     if args.attempt_id is not None and not re.fullmatch(r"[0-9a-f]{32}", args.attempt_id):
         parser.error("attempt id must be a 32-character lowercase hexadecimal ID")
+    if bool(args.cuda_source_digest) != bool(args.cuda_attempt_id) or (args.cuda_source_digest and
+            (not re.fullmatch(r"[0-9a-f]{64}", args.cuda_source_digest) or not re.fullmatch(r"[0-9a-f]{32}", args.cuda_attempt_id))):
+        parser.error("CUDA refresh requires a valid source digest and attempt id")
     os.umask(0o077)
     root = Path.home() / "sparkdev"
     os.nice(10)
@@ -156,7 +161,16 @@ def main(argv=None):
         with runtime_lock(root, wait=30):
             acquired = True
             try:
-                return build_runtime(root, args.source_digest, attempt_id)
+                code = build_runtime(root, args.source_digest, attempt_id)
+                if args.cuda_source_digest:
+                    if code:
+                        write_runtime_attempt(root, args.cuda_attempt_id, {"state": "not_started", "kind": "cuda",
+                            "source_digest": args.cuda_source_digest, "error": "cpu_runtime_refresh_failed", "finished_at": time.time()})
+                    else:
+                        import runpy
+                        cuda = runpy.run_path(str(root / "install-cuda.py"))
+                        code = cuda["refresh_locked"](root, args.cuda_source_digest, args.cuda_attempt_id)
+                return code
             except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
                 receipt = {"state": "not_started", "error": getattr(error, "code", "runtime_refresh_unavailable"),
                            "source_digest": args.source_digest, "finished_at": time.time(),
@@ -168,6 +182,9 @@ def main(argv=None):
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass
                 publish_runtime_status(root, receipt, attempt_id)
+                if args.cuda_source_digest:
+                    write_runtime_attempt(root, args.cuda_attempt_id, {"state": "not_started", "kind": "cuda",
+                        "source_digest": args.cuda_source_digest, "error": "cpu_runtime_refresh_unavailable", "finished_at": time.time()})
                 print(json.dumps({**receipt, "attempt_id": attempt_id}))
                 return 1
     except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
@@ -178,6 +195,9 @@ def main(argv=None):
         # A filesystem failure may prevent persistence; stdout remains honest.
         try:
             write_runtime_attempt(root, attempt_id, receipt)
+            if args.cuda_source_digest:
+                write_runtime_attempt(root, args.cuda_attempt_id, {"state": "not_started", "kind": "cuda",
+                    "source_digest": args.cuda_source_digest, "error": "cpu_runtime_refresh_unavailable", "finished_at": time.time()})
         except (OSError, ValueError):
             receipt["receipt_saved"] = False
         print(json.dumps({**receipt, "attempt_id": attempt_id,

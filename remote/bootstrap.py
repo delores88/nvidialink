@@ -47,6 +47,7 @@ def write(path, raw, mode=0o600):
 
 
 RUNTIME_SOURCES = ("runtime/Dockerfile", "runtime/requirements.txt")
+CUDA_SOURCES = ("runtime/Dockerfile.cuda",)
 
 
 class RuntimeRefreshError(ValueError):
@@ -67,8 +68,8 @@ def write_runtime_attempt(root, attempt_id, receipt):
     write(runtime_attempt_path(root, attempt_id), json.dumps({**receipt, "attempt_id": attempt_id}, sort_keys=True).encode())
 
 
-def runtime_source_digest(files):
-    return hashlib.sha256(json.dumps({name: hashlib.sha256(files[name]).hexdigest() for name in RUNTIME_SOURCES}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def runtime_source_digest(files, sources=RUNTIME_SOURCES):
+    return hashlib.sha256(json.dumps({name: hashlib.sha256(files[name]).hexdigest() for name in sources}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def bounded_json(path):
@@ -81,15 +82,15 @@ def bounded_json(path):
     return json.loads(raw)
 
 
-def runtime_current(root, source_digest):
+def runtime_current(root, source_digest, cuda=False):
     try:
-        receipt = bounded_json(root / "runtime-build.json")
+        receipt = bounded_json(root / ("runtime-cuda-build.json" if cuda else "runtime-build.json"))
         registry = bounded_json(root / "runtimes.json")
         image = receipt.get("image")
         current = (receipt.get("state") == "succeeded" and receipt.get("source_digest") == source_digest
                 and isinstance(image, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", image)
                 and registry.get("v") == 1
-                and all(registry.get("runtimes", {}).get(name, {}).get("image") == image for name in ("rust", "node", "python")))
+                and all(registry.get("runtimes", {}).get(name, {}).get("image") == image for name in (("cuda",) if cuda else ("rust", "node", "python"))))
     except (OSError, ValueError, TypeError, AttributeError):
         return False
     if not current:
@@ -188,12 +189,23 @@ def install_locked(bundle):
     os.chmod(root, 0o700)
     source_digest = runtime_source_digest(decoded)
     refresh_runtime = bundle.get("build_runtime") and not runtime_current(root, source_digest)
-    if refresh_runtime:
+    cuda_requested = bundle.get("build_cuda", False)
+    if bundle.get("build_runtime") and (root / "runtimes.json").exists():
+        # Refresh every already-provisioned worker image. This does not opt an
+        # owner into a new CUDA runtime merely because its recipe is bundled.
+        saved_registry = bounded_json(root / "runtimes.json")
+        cuda_requested = cuda_requested or "cuda" in saved_registry.get("runtimes", {})
+    if cuda_requested and not {"install-cuda.py", "runtime/Dockerfile.cuda"} <= decoded.keys():
+        raise ValueError("Refreshing the provisioned CUDA runtime requires its setup files")
+    cuda_digest = runtime_source_digest(decoded, CUDA_SOURCES) if cuda_requested else None
+    refresh_cuda = cuda_digest is not None and not runtime_current(root, cuda_digest, cuda=True)
+    if refresh_runtime or refresh_cuda:
         # The caller holds the refresh lock, excluding new scheduler admissions.
         ensure_runtime_idle(root)
-        active = subprocess.run(["systemctl", "--user", "is-active", "sparkdev-runtime-build.service"], capture_output=True, timeout=10)
-        if active.returncode == 0:
-            raise ValueError("Runtime refresh is already starting; retry setup after it finishes")
+        for unit in ("sparkdev-runtime-build.service", "sparkdev-cuda-build.service"):
+            active = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True, timeout=10)
+            if active.returncode == 0:
+                raise ValueError("Runtime refresh is already starting; retry setup after it finishes")
     # All content is validated before the first write. Preserve overwritten source
     # in a private backup directory so an interrupted update can be diagnosed.
     revision = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
@@ -217,6 +229,10 @@ def install_locked(bundle):
         subprocess.run(["systemctl", "--user", "restart", name], check=True, capture_output=True, timeout=20)
     runtime_state = "not_started"
     runtime_attempt_id = None
+    cuda_attempt_id = uuid.uuid4().hex if refresh_cuda else None
+    if cuda_attempt_id:
+        write_runtime_attempt(root, cuda_attempt_id, {"state": "scheduled", "kind": "cuda", "source_digest": cuda_digest,
+            "requested_at": time.time(), "message": "Waiting for the CPU runtime refresh and a fresh idle check" if refresh_runtime else "Waiting for the runtime refresh lock and a fresh idle check"})
     if bundle.get("build_runtime"):
         if not refresh_runtime:
             runtime_state = "provisioned"
@@ -226,28 +242,41 @@ def install_locked(bundle):
                        "message": "Waiting for the runtime refresh lock and a fresh idle check; no build has started yet"}
             write_runtime_attempt(root, runtime_attempt_id, pending)
             try:
-                subprocess.run(["systemd-run", "--user", "--unit", "sparkdev-runtime-build", "--collect", "--property=Nice=10",
+                command = ["systemd-run", "--user", "--unit", "sparkdev-runtime-build", "--collect", "--property=Nice=10",
                                 "/usr/bin/python3", str(root / "install-runtime.py"), "--source-digest", source_digest,
-                                "--attempt-id", runtime_attempt_id], check=True, capture_output=True, timeout=20)
+                                "--attempt-id", runtime_attempt_id]
+                if refresh_cuda:
+                    command += ["--cuda-source-digest", cuda_digest, "--cuda-attempt-id", cuda_attempt_id]
+                subprocess.run(command, check=True, capture_output=True, timeout=20)
             except (OSError, subprocess.SubprocessError):
                 write_runtime_attempt(root, runtime_attempt_id, {**pending, "state": "not_started", "error": "runtime_launch_unavailable", "finished_at": time.time()})
+                if cuda_attempt_id:
+                    write_runtime_attempt(root, cuda_attempt_id, {"state": "not_started", "kind": "cuda", "source_digest": cuda_digest,
+                        "error": "runtime_launch_unavailable", "finished_at": time.time()})
                 raise
             runtime_state = "scheduled"
     cuda_state = "not_started"
-    if bundle.get("build_cuda"):
-        active = subprocess.run(["systemctl", "--user", "is-active", "sparkdev-cuda-build.service"], capture_output=True, timeout=10)
-        if active.returncode == 0:
-            cuda_state = "building"
-        else:
-            subprocess.run(["systemd-run", "--user", "--unit", "sparkdev-cuda-build", "--collect", "--property=Nice=10",
-                            "/usr/bin/python3", str(root / "install-cuda.py")], check=True, capture_output=True, timeout=20)
-            cuda_state = "building"
+    if cuda_requested:
+        cuda_state = "provisioned" if not refresh_cuda else "scheduled"
+        if refresh_cuda and not refresh_runtime:
+            try:
+                subprocess.run(["systemd-run", "--user", "--unit", "sparkdev-cuda-build", "--collect", "--property=Nice=10",
+                                "/usr/bin/python3", str(root / "install-cuda.py"), "--source-digest", cuda_digest,
+                                "--attempt-id", cuda_attempt_id], check=True, capture_output=True, timeout=20)
+            except (OSError, subprocess.SubprocessError):
+                write_runtime_attempt(root, cuda_attempt_id, {"state": "not_started", "kind": "cuda", "source_digest": cuda_digest,
+                    "error": "runtime_launch_unavailable", "finished_at": time.time()})
+                raise
     receipt = {"ok": True, "revision": revision, "file_hashes": hashes, "services": units, "runtime_state": runtime_state,
                "runtime_source_digest": source_digest, "cuda_state": cuda_state, "installed_at": time.time()}
     if runtime_attempt_id:
         receipt.update(runtime_attempt_id=runtime_attempt_id,
                        runtime_build_receipt=runtime_attempt_path(root, runtime_attempt_id).relative_to(root).as_posix(),
                        runtime_message="The runtime refresh was scheduled; its attempt receipt reports whether it started, finished, or was refused")
+    if cuda_digest:
+        receipt["cuda_source_digest"] = cuda_digest
+    if cuda_attempt_id:
+        receipt.update(cuda_attempt_id=cuda_attempt_id, cuda_build_receipt=runtime_attempt_path(root, cuda_attempt_id).relative_to(root).as_posix())
     write(root / "install-receipt.json", json.dumps(receipt, sort_keys=True).encode())
     return receipt
 

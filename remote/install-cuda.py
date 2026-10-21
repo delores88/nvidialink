@@ -1,62 +1,124 @@
 #!/usr/bin/env python3
-"""Provision only the approved optional CUDA image and run a bounded device probe."""
+"""Refresh the approved CUDA runtime under the same idle lock as CPU refreshes."""
+import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
+import runpy
+import sqlite3
 import subprocess
 import time
+import uuid
+
+from bootstrap import CUDA_SOURCES, RuntimeRefreshError, bounded_json, ensure_runtime_idle, runtime_current, runtime_lock, write_runtime_attempt
 
 BASE = "nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130"
 
 
-def atomic(path, value):
-    temporary = path.with_suffix(".pending")
-    with temporary.open("w") as stream:
-        json.dump(value, stream, sort_keys=True)
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.chmod(0o600)
-    temporary.replace(path)
+def helpers():
+    return runpy.run_path(str(Path(__file__).with_name("install-runtime.py")))
 
 
-def main():
-    os.umask(0o077)
-    root = Path.home() / "sparkdev"
+def require_probe_headroom():
     available = next(int(s.split()[1]) for s in Path("/proc/meminfo").read_text().splitlines() if s.startswith("MemAvailable:"))
     if available < 36 * 1024**2:
-        raise RuntimeError("GPU probe requires 36 GiB available headroom")
-    receipt = {"started_at": time.time(), "state": "building", "base": BASE, "tag": "sparkdev/cuda:25.09-arm64"}
-    status = root / "runtime-cuda-build.json"
-    atomic(status, receipt)
-    env = os.environ.copy()
-    env["DOCKER_BUILDKIT"] = "0"
+        raise RuntimeRefreshError("cuda_headroom_unavailable", "GPU probe requires 36 GiB available headroom")
+
+
+def build_cuda(root, expected=None, attempt_id=None):
+    # Caller holds runtime-refresh.lock exclusively for the whole refresh.
+    ensure_runtime_idle(root)
+    cpu = helpers()
+    source_digest, context = cpu["runtime_inputs"](root, expected, CUDA_SOURCES)
+    if runtime_current(root, source_digest, cuda=True):
+        if attempt_id:
+            write_runtime_attempt(root, attempt_id, {**bounded_json(root / "runtime-cuda-build.json"), "reused": True})
+        return 0
+    require_probe_headroom()
+    receipt = {"started_at": time.time(), "state": "building", "kind": "cuda", "base": BASE,
+               "tag": "sparkdev/cuda:25.09-arm64", "source_digest": source_digest}
+    publish = lambda: cpu["publish_runtime_status"](root, receipt, attempt_id, cuda=True)
+    publish()
+    env = {**os.environ, "DOCKER_BUILDKIT": "0"}
+    try:
+        with (root / "runtime-cuda-build.log").open("wb") as log:
+            code = subprocess.run(["docker", "build", "--cpu-period", "100000", "--cpu-quota", "100000",
+                "--memory", "1g", "--memory-swap", "1g", "--network", "none", "--file", str(context / "Dockerfile.cuda"),
+                "--tag", receipt["tag"], str(context)], stdout=log, stderr=subprocess.STDOUT, env=env, check=False).returncode
+        if code:
+            receipt.update(state="failed", exit_code=code, finished_at=time.time())
+            publish()
+            return code
+        image = json.loads(subprocess.check_output(["docker", "image", "inspect", receipt["tag"]], timeout=10))[0]
+        image_id = image["Id"]
+        if image.get("Architecture") != "arm64" or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise ValueError("Unexpected image identity")
+        require_probe_headroom()
+        # Probe the worker's exact interpreter, not the image's PATH alias.
+        program = "import json,site,pip,torch; assert site.ENABLE_USER_SITE; assert torch.cuda.is_available(); x=torch.ones(4*1024*1024,device='cuda'); torch.cuda.synchronize(); print(json.dumps({'torch':torch.__version__,'cuda':torch.version.cuda,'device':torch.cuda.get_device_name(0),'bytes':x.numel()*x.element_size(),'sum':x.sum().item(),'user_site':site.ENABLE_USER_SITE}))"
+        probe = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000", "--cpus", "1", "--memory", "4g", "--memory-swap", "4g",
+            "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics", "--env", "OMP_NUM_THREADS=1",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=268435456", "--entrypoint", "/usr/bin/python3", image_id, "-c", program], timeout=120)
+        probe_value = json.loads(probe)
+        cpu["register_runtimes"](root, {"cuda": {"image": image_id, "gpu": True,
+            "provenance": "sparkdev CUDA Dockerfile; source " + source_digest + "; base " + BASE}})
+        receipt.update(state="succeeded", image=image_id, probe=probe_value, probe_sha256=hashlib.sha256(probe).hexdigest(), finished_at=time.time(), exit_code=0)
+        publish()
+        print(json.dumps(receipt))
+        return 0
+    except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError):
+        receipt.update(state="failed", exit_code=1, finished_at=time.time(), error="runtime_verification_failed")
+        publish()
+        return 1
+
+
+def refresh_locked(root, expected=None, attempt_id=None):
+    try:
+        return build_cuda(root, expected, attempt_id)
+    except (OSError, ValueError, TypeError, KeyError, StopIteration, sqlite3.Error, subprocess.SubprocessError) as error:
+        receipt = {"state": "not_started", "kind": "cuda", "source_digest": expected, "finished_at": time.time(),
+                   "error": getattr(error, "code", "runtime_refresh_unavailable"), "message": "CUDA runtime refresh did not start; the existing runtime registry is preserved"}
+        try:
+            recorded = bounded_json(root / "runtime-cuda-build.json")
+            if recorded.get("attempt_id") == attempt_id and recorded.get("state") in ("building", "succeeded", "failed"):
+                receipt = {**recorded, "error": "runtime_status_publish_failed"}
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        helpers()["publish_runtime_status"](root, receipt, attempt_id, cuda=True)
+        print(json.dumps(receipt))
+        return 1
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-digest")
+    parser.add_argument("--attempt-id")
+    args = parser.parse_args(argv)
+    if args.source_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", args.source_digest):
+        parser.error("source digest must be a SHA-256")
+    if args.attempt_id is not None and not re.fullmatch(r"[0-9a-f]{32}", args.attempt_id):
+        parser.error("attempt id must be a 32-character lowercase hexadecimal ID")
+    os.umask(0o077)
     os.nice(10)
-    with (root / "runtime-cuda-build.log").open("wb") as log:
-        code = subprocess.run(["docker", "build", "--cpu-period", "100000", "--cpu-quota", "100000", "--memory", "1g", "--memory-swap", "1g",
-                               "--network", "none", "--file", str(root / "runtime/Dockerfile.cuda"), "--tag", receipt["tag"], str(root / "runtime")],
-                              stdout=log, stderr=subprocess.STDOUT, env=env, check=False).returncode
-    if code:
-        receipt.update(state="failed", exit_code=code, finished_at=time.time())
-        atomic(status, receipt)
-        return code
-    image = json.loads(subprocess.check_output(["docker", "image", "inspect", receipt["tag"]]))[0]
-    image_id = image["Id"]
-    if image.get("Architecture") != "arm64" or not image_id.startswith("sha256:") or len(image_id) != 71:
-        raise ValueError("Unexpected image identity")
-    program = "import json,torch; assert torch.cuda.is_available(); x=torch.ones(4*1024*1024,device='cuda'); torch.cuda.synchronize(); print(json.dumps({'torch':torch.__version__,'cuda':torch.version.cuda,'device':torch.cuda.get_device_name(0),'bytes':x.numel()*x.element_size(),'sum':x.sum().item()}))"
-    probe = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL",
-                                     "--security-opt", "no-new-privileges", "--user", "1000:1000", "--cpus", "1", "--memory", "4g", "--memory-swap", "4g",
-                                     "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics",
-                                     "--env", "OMP_NUM_THREADS=1", "--tmpfs", "/tmp:rw,nosuid,nodev,size=268435456",
-                                     "--entrypoint", "python", image_id, "-c", program], timeout=120)
-    import runpy
-    register = runpy.run_path(str(root / "install-runtime.py"))["register_runtimes"]
-    register(root, {"cuda": {"image": image_id, "gpu": True, "provenance": "sparkdev CUDA Dockerfile; base " + BASE}})
-    receipt.update(state="succeeded", image=image_id, probe=json.loads(probe), probe_sha256=hashlib.sha256(probe).hexdigest(), finished_at=time.time(), exit_code=0)
-    atomic(status, receipt)
-    print(json.dumps(receipt))
-    return 0
+    root, attempt = Path.home() / "sparkdev", args.attempt_id or uuid.uuid4().hex
+    acquired = False
+    try:
+        with runtime_lock(root, wait=30):
+            acquired = True
+            return refresh_locked(root, args.source_digest, attempt)
+    except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
+        receipt = {"state": "unknown" if acquired else "not_started", "kind": "cuda", "source_digest": args.source_digest, "finished_at": time.time(),
+                   "error": getattr(error, "code", "runtime_refresh_unavailable")}
+        # A lock timeout must not overwrite another builder's current receipt.
+        try:
+            write_runtime_attempt(root, attempt, receipt)
+        except (OSError, ValueError):
+            receipt["receipt_saved"] = False
+        print(json.dumps(receipt))
+        return 1
 
 
 if __name__ == "__main__":
