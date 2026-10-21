@@ -335,6 +335,43 @@ class SizeLimitTests(unittest.TestCase):
         self.assertEqual(events, [True, True])  # The queue read and the record write.
 
     @unittest.skipUnless(os.name == "posix", "flock is posix-only")
+    def test_concurrent_syncs_cannot_both_pass_the_reserve_on_posix(self):
+        import threading
+        a, b = large(21), large(22)
+        self.upload(a, b)
+        self.free = RESERVE + len(a) + len(b) - 1  # Room for one of them, not both.
+        inside, go, results = threading.Event(), threading.Event(), {}
+
+        def sync(name, content, pause):
+            c = self.make()  # One controller per thread, like one process per RPC.
+            try:
+                if pause:
+                    real = c.queue_view
+
+                    def view():
+                        found = real()
+                        inside.set()
+                        go.wait(10)  # Hold the queue lock between reading the queue and writing.
+                        return found
+                    c.queue_view = view
+                results[name] = c.rpc({"v": 1, "op": "sync", "project": PROJECT, "manifest": [entry(name, content)]})
+            finally:
+                c.db.close()
+        first = threading.Thread(target=sync, args=("a.bin", a, True))
+        first.start()
+        self.assertTrue(inside.wait(10))
+        second = threading.Thread(target=sync, args=("b.bin", b, False))
+        second.start()
+        second.join(0.3)
+        self.assertTrue(second.is_alive())  # Blocked on the queue lock, not racing the check.
+        go.set()
+        first.join(10)
+        second.join(10)
+        self.assertEqual(results["a.bin"]["error"]["code"], "materializing")
+        self.assertEqual(results["b.bin"]["error"]["code"], "insufficient_disk")
+        self.assertEqual(len(self.queued()), 1)
+
+    @unittest.skipUnless(os.name == "posix", "flock is posix-only")
     def test_held_record_and_global_locks_on_posix(self):
         import fcntl
         big, small = large(16), b"small and new"
