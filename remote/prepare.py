@@ -442,6 +442,11 @@ def main():
         if not actions:
             raise ValueError("no matching manifest")
     except MissingLock:
+        # System-only projects have no language lock. The controller sets this
+        # marker only after selecting a verified derived image for this lock.
+        if os.environ.get("SPARKDEV_SYSTEM_PREPARED") == "1" and (WORK / "sparkdev-system.lock").is_file():
+            say("sparkdev: locked system packages are prepared in the pinned project image")
+            return 0
         say(CUDA_LOCK if runtime == "cuda" else GENERIC)
         return 65
     except Refusal as error:
