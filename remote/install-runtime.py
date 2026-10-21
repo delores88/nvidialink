@@ -123,7 +123,7 @@ def build_runtime(root, expected=None, attempt_id=None):
         probe = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                                          "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000",
                                          "--cpus", "1", "--memory", "512m", "--memory-swap", "512m", "--pids-limit", "512",
-                                         "--entrypoint", "/bin/sh", image_id, "-c", "rustc --version && git --version && node --version && python3 --version && python3 -c 'import site, numpy, PIL; assert site.ENABLE_USER_SITE; print(numpy.__version__, PIL.__version__)'"])
+                                         "--entrypoint", "/bin/sh", image_id, "-c", "rustc --version && git --version && node --version && python3 --version && python3 -c 'import io, site, numpy, PIL; from PIL import Image; assert site.ENABLE_USER_SITE; assert PIL.__version__ == \"13.0.0\"; b=io.BytesIO(); Image.new(\"RGB\",(2,2),(1,2,3)).save(b,format=\"PNG\"); b.seek(0); im=Image.open(b); im.load(); assert im.resize((1,1)).getpixel((0,0)) == (1,2,3); print(numpy.__version__, PIL.__version__, \"PNG decode/resize verified\")'"])
         provenance = "sparkdev CPU Dockerfile; source " + source_digest + "; base " + BASE
         register_runtimes(root, {name: {"image": image_id, "provenance": provenance} for name in ("rust", "node", "python")})
         receipt.update(state="succeeded", image=image_id, probe=probe.decode(), probe_sha256=hashlib.sha256(probe).hexdigest(), finished_at=time.time(), exit_code=0)

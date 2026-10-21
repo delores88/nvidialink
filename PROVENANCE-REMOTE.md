@@ -23,9 +23,28 @@ honestly be attributed to that commit. The exact files inspected were:
 
 `runtimes/Dockerfile` adapts the prototype's Rust base digest, Linux development
 packages and Python virtual environment; Node and Git were added and all product paths/tags
-were moved to this product's separate `sparkdev` namespace. `runtimes/requirements.txt` copies the exact two
-version/hash pins for NumPy 2.4.6 and Pillow 12.3.0, with a new provenance comment.
+were moved to this product's separate `sparkdev` namespace. `runtimes/requirements.txt`
+retains the prototype's NumPy 2.4.6 pin. Its original Pillow 12.3.0 pin was replaced
+with the official Pillow 13.0.0 ARM64 wheel on 2026-10-21 after Marketplace rejected
+0.4.1 for Pillow advisories, including critical GHSA-8g5g-8vmr-9782.
 Source credential/path policy was independently implemented from the reviewed policy.
+
+The [upstream advisory](https://github.com/python-pillow/Pillow/security/advisories/GHSA-8g5g-8vmr-9782)
+identifies 13.0.0 as patched. Exact non-yanked wheels and SHA-256 values were checked
+against [official PyPI release metadata](https://pypi.org/pypi/Pillow/13.0.0/json):
+
+| Runtime interpreter | Official wheel | SHA-256 |
+|---|---|---|
+| CPU `/opt/pyenv/bin/python3` (CPython 3.13) | `pillow-13.0.0-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl` | `19b66ca0a4d25cc0200b381ce824c7ea090db61427315e73cfb05dbf1b35c369` |
+| CUDA `/usr/bin/python3` (CPython 3.12) | `pillow-13.0.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl` | `8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d` |
+
+Pillow 13.0.0 requires Python 3.11 or later. A managed physical Spark probe of the
+prior CUDA image confirmed `/usr/bin/python3` 3.12.3, Pillow 11.3.0 and NVIDIA torch
+`2.9.0a0+50eac811a6.nv25.9`. Its Dockerfile fetches only the fixed official cp312
+wheel and installs with `--require-hashes --no-index --no-deps`, retaining the
+network-disabled build step and NVIDIA's existing dependencies. Both runtime
+activation probes require the exact Pillow 13.0.0 version and a native PNG
+decode/resize check before registration.
 
 CPU base: `rust:1.98.1-slim-trixie@sha256:441452f8033b93f69dce3a3ff5c821c411f0a580723e6343932fc34a1b03ba5d`.
 Optional CUDA base: `nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130`,

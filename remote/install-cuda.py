@@ -57,7 +57,7 @@ def build_cuda(root, expected=None, attempt_id=None):
             raise ValueError("Unexpected image identity")
         require_probe_headroom()
         # Probe the worker's exact interpreter, not the image's PATH alias.
-        program = "import json,site,pip,torch; assert site.ENABLE_USER_SITE; assert torch.cuda.is_available(); x=torch.ones(4*1024*1024,device='cuda'); torch.cuda.synchronize(); print(json.dumps({'torch':torch.__version__,'cuda':torch.version.cuda,'device':torch.cuda.get_device_name(0),'bytes':x.numel()*x.element_size(),'sum':x.sum().item(),'user_site':site.ENABLE_USER_SITE}))"
+        program = "import io,json,site,pip,torch,PIL; from PIL import Image; assert site.ENABLE_USER_SITE; assert PIL.__version__ == '13.0.0'; b=io.BytesIO(); Image.new('RGB',(2,2),(1,2,3)).save(b,format='PNG'); b.seek(0); im=Image.open(b); im.load(); assert im.resize((1,1)).getpixel((0,0)) == (1,2,3); assert torch.cuda.is_available(); x=torch.ones(4*1024*1024,device='cuda'); torch.cuda.synchronize(); print(json.dumps({'torch':torch.__version__,'pillow':PIL.__version__,'pillow_png_decode_resize':True,'cuda':torch.version.cuda,'device':torch.cuda.get_device_name(0),'bytes':x.numel()*x.element_size(),'sum':x.sum().item(),'user_site':site.ENABLE_USER_SITE}))"
         probe = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000", "--cpus", "1", "--memory", "4g", "--memory-swap", "4g",
             "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics", "--env", "OMP_NUM_THREADS=1",
