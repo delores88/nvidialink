@@ -317,12 +317,16 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             state::validate_id(&request_id)?;
             let request = json!({"v":1,"op":"prepare","project":inv.project,"manifest_id":inv.manifest_id,"runtime":runtime,"client":client,"request_id":request_id});
             state::save_request(&request_id, &request)?;
-            let mut tr = transport::Transport::new()?;
-            flush_cancels(&mut tr);
-            sync(&inv, &mut tr)?;
-            let mut result = tr.rpc(request)?;
+            let prepared = || -> Result<Value> {
+                let mut tr = transport::Transport::new()?;
+                flush_cancels(&mut tr);
+                sync(&inv, &mut tr)?;
+                let mut result = tr.rpc(request)?;
+                result["transport"] = tr.info();
+                Ok(result)
+            };
+            let mut result = prepared().map_err(|e| with_request_id(e, &request_id))?;
             result["request_id"] = json!(request_id);
-            result["transport"] = tr.info();
             Ok(result)
         }
         Commands::Run {
@@ -348,13 +352,16 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             let mut out = if where_ == Placement::Laptop {
                 local::submit(&inv, &argv, client, &request_id, &reason)?
             } else {
-                let mut tr = transport::Transport::new()?;
-                flush_cancels(&mut tr);
-                let synced = sync(&inv, &mut tr)?;
-                request["manifest_id"] = synced["manifest_id"].clone();
-                let mut value = tr.rpc(request)?;
-                value["transport"] = tr.info();
-                value
+                let submitted = || -> Result<Value> {
+                    let mut tr = transport::Transport::new()?;
+                    flush_cancels(&mut tr);
+                    let synced = sync(&inv, &mut tr)?;
+                    request["manifest_id"] = synced["manifest_id"].clone();
+                    let mut value = tr.rpc(request)?;
+                    value["transport"] = tr.info();
+                    Ok(value)
+                };
+                submitted().map_err(|e| with_request_id(e, &request_id))?
             };
             out["request_id"] = json!(request_id);
             out["placement"] = json!(if where_ == Placement::Laptop {
@@ -528,8 +535,12 @@ fn devices() -> Result<Value> {
             scheduler_healthy = status["scheduler"]["healthy"].as_bool() == Some(true);
         }
         Err(e) => {
-            let authenticated = spark["transport"]["authenticated"] == true;
-            spark["error"] = json!({"code":e.code,"message":e.message,"kind":match e.code {7=>"authentication_failed",6 if authenticated=>"authenticated_controller_failed",6=>"protocol_error",3 if spark["availability"] == "unconfigured"=>"configuration_unavailable",3=>"remote_adapter_unconfigured",_=>"transport_unavailable"}});
+            let kind = error_kind(
+                &e,
+                spark["transport"]["authenticated"] == true,
+                spark["availability"] == "unconfigured",
+            );
+            spark["error"] = json!({"code":e.code,"message":e.message,"kind":kind});
         }
     }
     let admission = admission_observation(scheduler_reachable, scheduler_healthy);
@@ -544,6 +555,29 @@ fn devices() -> Result<Value> {
     Ok(
         json!({"ok":true,"observed_at":state::now(),"devices":[laptop,spark],"shared_board":board,"observation_only":true,"admission_required":true,"claimed":false}),
     )
+}
+/// What a failed Spark observation means, for the devices report.
+fn error_kind(error: &AppError, authenticated: bool, unconfigured: bool) -> &'static str {
+    match error.code {
+        7 => "authentication_failed",
+        6 if authenticated => "authenticated_controller_failed",
+        6 => "protocol_error",
+        3 if unconfigured => "configuration_unavailable",
+        3 => "remote_adapter_unconfigured",
+        4 if transport::is_dropped(error) => "connection_dropped",
+        _ => "transport_unavailable",
+    }
+}
+/// A connection failure of a run or prepare request names the request ID:
+/// the CLI prints only the code and message, so a generated ID would
+/// otherwise be lost, and reusing it is what makes a repeat safe.
+fn with_request_id(mut error: AppError, request_id: &str) -> AppError {
+    if error.code == 4 {
+        let message = error.message.trim_end();
+        let stop = if message.ends_with('.') { "" } else { "." };
+        error.message = format!("{message}{stop} Request ID: {request_id}.");
+    }
+    error
 }
 fn admission_observation(reachable: bool, healthy: bool) -> Value {
     json!({"scheduler_reachable":reachable,"scheduler_healthy":healthy,"available":if reachable && healthy {"requires_request_check"} else {"unavailable"},"reservation":false,"reason":if !reachable {"Managed admission on both devices requires the Spark scheduler; offline laptop fallback is unavailable"} else if !healthy {"Scheduler status is reachable but its heartbeat is not healthy"} else {"Runtime, client quota, resources and worktree claim must be checked for the submitted request"}})
@@ -942,5 +976,76 @@ mod tests {
             admission_observation(true, false)["available"],
             "unavailable"
         );
+    }
+    #[test]
+    fn spark_errors_name_a_dropped_connection_and_run_errors_their_request_id() {
+        use transport::{
+            LAN_HANDSHAKE_DROPPED, LAN_UNREACHABLE, SESSION_REPEATABLE, SESSION_UNSAFE,
+        };
+        for message in [LAN_HANDSHAKE_DROPPED, SESSION_UNSAFE, SESSION_REPEATABLE] {
+            let error = AppError::new(4, message);
+            assert_eq!(error_kind(&error, false, false), "connection_dropped");
+            assert_eq!(error_kind(&error, true, false), "connection_dropped");
+        }
+        for (error, authenticated, unconfigured, kind) in [
+            (
+                AppError::new(4, LAN_UNREACHABLE),
+                false,
+                false,
+                "transport_unavailable",
+            ),
+            (
+                AppError::new(4, "Transport timeout"),
+                true,
+                false,
+                "transport_unavailable",
+            ),
+            (
+                AppError::new(7, SESSION_UNSAFE),
+                false,
+                false,
+                "authentication_failed",
+            ),
+            (
+                AppError::new(6, "bad"),
+                true,
+                false,
+                "authenticated_controller_failed",
+            ),
+            (AppError::new(6, "bad"), false, false, "protocol_error"),
+            (
+                AppError::new(3, "none"),
+                false,
+                true,
+                "configuration_unavailable",
+            ),
+            (
+                AppError::new(3, "none"),
+                false,
+                false,
+                "remote_adapter_unconfigured",
+            ),
+        ] {
+            assert_eq!(
+                error_kind(&error, authenticated, unconfigured),
+                kind,
+                "{}",
+                error.message
+            );
+        }
+        let named = with_request_id(AppError::new(4, SESSION_REPEATABLE), "build-001");
+        assert_eq!(named.code, 4);
+        assert_eq!(
+            named.message,
+            format!("{SESSION_REPEATABLE} Request ID: build-001.")
+        );
+        assert_eq!(
+            with_request_id(AppError::new(4, LAN_UNREACHABLE), "build-001").message,
+            format!("{LAN_UNREACHABLE}. Request ID: build-001.")
+        );
+        for code in [2, 3, 5, 6, 7] {
+            let error = with_request_id(AppError::new(code, "Unchanged"), "build-001");
+            assert_eq!((error.code, error.message.as_str()), (code, "Unchanged"));
+        }
     }
 }
