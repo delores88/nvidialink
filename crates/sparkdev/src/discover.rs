@@ -59,8 +59,7 @@ const NOT_DIRECT: &str =
 const LOOKUP_FAILED: &str =
     "Find my Spark could not read this alias's SSH settings with ssh -G; nothing was checked";
 const ADAPTERS_FAILED: &str = "Windows did not list this laptop's network adapters";
-const NOT_IPV4: &str =
-    "Choose an IPv4 address from Find my Spark's results, such as one it found; nothing was saved";
+const NOT_IPV4: &str = "Choose an IPv4 address that Find my Spark found; nothing was saved";
 const NOT_PRIVATE: &str =
     "Find my Spark saves only private home or office network addresses; nothing was saved";
 const NO_NETWORK: &str = "This laptop has no wired or Wi-Fi connection to a private network right now; nothing was saved";
