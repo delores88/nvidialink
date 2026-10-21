@@ -1,0 +1,49 @@
+{
+  "version": "0.4.1",
+  "checked_at": "2026-10-21T17:10:19.285379+00:00",
+  "method": "native Windows Computer Use",
+  "installer_sha256": "9e9e0b1beb762cf8d92ba8bad3b1f2ca9435a49ec5bfc25b2fe35e522aaeeb40",
+  "physical_package_hash_verified": true,
+  "owner_configuration_and_pairing_hashes_preserved": true,
+  "cases": [
+    {
+      "name": "installed_version_and_live_scheduler",
+      "passed": true,
+      "detail": "Native v0.4.1, authenticated LAN SSH, no active jobs, healthy scheduler."
+    },
+    {
+      "name": "job_history_and_logs",
+      "passed": true,
+      "detail": "79 retained jobs; page2 of10 shows9-16; selected succeeded ARM64 build and read actual test output."
+    },
+    {
+      "name": "resource_and_download_settings",
+      "passed": true,
+      "detail": "4.6GiB saved downloads and200GiB allowance; read existing18/20CPU,80/119GiB budget with32GiB headroom,16CPU32GiB per job. No policy edits."
+    },
+    {
+      "name": "connection_layout",
+      "passed": true,
+      "detail": "Particle connection graphic and separate1GbpsSpark/100MbpsUSB-laptop labels; plain-text slow-link explanation; saved automatic route and existing pairing retained."
+    },
+    {
+      "name": "both_agent_setup_tabs",
+      "passed": true,
+      "detail": "Codex config.toml and Claude .mcp.json with distinct client labels and copy controls rendered; no provider configs changed."
+    },
+    {
+      "name": "updater_drawer",
+      "passed": true,
+      "detail": "Drawer shows installed0.4.1, Marketplace approval requirement and update check control. No update download or sign-in executed."
+    }
+  ],
+  "passed": 6,
+  "failed": 0,
+  "limits": [
+    "No new pairing approval was performed.",
+    "Copy controls were observed; clipboard/provider invocation was not tested.",
+    "No fresh updater download/install cycle, hotspot run or actual model inference is claimed.",
+    "Taskbar is auto-hidden; title-bar and app icons were observed, not taskbar rendering."
+  ],
+  "marketplace_accepted": false
+}
