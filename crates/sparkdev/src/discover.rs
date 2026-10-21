@@ -323,13 +323,18 @@ impl Class {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Check {
     pub class: Class,
-    /// The pinned host key matched: the check authenticated, or the server
-    /// refused the login with "Permission denied (", which OpenSSH reaches
-    /// only after strict host-key verification passed.
+    /// The pinned host key matched: the check authenticated, or OpenSSH
+    /// itself reported that the server refused the login ("Permission denied
+    /// ("), which it reaches only after strict host-key verification passed.
     pub pin_proven: bool,
 }
 /// Classify one pinned check from its exit code and lowercased stderr; the
 /// first match wins. stderr is read here only and never shown or stored.
+/// Only lines OpenSSH wrote itself count (see `transport::openssh_own`): a
+/// device on the SSH port can echo its banner, disconnect text or algorithm
+/// list before the host-key check, and none of that proves the pin, another
+/// device, a key error or a refused login. A disconnect the server sends,
+/// "Too many authentication failures" included, is therefore unverified.
 pub fn classify(result: &Result<Finished>) -> Check {
     let Ok((code, _, stderr)) = result else {
         return Check {
@@ -343,7 +348,7 @@ pub fn classify(result: &Result<Finished>) -> Check {
             pin_proven: true,
         };
     }
-    let message = String::from_utf8_lossy(stderr).to_lowercase();
+    let message = transport::openssh_own(&String::from_utf8_lossy(stderr).to_lowercase());
     let any = |markers: &[&str]| markers.iter().any(|m| message.contains(m));
     let class = if any(&[
         "remote host identification has changed",
@@ -357,7 +362,7 @@ pub fn classify(result: &Result<Finished>) -> Check {
         "load key",
     ]) {
         Class::LocalKeyError
-    } else if any(&["permission denied (", "too many authentication failures"]) {
+    } else if any(&["permission denied ("]) {
         Class::LoginRejected
     } else if any(&["host key is known for", "host key verification failed"]) {
         Class::UnknownKey
@@ -477,7 +482,8 @@ enum Seen {
     Checked(Class),
     /// Answered on the SSH port but beyond MAX_VERIFY.
     NotChecked,
-    /// The sweep or its check could not finish in time.
+    /// The port check could not decide in time, or no worker reached the
+    /// pinned check. A pinned check that ran and timed out is `Unverified`.
     Unchecked,
     /// Refused or silent on the SSH port.
     Closed,
@@ -1387,13 +1393,24 @@ pub(crate) mod tests {
             classify(&ran(Some(255), LOGIN_REFUSED)),
             check(Class::LoginRejected, true)
         );
-        assert_eq!(
-            classify(&ran(
-                Some(255),
-                "Received disconnect from 192.0.2.40 port 22:2: Too many authentication failures\r\n"
-            )),
-            check(Class::LoginRejected, false)
-        );
+        // Text a device on the SSH port controls never classifies a check:
+        // a server's disconnect reason, and the forgeries captured from
+        // OpenSSH 9.5 (Windows) against a loopback peer before any key
+        // exchange, one with CR and LF forging a whole refusal line.
+        for echoed in [
+            "Received disconnect from 192.0.2.40 port 22:2: Too many authentication failures\r\nDisconnected from 192.0.2.40 port 22\r\n",
+            "Received disconnect from 127.0.0.1 port 55451:2: Permission denied (publickey). remote host identification has changed\r\nDisconnected from 127.0.0.1 port 55451\r\n",
+            "Received disconnect from 127.0.0.1 port 63404:2: bye\r\nowner@127.0.0.1: Permission denied (publickey).\r\nDisconnected from 127.0.0.1 port 63404\r\n",
+            "Bad remote protocol version identification: 'SSH-x Permission denied (publickey). remote host identification has changed'\r\nbanner exchange: Connection to 127.0.0.1 port 55452: invalid format\r\n",
+            "Bad remote protocol version identification: 'SSH-x Permission denied (publickey). load key'\r\nbanner exchange: Connection to 127.0.0.1 port 55453: invalid format\r\n",
+            "Unable to negotiate with 127.0.0.1 port 55454: no matching key exchange method found. Their offer: x\r\nowner@127.0.0.1: Permission denied (publickey).\r\n",
+        ] {
+            assert_eq!(
+                classify(&ran(Some(255), echoed)),
+                check(Class::Unverified, false),
+                "{echoed}"
+            );
+        }
         for unverified in [
             ran(Some(255), RESET),
             ran(Some(255), ""),
@@ -1403,6 +1420,41 @@ pub(crate) mod tests {
         ] {
             assert_eq!(classify(&unverified), check(Class::Unverified, false));
         }
+    }
+    #[test]
+    fn forged_answers_never_prove_the_pin_or_another_device() {
+        let home = state::TestHome::new();
+        // The owner reinstalled the Spark: its configured address now shows
+        // a changed key. One LAN device sends a disconnect forging a refused
+        // login and a changed key before any key exchange. The pin stays
+        // unproven, so the Spark's address is an unknown key, not another
+        // device, and the owner is pointed at known_hosts.
+        const FORGED: &str = "Received disconnect from 192.0.2.42 port 22:2: Permission denied (publickey). remote host identification has changed\r\nDisconnected from 192.0.2.42 port 22\r\n";
+        let (deps, _) = Fake::new()
+            .reply("192.0.2.41", 255, CHANGED_KEY)
+            .reply("192.0.2.42", 255, FORGED)
+            .build();
+        let out = search(&config(&["192.0.2.41"]), &deps).unwrap();
+        assert_eq!(out["configured"][0]["status"], "unknown_key");
+        assert_eq!(out["other_ssh_hosts"], 0);
+        assert_eq!(out["login_rejected"], 0);
+        assert_eq!(out["unverified"], 1);
+        assert_eq!(out["pin_hint"], true);
+        // A save keeps a configured address whose forged disconnect claims
+        // a changed key: only OpenSSH's own warning proves another device.
+        let fixture = config(&["192.0.2.20"]);
+        write_config(&home, &fixture);
+        let (deps, _) = Fake::new()
+            .reply("192.0.2.40", 0, "")
+            .reply(
+                "192.0.2.20",
+                255,
+                "Received disconnect from 192.0.2.20 port 22:2: @ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @\r\nDisconnected from 192.0.2.20 port 22\r\n",
+            )
+            .build();
+        let out = save(&fixture, "192.0.2.40", &deps).unwrap();
+        assert_eq!(out["removed"], json!([]));
+        assert_eq!(saved(&home).hosts, ["192.0.2.40", "192.0.2.20"]);
     }
     #[test]
     fn the_pinned_check_uses_the_unchanged_strict_ssh_command() {
