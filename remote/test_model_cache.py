@@ -226,11 +226,14 @@ class CacheTests(unittest.TestCase):
         os.link(first, self.downloads / "files" / "second")
         sparse = self.downloads / "files" / "sparse"
         with sparse.open("wb") as stream:
-            stream.truncate(5 * GIB)
+            # Test allocated-space accounting independently of the runner's
+            # per-file cap (the installed pre-upgrade runner allows 4 GiB).
+            stream.truncate(2 * GIB)
         self.measure()
         expected = first.stat().st_blocks * 512 + sparse.stat().st_blocks * 512
         self.assertEqual(self.cache.status()["used_bytes"], expected)
         self.assertLess(expected, GIB)
+        self.assertEqual(sparse.stat().st_size, 2 * GIB)
 
     def test_ninety_percent_stop_and_floor(self):
         for index in range(10):
