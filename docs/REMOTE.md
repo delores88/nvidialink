@@ -6,6 +6,10 @@ with one JSON request on stdin, then closes stdin. Responses are flat objects wi
 `ok:true`, or `ok:false,error:{code,message}`. Requests have `v:1`. The authenticated
 iroh adapter invokes this same fixed command. This program opens no network listener.
 
+Public job internet, shared downloads and named services below refer to the 0.4.0
+development candidate. They need the matching Spark redeploy; source documentation
+is not evidence that a new installed or published release has these features.
+
 `sparkdev-controller.service` is a user systemd scheduler. SQLite uses WAL and FULL
 synchronous commits. Job IDs and request IDs are durable before Docker creation.
 Container identity is the job ID plus its pinned runtime image ID and label.
@@ -54,7 +58,8 @@ printf '%s' '{"v":1,"op":"doctor"}' | python3 ~/sparkdev/controller.py rpc
 The runtime registry is protected owner-local state, not repository configuration.
 Allowed tokens are `rust`, `node`, `python`, `cuda`; every image must be a full
 `sha256:` Docker image ID. Callers cannot choose images, Docker flags, host paths,
-ports, mounts, or entrypoints. Registry image provenance is required. Runtime
+published ports, mounts, or runtime entrypoints. Named services select only their
+own container's loopback HTTP port. Registry image provenance is required. Runtime
 images are only pulled/built during explicit owner provisioning, never job submission.
 
 ## Wire operations
@@ -69,16 +74,21 @@ images are only pulled/built during explicit owner provisioning, never job submi
 | `prepare` | `project,manifest_id,runtime,client,request_id` | dependency job receipt |
 | `wait` | `job,timeout?` (0â€“60 seconds) | current job receipt |
 | `logs` | `job,since,limit?` (1 MiB maximum) | base64 `data`, display `text`, `next_offset`, receipt |
-| `cancel` | `job` | durable cancellation receipt |
+| `cancel` | `job`, or live service `name` | durable job cancellation; name cancellation is never queued offline |
 | `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, resource `limits`, runtimes, observed `network` link, `storage`, `sync_limits`, `materializing` queue |
 | `doctor` | none | status (including `network`) plus SQLite, Docker, Linux and memory checks |
-| `resources` | `limits?` (complete owner policy) | effective policy, hardware bounds, persistence and application timing |
+| `resources` | `limits?` (complete owner policy), `internet?` (boolean) | effective policy, hardware bounds, persistence and application timing |
+| `downloads` | `client,keep_gb?,free_up?` | `downloads` saved usage and owner-change/clear-pending state |
+| `serve` | `project,manifest_id,argv,client,request_id,name,port?,memory_gb?,runtime?,idle_minutes?,replace?` | named service job receipt |
+| `call` | `server,client,request_id,body?,content_type?,path?,timeout?` | durable call state, HTTP status, checked reply metadata and first body chunk |
+| `reply` | `request_id,since,limit?` (2 MiB maximum) | next reply bytes and offset |
 | `claim` | `project,client,request_id,job?,ttl?` | laptop `lease,job,expires_at` |
 | `heartbeat` | `lease,job?,ttl?,state?,exit_code?,data?,since?` | renewed lease and next log offset |
 | `release` | `lease` | terminal laptop claim |
 
 A project ID is SHA-256 of the caller's canonical worktree path. Different worktrees
-have independent caches. A manifest is a list of
+have independent build caches and prepared environments. The 0.4.0 model/package
+download cache is shared by all worktrees in one owner trust domain. A manifest is a list of
 `{path,size,sha256,mode,chunks:[{sha256,size}]}`. Entries are path-sorted, then encoded
 as UTF-8 JSON with sorted object keys, no insignificant whitespace, and unescaped
 Unicode. Its SHA-256 is the manifest ID. Files are rebuilt from verified chunk hashes
@@ -232,7 +242,7 @@ every field; the real name is used only in the probe tools' argv.
 
 Initial default jobs use 4 CPUs and 8 GiB, with at most 16 CPUs / 64 GiB admitted total,
 two jobs / eight CPUs per client, and at least 32 GiB reserved memory headroom.
-These defaults are hardware-bounded. The authenticated `resources` operation saves a complete validated policy in controller SQLite. It exposes per-job CPU/memory, total CPU/memory, per-client jobs/CPU and headroom. New requests and admissions use it; running jobs retain their recorded allocations and GPU headroom. Admission conservatively includes all reserved job memory. Preparation proxy overhead
+These defaults are hardware-bounded. The authenticated `resources` operation saves a complete validated policy in controller SQLite. It exposes per-job CPU/memory, total CPU/memory, per-client jobs/CPU and headroom. New requests and admissions use it; running jobs retain their recorded allocations and GPU headroom. Aggregate admission includes all reserved job memory; the live headroom calculation treats already-ready services separately as described below. Preparation proxy overhead
 also counts against quotas. The scheduler rotates FIFO admission between `claude`,
 `codex`, and `human`; these labels are attribution, not proof which agent ran a job.
 Each worktree has one active execution claim. Stale laptop claims remain blocking
@@ -250,16 +260,21 @@ usage counts against that same memory limit. The resolved scratch limit is recor
 with the job, included in cache identity, and cannot be changed for existing jobs.
 
 The container is nonroot, read-only-root, cap-drop ALL, no-new-privileges, PID limited,
-CPU/memory/swap limited, nice 10, bounded tmpfs, and network-none. Host mounts contain
-only this job's private work copy, output, supervisor and per-worktree/per-image caches.
+CPU/memory/swap limited, nice 10 and bounded tmpfs. Offline jobs use network-none;
+internet-enabled jobs use an isolated per-job network with only their fixed proxy
+helper as a peer. Host mounts contain this job's private work copy, output,
+supervisor, per-worktree/per-image build caches, shared download cache and private
+disk temporary directory; services add their own request/reply spool mounts.
 The work copy is built from the manifest into `work.pending` and renamed into place:
 small files are copied with modes 0644/0755, and each file over 512 MiB becomes a
 symlink to `/sparkdev-source/<path>`. Only a manifest with large files adds one
 read-only bind of its whole snapshot at `/sparkdev-source`; no project path text ever
 appears in Docker arguments, the job cannot write or chmod a shared store inode, and a
-small-only manifest gets byte-identical arguments to earlier releases. A work copy that
+small-only manifest needs no snapshot mount. A work copy that
 cannot be built fails the job with exit 125 (`insufficient_disk` or `work_copy_failed`).
-The Docker socket, host home, Ollama, PhaseForge services and other caches are absent.
+The Docker socket, host home, Ollama and PhaseForge services are absent. The shared
+download cache is intentionally writable across Spark jobs; the internet switch
+does not isolate those files or make mutually untrusted projects safe to share it.
 CUDA uses the same limits plus an active `MemAvailable` watchdog; on GB10 this is
 necessary because CUDA unified-memory allocations can evade the cgroup RAM limit.
 The watchdog depends on the running controller and is not a hardware memory quota.
@@ -275,7 +290,9 @@ as a local file or directory and build an sdist with the network attached. A cod
 cookie other than UTF-8 on either of the first two lines is refused too, because pip
 would decode the lock with it; UTF-8 mode keeps pip's decoding equal to this check's.
 Npm installed trees and Python site packages are saved by lock hash; actual jobs
-restore them while remaining offline. Npm lifecycle scripts are never given egress.
+restore them under their selected internet policy. Dependency preparation never
+runs npm lifecycle scripts with egress; arbitrary normal jobs are not that fixed
+preparation operation and may run their own scripts.
 pip runs isolated, so a project file beside the lock (for example `json.py`) never
 executes in the network-attached container, and every inherited `PIP_*` and `PYTHON*`
 variable is replaced with fixed values. A site directory is built under a pending name
@@ -321,6 +338,94 @@ DNS resolutions and credentials, and connects the validated IP without re-resolv
 It rejects general GitHub browsing/git clone and unrestricted Internet access.
 The scheduler removes only its own proxy/network when the preparation job terminates.
 
+### Public job internet
+
+The 0.4.0 owner policy defaults to enabled when no `internet_policy` setting exists.
+Normal jobs and services get their own internal Docker network, a Python-image
+public proxy and a deny file covering connected IPv4 prefixes and the Spark's
+local addresses. The proxy resolves a destination once, rejects the entire DNS
+answer if any address is private/non-global or denied, then connects only to a
+checked socket address. It refuses IPv6 destinations and verifies that a job's
+Docker bridge cannot provide an IPv6 bypass. Home/private ranges, loopback,
+link-local/cloud metadata and the Spark are blocked. Plain HTTP and HTTPS CONNECT
+are supported; raw sockets, UDP and proxy-unaware network clients are not.
+
+Public mode does not reuse the locked downloader's host allowlist or old transfer
+size/lifetime caps. Fixed proxy environment variables expose that public path to
+supported clients, with loopback excluded for local service calls. No CA override
+is installed. A missing Python helper or a failed setup guard is reported and the
+job runs offline; Docker unavailability never creates a duplicate job. Turning
+internet off removes running helpers on the next scheduler tick. Server handling
+also records `internet_off` when the running service must stop. Usage records are
+seven integer counters, not URLs, headers or bodies. These controls restrict
+destinations; they cannot stop a job from sending data to a public endpoint.
+
+### Saved download storage
+
+`shared/cache`, `shared/prepare` and never-mounted `shared/trash` are owner-checked
+0700 directories under the bridge's own state. Runs mount `/cache` and a private
+disk-backed `jobs/<id>/tmp` at `/var/tmp`. HF, torch, pip, uv and XDG cache defaults
+point into `/cache`; arbitrary reusable files belong in `/cache/files`.
+`HF_TOKEN_PATH` and `HF_MODULES_CACHE` remain under job-private `/tmp`.
+Torch extensions, Triton, TorchInductor and CUDA code caches stay under private
+`/var/tmp`. No `XDG_CONFIG_HOME` or `XDG_DATA_HOME` override is added. Preparations
+mount only `/prepare-cache` for pip downloads, retaining per-project build caches,
+locked installed environments and their own temporary space. This avoids letting
+normal jobs poison a locked preparation's shared wheel download cache.
+
+All jobs can modify saved downloads: this is a single owner trust domain, and an
+offline job can still read or change it. Do not store secrets there. Known cache
+roots are repaired before job creation through directory descriptors and no-follow
+opens; substituted links/files are moved to trash without following them.
+
+The `downloads` RPC allows reads by every client; `keep_gb` and `free_up` require
+the `human` accounting label. Default keep is 200 GiB, with saved limits from
+20 GiB up to disk size. Clearing is deferred rather than refused while busy.
+Maintenance runs only from `serve()` under `scheduler.lock`, in resumable steps
+with a 0.25-second work budget. It removes finished job temporary storage only
+after the container is absent from Docker's running-name list. Shared-cache
+clearing, measuring and eviction wait until no job is starting/running; clearing
+and each eviction also require a successful empty `docker ps` job-name guard.
+It deletes only quarantined trash, never follows symlinks, and verifies the inode
+and every ancestor before moving a unit.
+
+Usage measures allocated `st_blocks * 512`, deduplicating hardlinks, with a
+2,000,000-entry scan ceiling. It ignores directory atime and clamps future times.
+Measured units survive busy periods; a candidate is measured again if a job ran
+after its measurement. When above the keep budget or below 128 GiB free, units
+unused for 48 hours are selected oldest first until usage is at most 90% of the
+budget and free space reaches the floor. Recent content can prevent either target.
+The filesystem atime probe is not proof of Docker bind-mount atime behavior.
+Status and devices read stored usage and the existing disk probe, never recursively
+walk the cache. Their `downloads.v:1` object contains `folder`, `files_folder`,
+`used_bytes`, `keep_bytes`, `free_bytes`, `floor_bytes`, `measured_at`, `over_limit`,
+`clear_pending`, `atime`, `items` (at most 20) and `last_cleanup`.
+
+### Named HTTP services
+
+`serve` creates a service job, with a unique active name, rather than a public
+listening endpoint. At most two services share the scheduler's total CPU/memory
+budget. Each uses two CPUs and 1–48 GiB memory within the owner's total budget;
+the default is 16 GiB. Service requests are exempt from batch per-job/client caps
+and worktree claims, but not total admission or reserved memory headroom. Ready
+services are not subtracted twice from the live `MemAvailable` check; their total
+configured allocation still counts against the scheduler's aggregate limit.
+
+The worker forwards spool requests through `http.client` to loopback inside the
+same container. There is no published port, host network, Docker socket or direct
+cross-job network path. Requests are mounted read-only; replies are a separate
+writable mount. The controller distrusts container replies: it opens nonblocking
+and no-follow, requires a regular file with one link, bounds its size, and computes
+the body hash itself. FIFO, symlink and hardlink substitutions are refused.
+
+Call IDs remain in SQLite for 24 hours so reconnect retries cannot repeat a call
+after its files expire. At most 32 calls wait; input is at most 1 MiB and output
+256 MiB, returned in chunks of at most 2 MiB. Files expire 10 minutes after delivery
+or one hour after creation. Automatic wake is restricted to eligible recent idle,
+lifetime or internet-off stops, never an explicit user stop or crash. Same-name
+replacement across clients/projects requires `replace`. See [SERVERS.md](SERVERS.md)
+for the CLI lifecycle, stop reasons, example and remaining physical acceptance.
+
 ## Evidence boundaries and operational limits
 
 Python tests use an in-memory Docker stand-in for lifecycle fault injection; they
@@ -332,9 +437,11 @@ their own evidence. None follows from unit tests or a client label. Large-file
 transfer (5 GB and 16 GiB files) has unit-test coverage only so far; owner acceptance
 receipts recording MB/s, link type and seconds per GiB are still required.
 
-Logs are limited to 256 MiB per job; exceeding the bound kills the workload with
-exit 125. A job may write files of at most 4 GiB (`--ulimit fsize`), although it can
-read synced inputs of up to 16 GiB. Jobs and source snapshots are retained
+Logs are limited to 256 MiB per batch job; exceeding the bound kills the workload
+with exit 125. A service writes one truncation marker and keeps draining output.
+Normal runs/services may write files of at most 64 GiB (`--ulimit fsize`);
+preparations retain their 4 GiB bound. Jobs can read synced inputs of up to 16 GiB.
+Jobs and source snapshots are retained
 for inspection; no garbage collector currently deletes them automatically. The
 controller refuses new jobs at 4096 retained records. Owners should monitor disk
 space and archive old completed work deliberately. There is no general remote output
