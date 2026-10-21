@@ -29,7 +29,8 @@ class BundleTests(unittest.TestCase):
         receipt = bundle.prepare(self.root, self.output)
         manifest = json.loads((self.output / 'sparkdev-bundle.json').read_bytes())
         self.assertEqual(receipt['v'], 2)
-        self.assertEqual(len(manifest['files']), 13)
+        self.assertEqual(len(manifest['files']), 15)
+        self.assertTrue({'model_cache.py', 'model_server.py'} <= {entry['path'] for entry in manifest['files']})
         self.assertLess(receipt['bytes'], 64 * 1024)
         for entry in manifest['files']:
             self.assertEqual(set(entry), {'path', 'size', 'sha256'})

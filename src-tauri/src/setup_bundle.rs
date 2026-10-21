@@ -7,11 +7,13 @@ use std::{collections::BTreeSet, fs, io::Read, path::Path};
 
 const MAX_MANIFEST: u64 = 64 * 1024;
 const MAX_TOTAL: u64 = 192 * 1024 * 1024;
-const ALLOWED: [&str; 13] = [
+const ALLOWED: [&str; 15] = [
     "controller.py",
     "worker.py",
     "proxy.py",
     "prepare.py",
+    "model_cache.py",
+    "model_server.py",
     "install-runtime.py",
     "install-cuda.py",
     "bootstrap.py",
@@ -22,11 +24,13 @@ const ALLOWED: [&str; 13] = [
     "sparkdev-link.service",
     "bin/sparkdev-link",
 ];
-const REQUIRED: [&str; 9] = [
+const REQUIRED: [&str; 11] = [
     "controller.py",
     "worker.py",
     "proxy.py",
     "prepare.py",
+    "model_cache.py",
+    "model_server.py",
     "install-runtime.py",
     "bootstrap.py",
     "runtime/Dockerfile",
@@ -181,7 +185,7 @@ mod tests {
         let (dir, _) = fixture();
         let wire = load(dir.path()).unwrap();
         assert_eq!(wire["v"], 1);
-        assert_eq!(wire["files"].as_object().unwrap().len(), 13);
+        assert_eq!(wire["files"].as_object().unwrap().len(), 15);
         for name in ALLOWED {
             assert_eq!(
                 STANDARD
