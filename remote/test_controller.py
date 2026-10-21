@@ -645,7 +645,7 @@ class LinkFixture:
         self.files = {name: [] for name in ("route", "ipv6_route", "tcp", "tcp6", "if_inet6", "wireless")}
         self.addresses, self.outputs, self.absent, self.calls, self.environ = {}, {}, set(), [], {}
 
-    def iface(self, name, kind, carrier=None, operstate="down", speed=None, driver=None, lower=(), ipv4=None, wlan="phy80211"):
+    def iface(self, name, kind, carrier=None, operstate="down", speed=None, driver=None, lower=(), ipv4=None, wlan="phy80211", upper=()):
         entry = self.sys / "class" / "net" / name
         entry.mkdir()
         put(entry / "operstate", operstate + "\n")
@@ -666,6 +666,8 @@ class LinkFixture:
             put(entry / "speed", f"{speed}\n")
         for member in lower:
             (entry / ("lower_" + member)).mkdir()
+        for master in upper:
+            (entry / ("upper_" + master)).mkdir()
         if ipv4:
             self.addresses[name] = ipaddress.IPv4Address(ipv4)
 
@@ -877,6 +879,35 @@ class NetworkLinkTests(unittest.TestCase):
         self.assertEqual((view["basis"], view["active"]["interface"]), ("default_route", "br0"))
         self.assertEqual((view["underlay"], view["wifi"]), ({"interface": "enp1s0f0np0", "kind": "wired"}, None))
         self.assertEqual(f.calls, [])
+
+    def test_a_port_whose_bridge_bond_or_vlan_master_is_routed_is_lan(self):
+        stacks = {"bridge": [("br0", ("enP7s7",))], "bond": [("bond0", ("enP7s7",))], "vlan": [("enP7s7.10", ("enP7s7",))],
+                  "vlan on bond in bridge": [("bond0", ("enP7s7",)), ("bond0.10", ("bond0",)), ("br0", ("bond0.10",))]}
+        for label, stack in stacks.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as folder:
+                f = LinkFixture(Path(folder))
+                uppers = {}
+                for master, members in stack:
+                    for member in members:
+                        uppers.setdefault(member, []).append(master)
+                f.iface("enP7s7", "wired", carrier=True, operstate="up", speed=10000, driver="r8127", upper=uppers["enP7s7"])
+                f.iface("enP2p1s0f0np0", "wired", carrier=True, operstate="up", speed=200000, driver="mlx5_core")
+                for master, members in stack:
+                    f.iface(master, "virtual", operstate="up", lower=members, upper=uppers.get(master, ()),
+                            ipv4=WIRED_IP if master == stack[-1][0] else None)
+                top = stack[-1][0]
+                f.iface("wlP9s9", "wifi", carrier=True, operstate="up", ipv4=SPARK_IP)
+                f.route(top, ANY, ANY, gateway=GATEWAY, metric=425)
+                f.route(top, "192.168.1.0", MASK24, metric=425)
+                f.route("wlP9s9", ANY, ANY, gateway=GATEWAY, metric=600)
+                f.route("enP2p1s0f0np0", "10.10.0.0", MASK24, metric=100)  # Cluster cable: carrier, no default.
+                f.session(CLIENT_IP, 51234, SPARK_IP, 22)
+                f.outputs.update(link=IW_LINK, info=IW_INFO)
+                view = f.view()
+                self.assertEqual((view["active"]["interface"], view["active"]["egress_interface"]), ("wlP9s9", top))
+                routed = {p["interface"]: p["default_route"] for p in view["wired"]}
+                self.assertEqual(routed, {"enP7s7": True, "enP2p1s0f0np0": False})
+                self.assertEqual((view["wired_up"], view["wired_lan_up"]), (2, 1))
 
     def test_stale_ssh_connection_falls_back_to_default_route(self):
         self.owner_spark()

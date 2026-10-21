@@ -542,6 +542,24 @@ def carrier_member(base, name, kinds):
     return None
 
 
+def upper_masters(base, name):
+    """Bridge, bond and VLAN masters above one port via its upper_* links, through at most three layers."""
+    frontier, seen = [name], {name}
+    for _ in range(3):
+        found = []
+        for current in frontier:
+            try:
+                uppers = sorted(entry[6:] for entry in os.listdir(base / current) if entry.startswith("upper_"))
+            except OSError:
+                continue
+            for upper in uppers[:MAX_IFACES]:
+                if upper not in seen:
+                    seen.add(upper)
+                    found.append(upper)
+        frontier = found
+    return seen - {name}
+
+
 def frequency_band(frequency):
     if frequency == 2484:
         return "2.4", 14
@@ -685,8 +703,10 @@ def network_link(sys_root=Path("/sys"), proc_root=Path("/proc"), environ=os.envi
         active_view = {"interface": active, "kind": kinds.get(active, "unknown"), **port(active)}
         if egress:
             active_view["egress_interface"] = egress
+    # A port is LAN-routed when it, or a bridge/bond/VLAN master stacked on it, holds a default route.
     wired = [{"interface": name, "carrier": sys_carrier(base / name / "carrier"), **port(name),
-              "driver": uevent_values(base / name / "device" / "uevent").get("DRIVER"), "default_route": name in defaults}
+              "driver": uevent_values(base / name / "device" / "uevent").get("DRIVER"),
+              "default_route": name in defaults or bool(upper_masters(base, name) & defaults)}
              for name in names if kinds[name] == "wired"]
     wired.sort(key=lambda p: (p["carrier"] is not True, p["interface"]))
     radio = next((n for n in (active, underlay and underlay["interface"]) if n and kinds.get(n) == "wifi"), None)

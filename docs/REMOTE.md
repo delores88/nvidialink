@@ -186,7 +186,9 @@ every field; the real name is used only in the probe tools' argv.
 - `underlay` is set only when `active` is virtual: the first physical `lower_*` member
   with carrier, else the physical default-route interface.
 - `wired_up` counts wired ports with carrier. `wired_lan_up` counts those that also
-  have a default route, so a QSFP cluster cable alone is not a LAN link.
+  have a default route, so a QSFP cluster cable alone is not a LAN link. A port's
+  `default_route` is true when the port itself, or a bridge, bond or VLAN master stacked
+  on it (followed through its `upper_*` links, at most three layers), holds a default.
 - `wifi` is reported only for an active or underlay Wi-Fi interface. `band` is `2.4`,
   `5`, `6`, `multi` (multi-link operation, with `links`; channel, frequency and width
   are then null) or null. `source` is `iw`, `nmcli`, `proc` (signal only) or null.
