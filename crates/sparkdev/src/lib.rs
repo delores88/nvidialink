@@ -230,12 +230,19 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             Ok(json!({"ok":true,"configured":true,"remote_enabled":allow_remote}))
         }
         Commands::Sync { dir, check } => {
-            let inv = inventory::collect(&dir)?;
             if check {
+                // A check never stages transfer objects.
+                let inv = inventory::collect_readonly(&dir)?;
+                let large = inv
+                    .manifest
+                    .iter()
+                    .filter(|e| e.size > inventory::LARGE_FILE)
+                    .count();
                 return Ok(
-                    json!({"ok":true,"checked":true,"project":inv.project,"manifest_id":inv.manifest_id,"files":inv.manifest.len(),"bytes":inv.bytes}),
+                    json!({"ok":true,"checked":true,"project":inv.project,"manifest_id":inv.manifest_id,"files":inv.manifest.len(),"bytes":inv.bytes,"small_bytes":inv.small_bytes,"large_files":large,"limits":local_limits()}),
                 );
             }
+            let inv = inventory::collect(&dir)?;
             let mut tr = transport::Transport::new()?;
             flush_cancels(&mut tr);
             let mut out = sync(&inv, &mut tr)?;
@@ -336,8 +343,14 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             command,
         } => {
             let argv = load_argv(command, argv_json)?;
-            let inv = inventory::collect(&dir)?;
-            let (where_, reason) = placement(r#where, &argv, &inv.root)?;
+            // Placement first: a laptop job reads its own tree and needs no transfer objects.
+            let root = dir.canonicalize()?;
+            let (where_, reason) = placement(r#where, &argv, &root)?;
+            let inv = if where_ == Placement::Laptop {
+                inventory::collect_readonly(&root)?
+            } else {
+                inventory::collect(&root)?
+            };
             let runtime = runtime.unwrap_or_else(|| default_runtime(&argv).into());
             let request_id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             state::validate_id(&request_id)?;
@@ -482,6 +495,9 @@ fn read_resource_input(input: impl Read) -> Result<Value> {
     }
     Ok(policy)
 }
+fn local_limits() -> Value {
+    json!({"max_file":inventory::MAX_FILE,"max_tree":inventory::MAX_TREE,"max_small_tree":inventory::MAX_SMALL_TREE,"large_file":inventory::LARGE_FILE,"max_files":inventory::MAX_FILES})
+}
 fn connection_response(config: &state::Config) -> Value {
     json!({"ok":true,"connection":config.connection_info(),"laptop":config.laptop_info(),"state":state::diagnostics(),"running_jobs_unchanged":true})
 }
@@ -521,6 +537,9 @@ fn devices() -> Result<Value> {
             spark["hardware"] = status["hardware"].clone();
             spark["runtimes"] = status["runtimes"].clone();
             spark["network"] = spark_network(&status);
+            // Absent (null) from a controller that predates disk reporting.
+            spark["storage"] = status.get("storage").cloned().unwrap_or(Value::Null);
+            spark["sync_limits"] = status.get("sync_limits").cloned().unwrap_or(Value::Null);
             spark["capacity_note"] = json!(
                 "Scheduler limits and recorded jobs are observations, not free hardware capacity or a reservation."
             );
@@ -668,77 +687,437 @@ pub fn terminal(value: &Value) -> bool {
         Some("succeeded" | "failed" | "cancelled" | "completed" | "error")
     )
 }
-fn sync(inv: &inventory::Inventory, tr: &mut transport::Transport) -> Result<Value> {
-    let started = Instant::now();
-    let hashes: std::collections::BTreeSet<_> = inv
-        .manifest
-        .iter()
-        .flat_map(|e| e.chunks.iter().map(|c| c.sha256.clone()))
-        .collect();
-    let hashes: Vec<_> = hashes.into_iter().collect();
-    let mut uploaded = 0u64;
-    let mut objects: Vec<Value> = Vec::new();
-    let mut payload_size = 64usize;
-    for batch in hashes.chunks(2048) {
-        let missing = tr.rpc(json!({"v":1,"op":"missing","hashes":batch}))?;
-        let missing = missing["missing"]
-            .as_array()
-            .ok_or_else(|| AppError::new(6, "Remote missing response is invalid"))?;
-        for hash in missing {
-            let hash = hash
-                .as_str()
-                .ok_or_else(|| AppError::new(6, "Invalid missing hash"))?;
-            if !batch.iter().any(|h| h == hash) {
-                return Err(AppError::new(6, "Remote requested an unlisted object"));
-            }
-            let bytes = fs::read(state::root()?.join("cas").join(hash))?;
-            if inventory::hash(&bytes) != hash {
-                return Err(AppError::new(5, "Local transfer object hash mismatch"));
-            }
-            let object = json!({"sha256":hash,"data":STANDARD.encode(&bytes)});
-            let size = serde_json::to_vec(&object)?.len() + 1;
-            if objects.len() >= 128 || payload_size + size > 3 * inventory::CHUNK - 256 {
-                upload_batch(tr, &objects)?;
-                objects.clear();
-                payload_size = 64;
-            }
-            objects.push(object);
-            payload_size += size;
-            uploaded += bytes.len() as u64;
+/// One authenticated request/response exchange with the Spark controller.
+pub trait Rpc {
+    fn call(&mut self, request: Value) -> Result<Value>;
+    /// Route of the latest authenticated exchange: "ssh", "iroh", or anything else while unknown.
+    fn route(&self) -> String;
+    /// Owner intent, read again from saved state before every retry.
+    fn connection_enabled(&self) -> bool;
+}
+impl Rpc for transport::Transport {
+    fn call(&mut self, request: Value) -> Result<Value> {
+        self.rpc(request)
+    }
+    fn route(&self) -> String {
+        self.selected.clone()
+    }
+    fn connection_enabled(&self) -> bool {
+        state::config().is_ok_and(|config| config.connection_enabled)
+    }
+}
+const IROH_REQUEST_LIMIT: u64 = 4 * inventory::MIB - 64 * 1024;
+const SSH_BATCH_BODY: u64 = 8 * inventory::MIB;
+const BATCH_MARGIN: u64 = 256;
+const BATCH_OBJECTS: usize = 128;
+const MISSING_BATCH: usize = 8192;
+const SYNC_ROUNDS: usize = 3;
+const RETRY_DELAYS: [u64; 5] = [2, 4, 8, 16, 30];
+const POLL_DELAY: Duration = Duration::from_secs(2);
+const STALL_LIMIT: Duration = Duration::from_secs(600);
+/// The limits one sync works under: advertised by the controller, or legacy.
+#[derive(Clone, Debug, PartialEq)]
+struct SparkLimits {
+    advertised: bool,
+    max_file: u64,
+    max_tree: u64,
+    max_small_tree: u64,
+    large_file: u64,
+    max_files: u64,
+    max_request: u64,
+    put_many_body: u64,
+    missing_batch: usize,
+}
+impl SparkLimits {
+    fn legacy() -> Self {
+        Self {
+            advertised: false,
+            max_file: inventory::LEGACY_MAX_FILE,
+            max_tree: inventory::LEGACY_MAX_TREE,
+            max_small_tree: inventory::LEGACY_MAX_TREE,
+            large_file: inventory::LEGACY_MAX_FILE,
+            max_files: inventory::MAX_FILES as u64,
+            max_request: inventory::MAX_REQUEST,
+            put_many_body: inventory::LEGACY_BATCH_BODY,
+            missing_batch: inventory::LEGACY_MISSING_BATCH,
         }
     }
-    if !objects.is_empty() {
-        upload_batch(tr, &objects)?;
+    /// Read the `missing []` probe. No `limits` means a controller from before this
+    /// change; advertised values never raise what this CLI itself accepts.
+    fn from_probe(probe: &Value) -> Result<Self> {
+        let Some(limits) = probe.get("limits").filter(|value| !value.is_null()) else {
+            return Ok(Self::legacy());
+        };
+        let field = |name: &str| {
+            limits
+                .get(name)
+                .and_then(Value::as_u64)
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    AppError::new(
+                        6,
+                        "Spark controller advertised invalid sync limits; update Spark setup",
+                    )
+                })
+        };
+        if field("chunk")? != inventory::MIB {
+            return Err(AppError::new(
+                6,
+                "Spark controller uses a different transfer chunk size; update Spark setup",
+            ));
+        }
+        Ok(Self {
+            advertised: true,
+            max_file: field("max_file")?.min(inventory::MAX_FILE),
+            max_tree: field("max_tree")?.min(inventory::MAX_TREE),
+            max_small_tree: field("max_small_tree")?.min(inventory::MAX_SMALL_TREE),
+            large_file: field("large_file")?.min(inventory::LARGE_FILE),
+            max_files: field("max_files")?.min(inventory::MAX_FILES as u64),
+            max_request: field("max_request")?.min(inventory::MAX_REQUEST),
+            put_many_body: field("put_many_body")?,
+            missing_batch: field("missing_batch")?.min(MISSING_BATCH as u64) as usize,
+        })
     }
-    let mut out =
-        tr.rpc(json!({"v":1,"op":"sync","project":inv.project,"manifest":inv.manifest}))?;
+    fn view(&self) -> Value {
+        json!({"source":if self.advertised {"advertised"} else {"legacy"},"max_file":self.max_file,"max_tree":self.max_tree,"max_small_tree":self.max_small_tree,"large_file":self.large_file,"max_files":self.max_files})
+    }
+    /// Refuse, before any upload, a project this controller cannot accept.
+    fn check(&self, inv: &inventory::Inventory) -> Result<()> {
+        let small: u64 = inv
+            .manifest
+            .iter()
+            .filter(|entry| entry.size <= self.large_file)
+            .map(|entry| entry.size)
+            .sum();
+        if inv.manifest.len() as u64 > self.max_files
+            || inv.manifest.iter().any(|entry| entry.size > self.max_file)
+            || inv.bytes > self.max_tree
+            || small > self.max_small_tree
+        {
+            let message = if self.advertised {
+                format!(
+                    "Project exceeds the Spark controller's {} file, {} project or {} small-file limit; update Spark setup",
+                    inventory::size_text(self.max_file),
+                    inventory::size_text(self.max_tree),
+                    inventory::size_text(self.max_small_tree)
+                )
+            } else {
+                format!(
+                    "This Spark controller accepts at most {} per file and {} per project; update Spark setup to sync larger projects",
+                    inventory::size_text(self.max_file),
+                    inventory::size_text(self.max_tree)
+                )
+            };
+            return Err(AppError::new(5, message));
+        }
+        Ok(())
+    }
+    /// Largest put_many body for the current route.
+    fn batch_body(&self, route: &str) -> u64 {
+        if self.advertised && route == "ssh" {
+            self.put_many_body
+                .min(SSH_BATCH_BODY)
+                .saturating_sub(BATCH_MARGIN)
+        } else {
+            inventory::LEGACY_BATCH_BODY - BATCH_MARGIN
+        }
+    }
+    /// Largest request body for the current route.
+    fn request_limit(&self, route: &str) -> u64 {
+        if route == "iroh" {
+            IROH_REQUEST_LIMIT
+        } else {
+            self.max_request - 1
+        }
+    }
+}
+fn remote_code(error: &AppError) -> Option<&str> {
+    (error.code == 6)
+        .then(|| error.message.split_once(": ").map(|(code, _)| code))
+        .flatten()
+}
+fn source_changed() -> AppError {
+    AppError::new(3, "Source changed during sync; rerun")
+}
+/// A chunk's bytes: from the staged store, else from the source at its offset,
+/// always verified against the hash the manifest committed to.
+fn chunk_data(inv: &inventory::Inventory, hash: &str) -> Result<Vec<u8>> {
+    if let Some(cas) = &inv.cas {
+        if let Ok(file) = fs::File::open(cas.join(hash)) {
+            let mut bytes = Vec::new();
+            if file
+                .take(inventory::MIB + 1)
+                .read_to_end(&mut bytes)
+                .is_ok()
+                && inventory::hash(&bytes) == hash
+            {
+                return Ok(bytes);
+            }
+        }
+    }
+    let source = inv
+        .sources
+        .get(hash)
+        .ok_or_else(|| AppError::new(6, "Remote requested an unlisted object"))?;
+    let mut file = fs::File::open(&source.path).map_err(|_| source_changed())?;
+    file.seek(SeekFrom::Start(source.offset))
+        .map_err(|_| source_changed())?;
+    let mut bytes = vec![0; source.len as usize];
+    file.read_exact(&mut bytes).map_err(|_| source_changed())?;
+    if inventory::hash(&bytes) != hash {
+        return Err(source_changed());
+    }
+    Ok(bytes)
+}
+/// Every chunk hash once, in the order the manifest first uses it, so reads
+/// that fall back to the source tree stay sequential.
+fn first_occurrence(inv: &inventory::Inventory) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    inv.manifest
+        .iter()
+        .flat_map(|entry| entry.chunks.iter())
+        .filter(|chunk| seen.insert(chunk.sha256.as_str()))
+        .map(|chunk| chunk.sha256.clone())
+        .collect()
+}
+struct Session<'a> {
+    rpc: &'a mut dyn Rpc,
+    sleep: &'a mut dyn FnMut(Duration),
+    succeeded: bool,
+    retries: u64,
+    uploaded: u64,
+}
+impl Session<'_> {
+    /// Only an ambiguous transport failure is retried, and only after this sync
+    /// has reached the controller once. Owner intent is never overridden.
+    fn retry(&mut self, error: &AppError, attempt: usize) -> bool {
+        if error.code != 4
+            || !self.succeeded
+            || attempt >= RETRY_DELAYS.len()
+            || error.message.contains("Bridge is disconnected")
+            || error.message.contains("LAN-only mode")
+            || !self.rpc.connection_enabled()
+        {
+            return false;
+        }
+        (self.sleep)(Duration::from_secs(RETRY_DELAYS[attempt]));
+        self.retries += 1;
+        self.rpc.connection_enabled()
+    }
+    fn call(&mut self, request: &Value, retry: bool) -> Result<Value> {
+        let mut attempt = 0;
+        loop {
+            match self.rpc.call(request.clone()) {
+                Ok(value) => {
+                    self.succeeded = true;
+                    return Ok(value);
+                }
+                Err(error) => {
+                    if !retry || !self.retry(&error, attempt) {
+                        return Err(error);
+                    }
+                    attempt += 1;
+                }
+            }
+        }
+    }
+    /// Ask which of `hashes` the Spark lacks, keeping their first-occurrence order.
+    fn missing(&mut self, hashes: &[String], batch: usize, retry: bool) -> Result<Vec<String>> {
+        let mut absent = Vec::new();
+        for group in hashes.chunks(batch.max(1)) {
+            let response = self.call(&json!({"v":1,"op":"missing","hashes":group}), retry)?;
+            let listed = response["missing"]
+                .as_array()
+                .ok_or_else(|| AppError::new(6, "Remote missing response is invalid"))?;
+            let asked: std::collections::HashSet<_> = group.iter().map(String::as_str).collect();
+            let mut wanted = std::collections::HashSet::new();
+            for hash in listed {
+                let hash = hash
+                    .as_str()
+                    .ok_or_else(|| AppError::new(6, "Invalid missing hash"))?;
+                if !asked.contains(hash) {
+                    return Err(AppError::new(6, "Remote requested an unlisted object"));
+                }
+                wanted.insert(hash.to_string());
+            }
+            absent.extend(group.iter().filter(|hash| wanted.contains(*hash)).cloned());
+        }
+        Ok(absent)
+    }
+    /// Upload `hashes` in order. Each batch is sized for the route at that moment
+    /// and halves after a transport timeout; one chunk always fits.
+    fn upload(
+        &mut self,
+        inv: &inventory::Inventory,
+        hashes: &[String],
+        limits: &SparkLimits,
+        retry: bool,
+    ) -> Result<()> {
+        let (mut next, mut halvings, mut attempt) = (0usize, 0u32, 0usize);
+        while next < hashes.len() {
+            let cap = limits.batch_body(&self.rpc.route()) >> halvings;
+            let (mut count, mut size) = (0usize, 64u64);
+            for hash in &hashes[next..] {
+                let len = inv.sources.get(hash).map_or(inventory::MIB, |s| s.len);
+                // {"data":"<base64>","sha256":"<64 hex>"} plus a separator.
+                let object = len.div_ceil(3) * 4 + 88;
+                if count > 0 && (count >= BATCH_OBJECTS || size + object > cap) {
+                    break;
+                }
+                count += 1;
+                size += object;
+            }
+            let batch = &hashes[next..next + count];
+            let mut objects = Vec::with_capacity(count);
+            let mut bytes = 0u64;
+            for hash in batch {
+                let data = chunk_data(inv, hash)?;
+                bytes += data.len() as u64;
+                objects.push(json!({"sha256":hash,"data":STANDARD.encode(&data)}));
+            }
+            match self
+                .rpc
+                .call(json!({"v":1,"op":"put_many","chunks":objects}))
+            {
+                Ok(response) => {
+                    self.succeeded = true;
+                    let accepted = response["accepted"]
+                        .as_array()
+                        .ok_or_else(|| AppError::new(6, "Missing upload batch receipt"))?;
+                    if accepted.len() != batch.len()
+                        || accepted
+                            .iter()
+                            .zip(batch)
+                            .any(|(receipt, hash)| receipt["sha256"] != hash.as_str())
+                    {
+                        return Err(AppError::new(
+                            6,
+                            "Upload batch receipt does not match requested objects",
+                        ));
+                    }
+                    self.uploaded += bytes;
+                    next += count;
+                    attempt = 0;
+                }
+                Err(error) => {
+                    let timeout = error.message.starts_with("Transport timeout");
+                    if !retry || !self.retry(&error, attempt) {
+                        return Err(error);
+                    }
+                    if timeout {
+                        halvings = (halvings + 1).min(24);
+                    }
+                    attempt += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+fn preflight(body: u64, limits: &SparkLimits, route: &str) -> Result<()> {
+    let limit = limits.request_limit(route);
+    if body > limit {
+        return Err(AppError::new(
+            5,
+            format!(
+                "The project manifest needs a {:.1} MiB sync request, above the {:.1} MiB {} limit; reduce the file count{}",
+                body as f64 / inventory::MIB as f64,
+                limit as f64 / inventory::MIB as f64,
+                if route == "iroh" { "paired remote route" } else { "controller request" },
+                if route == "iroh" { " or sync over LAN SSH" } else { "" }
+            ),
+        ));
+    }
+    Ok(())
+}
+/// "Spark is assembling this snapshot: X of Y MiB; ..." carries progress X.
+fn assembled_mib(error: &AppError) -> Option<u64> {
+    let (_, rest) = error.message.split_once("assembling this snapshot: ")?;
+    rest.split(' ').next()?.parse().ok()
+}
+fn sync(inv: &inventory::Inventory, tr: &mut transport::Transport) -> Result<Value> {
+    sync_with(inv, tr, &mut |duration| std::thread::sleep(duration))
+}
+/// Sync one inventory. A controller that advertises limits is asked to commit
+/// first, so an unchanged project takes two RPCs; absent chunks are uploaded in
+/// at most three rounds, and a snapshot still assembling is polled. A legacy
+/// controller gets today's order: missing, upload, then one sync never retried.
+pub fn sync_with(
+    inv: &inventory::Inventory,
+    rpc: &mut dyn Rpc,
+    sleep: &mut dyn FnMut(Duration),
+) -> Result<Value> {
+    let started = Instant::now();
+    let mut session = Session {
+        rpc,
+        sleep,
+        succeeded: false,
+        retries: 0,
+        uploaded: 0,
+    };
+    let probe = session.call(&json!({"v":1,"op":"missing","hashes":[]}), false)?;
+    let limits = SparkLimits::from_probe(&probe)?;
+    limits.check(inv)?;
+    let request = json!({"v":1,"op":"sync","project":inv.project,"manifest":inv.manifest});
+    let body = serde_json::to_vec(&request)?.len() as u64;
+    // The route is known only after the probe.
+    preflight(body, &limits, &session.rpc.route())?;
+    let order = first_occurrence(inv);
+    let (mut rounds, mut polls) = (0usize, 0u64);
+    let mut out = if !limits.advertised {
+        for group in order.chunks(limits.missing_batch) {
+            let absent = session.missing(group, group.len(), true)?;
+            session.upload(inv, &absent, &limits, true)?;
+        }
+        preflight(body, &limits, &session.rpc.route())?;
+        session.call(&request, false)?
+    } else {
+        let (mut stall_mark, mut stall_slept, mut last_done) = (Instant::now(), Duration::ZERO, None);
+        loop {
+            preflight(body, &limits, &session.rpc.route())?;
+            let error = match session.call(&request, true) {
+                Ok(value) => break value,
+                Err(error) => error,
+            };
+            match remote_code(&error) {
+                Some("materializing") => {
+                    let done = assembled_mib(&error);
+                    if done.is_some() && done > last_done {
+                        (stall_mark, stall_slept, last_done) = (Instant::now(), Duration::ZERO, done);
+                    } else if stall_mark.elapsed().max(stall_slept) >= STALL_LIMIT {
+                        return Err(AppError::new(
+                            6,
+                            "Spark snapshot assembly made no progress for 10 minutes; run the same command again to continue",
+                        ));
+                    }
+                    polls += 1;
+                    (session.sleep)(POLL_DELAY);
+                    stall_slept += POLL_DELAY;
+                }
+                Some("missing_chunks" | "hash_mismatch") if rounds < SYNC_ROUNDS => {
+                    rounds += 1;
+                    let absent = session.missing(&order, limits.missing_batch, true)?;
+                    session.upload(inv, &absent, &limits, true)?;
+                    (stall_mark, stall_slept) = (Instant::now(), Duration::ZERO);
+                }
+                _ => return Err(error),
+            }
+        }
+    };
     if out["manifest_id"] != inv.manifest_id {
         return Err(AppError::new(
             6,
             "Remote manifest digest differs from local canonical digest",
         ));
     }
-    out["uploaded_bytes"] = json!(uploaded);
+    out["uploaded_bytes"] = json!(session.uploaded);
     out["sync_seconds"] = json!(started.elapsed().as_secs_f64());
+    out["sync_rounds"] = json!(rounds);
+    out["materialize_polls"] = json!(polls);
+    out["transfer_retries"] = json!(session.retries);
+    out["spark_limits"] = limits.view();
+    out["spark_storage"] = probe.get("storage").cloned().unwrap_or(Value::Null);
     Ok(out)
-}
-fn upload_batch(tr: &mut transport::Transport, objects: &[Value]) -> Result<()> {
-    let response = tr.rpc(json!({"v":1,"op":"put_many","chunks":objects}))?;
-    let accepted = response["accepted"]
-        .as_array()
-        .ok_or_else(|| AppError::new(6, "Missing upload batch receipt"))?;
-    if accepted.len() != objects.len()
-        || accepted
-            .iter()
-            .zip(objects)
-            .any(|(a, b)| a["sha256"] != b["sha256"])
-    {
-        return Err(AppError::new(
-            6,
-            "Upload batch receipt does not match requested objects",
-        ));
-    }
-    Ok(())
 }
 fn flush_cancels(tr: &mut transport::Transport) {
     local::flush_pending(tr);
@@ -972,5 +1351,537 @@ mod tests {
             admission_observation(true, false)["available"],
             "unavailable"
         );
+    }
+}
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use inventory::{CHUNK, GIB, Inventory, MIB};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+    fn advertised() -> Value {
+        json!({"chunk":MIB,"max_file":16*GIB,"max_tree":32*GIB,"max_small_tree":8*GIB,"large_file":512*MIB,"max_files":100000,"max_request":32*MIB,"put_many_body":12*MIB,"missing_batch":10000})
+    }
+    /// A controller double: content-addressed objects, a commit that needs every
+    /// chunk, and scripted failures.
+    struct Fake {
+        limits: Option<Value>,
+        objects: BTreeSet<String>,
+        calls: Vec<Value>,
+        route: String,
+        enabled: bool,
+        /// Each entry fails the next request with that op.
+        inject: VecDeque<(&'static str, AppError)>,
+        /// A sync with every chunk present first reports these MiB assembled.
+        assembling: VecDeque<u64>,
+        /// Unlinked by the next complete sync, which then reports hash_mismatch.
+        heal: Vec<String>,
+        always_missing: bool,
+        route_after_put: Option<&'static str>,
+        /// Fails the request with this zero-based call index.
+        fail_calls: BTreeMap<usize, AppError>,
+    }
+    impl Fake {
+        fn new(limits: Option<Value>) -> Self {
+            Self {
+                limits,
+                objects: BTreeSet::new(),
+                calls: Vec::new(),
+                route: "ssh".into(),
+                enabled: true,
+                inject: VecDeque::new(),
+                assembling: VecDeque::new(),
+                heal: Vec::new(),
+                always_missing: false,
+                route_after_put: None,
+                fail_calls: BTreeMap::new(),
+            }
+        }
+        fn holding(mut self, inv: &Inventory) -> Self {
+            self.objects = inv.sources.keys().cloned().collect();
+            self
+        }
+        fn ops(&self) -> Vec<&str> {
+            self.calls.iter().map(|c| c["op"].as_str().unwrap()).collect()
+        }
+        fn batches(&self) -> Vec<(usize, usize)> {
+            self.calls
+                .iter()
+                .filter(|c| c["op"] == "put_many")
+                .map(|c| {
+                    (
+                        c["chunks"].as_array().unwrap().len(),
+                        serde_json::to_vec(c).unwrap().len(),
+                    )
+                })
+                .collect()
+        }
+        fn uploaded(&self) -> Vec<String> {
+            self.calls
+                .iter()
+                .filter(|c| c["op"] == "put_many")
+                .flat_map(|c| c["chunks"].as_array().unwrap().clone())
+                .map(|c| c["sha256"].as_str().unwrap().to_string())
+                .collect()
+        }
+    }
+    impl Rpc for Fake {
+        fn call(&mut self, request: Value) -> Result<Value> {
+            self.calls.push(request.clone());
+            let op = request["op"].as_str().unwrap();
+            if let Some(error) = self.fail_calls.remove(&(self.calls.len() - 1)) {
+                return Err(error);
+            }
+            if self.inject.front().is_some_and(|(o, _)| *o == op) {
+                return Err(self.inject.pop_front().unwrap().1);
+            }
+            match op {
+                "missing" => {
+                    let missing: Vec<_> = request["hashes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|h| !self.objects.contains(h.as_str().unwrap()))
+                        .cloned()
+                        .collect();
+                    let mut out = json!({"ok":true,"missing":missing});
+                    if let Some(limits) = &self.limits {
+                        out["limits"] = limits.clone();
+                        out["storage"] = json!({"free_bytes":100*GIB,"reserve_bytes":64*GIB});
+                    }
+                    Ok(out)
+                }
+                "put_many" => {
+                    let mut accepted = Vec::new();
+                    for chunk in request["chunks"].as_array().unwrap() {
+                        let data = STANDARD.decode(chunk["data"].as_str().unwrap()).unwrap();
+                        assert_eq!(inventory::hash(&data), chunk["sha256"]);
+                        assert!(data.len() <= CHUNK);
+                        self.objects.insert(chunk["sha256"].as_str().unwrap().into());
+                        accepted.push(json!({"sha256":chunk["sha256"],"size":data.len()}));
+                    }
+                    if let Some(route) = self.route_after_put.take() {
+                        self.route = route.into();
+                    }
+                    Ok(json!({"ok":true,"accepted":accepted}))
+                }
+                "sync" => {
+                    let manifest = &request["manifest"];
+                    let complete = manifest.as_array().unwrap().iter().all(|e| {
+                        e["chunks"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .all(|c| self.objects.contains(c["sha256"].as_str().unwrap()))
+                    });
+                    if self.always_missing || !complete {
+                        return Err(AppError::new(
+                            6,
+                            "missing_chunks: Upload missing chunks before committing the snapshot",
+                        ));
+                    }
+                    if !self.heal.is_empty() {
+                        for hash in self.heal.drain(..) {
+                            self.objects.remove(&hash);
+                        }
+                        return Err(AppError::new(
+                            6,
+                            "hash_mismatch: Stored chunk failed verification; it was removed for upload again",
+                        ));
+                    }
+                    if let Some(done) = self.assembling.pop_front() {
+                        return Err(AppError::new(
+                            6,
+                            format!(
+                                "materializing: Spark is assembling this snapshot: {done} of 900 MiB; run the same command again to continue"
+                            ),
+                        ));
+                    }
+                    let id = inventory::hash(&serde_json::to_vec(manifest).unwrap());
+                    Ok(
+                        json!({"ok":true,"project":request["project"],"manifest_id":id,"files":manifest.as_array().unwrap().len()}),
+                    )
+                }
+                other => panic!("unexpected {other}"),
+            }
+        }
+        fn route(&self) -> String {
+            self.route.clone()
+        }
+        fn connection_enabled(&self) -> bool {
+            self.enabled
+        }
+    }
+    struct Tree {
+        _source: tempfile::TempDir,
+        cas: tempfile::TempDir,
+        inv: Inventory,
+    }
+    fn tree(files: &[(&str, Vec<u8>)], large_file: u64) -> Tree {
+        let source = tempfile::tempdir().unwrap();
+        let cas = tempfile::tempdir().unwrap();
+        for (name, bytes) in files {
+            fs::write(source.path().join(name), bytes).unwrap();
+        }
+        let limits = inventory::Limits {
+            large_file,
+            available_space: |_| Some(u64::MAX),
+            ..inventory::Limits::default()
+        };
+        let inv = inventory::collect_with(source.path(), Some(cas.path()), limits).unwrap();
+        Tree {
+            _source: source,
+            cas,
+            inv,
+        }
+    }
+    /// `count` distinct full chunks.
+    fn chunks(count: usize) -> Vec<u8> {
+        (0..count)
+            .flat_map(|i| vec![b'a' + i as u8; CHUNK])
+            .collect()
+    }
+    fn sizes_only(sizes: &[u64]) -> Inventory {
+        let manifest: Vec<_> = sizes
+            .iter()
+            .enumerate()
+            .map(|(i, size)| inventory::Entry {
+                path: format!("f{i}.bin"),
+                size: *size,
+                sha256: inventory::hash(format!("{i}").as_bytes()),
+                mode: 0o644,
+                chunks: Vec::new(),
+            })
+            .collect();
+        Inventory {
+            root: PathBuf::from("."),
+            project: "b".repeat(64),
+            manifest_id: inventory::hash(
+                &serde_json::to_vec(&serde_json::to_value(&manifest).unwrap()).unwrap(),
+            ),
+            bytes: sizes.iter().sum(),
+            small_bytes: 0,
+            manifest,
+            sources: BTreeMap::new(),
+            cas: None,
+        }
+    }
+    fn run(inv: &Inventory, fake: &mut Fake) -> (Result<Value>, Vec<Duration>) {
+        let mut sleeps = Vec::new();
+        let result = sync_with(inv, fake, &mut |d| sleeps.push(d));
+        (result, sleeps)
+    }
+    fn secs(values: &[u64]) -> Vec<Duration> {
+        values.iter().map(|s| Duration::from_secs(*s)).collect()
+    }
+    fn transient(message: &str) -> AppError {
+        AppError::new(4, message)
+    }
+    const TIMEOUT: &str =
+        "Transport timeout; request may have completed remotely. Retry using the same request ID.";
+    #[test]
+    fn legacy_controller_refuses_large_projects_with_zero_uploads() {
+        for sizes in [vec![inventory::LEGACY_MAX_FILE + 1], vec![500 * MIB; 17]] {
+            let inv = sizes_only(&sizes);
+            let mut fake = Fake::new(None);
+            let error = run(&inv, &mut fake).0.unwrap_err();
+            assert_eq!(error.code, 5);
+            assert!(
+                error.message.contains("update Spark setup"),
+                "{}",
+                error.message
+            );
+            assert_eq!(fake.ops(), ["missing"]);
+        }
+        // Exactly the legacy limits are still accepted and synced the old way.
+        let inv = sizes_only(&[inventory::LEGACY_MAX_FILE; 16]);
+        let mut fake = Fake::new(None);
+        let out = run(&inv, &mut fake).0.unwrap();
+        assert_eq!(out["spark_limits"]["source"], "legacy");
+        assert_eq!(fake.ops(), ["missing", "sync"]);
+    }
+    #[test]
+    fn advertised_limits_bound_what_is_sent_and_chunk_size_must_match() {
+        let mut small = advertised();
+        small["max_file"] = json!(GIB);
+        let inv = sizes_only(&[2 * GIB]);
+        let mut fake = Fake::new(Some(small));
+        let error = run(&inv, &mut fake).0.unwrap_err();
+        assert_eq!(error.code, 5);
+        assert!(
+            error.message.contains("1 GiB file") && error.message.contains("update Spark setup")
+        );
+        assert_eq!(fake.ops(), ["missing"]);
+        let mut odd = advertised();
+        odd["chunk"] = json!(2 * MIB);
+        let mut fake = Fake::new(Some(odd));
+        assert_eq!(run(&sizes_only(&[1]), &mut fake).0.unwrap_err().code, 6);
+        assert_eq!(fake.ops(), ["missing"]);
+        let mut fake = Fake::new(Some(json!({"chunk":MIB})));
+        assert_eq!(run(&sizes_only(&[1]), &mut fake).0.unwrap_err().code, 6);
+    }
+    #[test]
+    fn an_unchanged_project_takes_two_rpcs() {
+        let t = tree(&[("main.rs", b"fn main() {}\n".to_vec())], inventory::LARGE_FILE);
+        let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+        let out = run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(fake.ops(), ["missing", "sync"]);
+        assert_eq!(fake.calls[0]["hashes"], json!([]));
+        assert_eq!(out["uploaded_bytes"], 0);
+        assert_eq!(out["spark_limits"]["source"], "advertised");
+        assert_eq!(out["spark_storage"]["reserve_bytes"], 64 * GIB);
+    }
+    #[test]
+    fn missing_chunks_upload_in_bounded_rounds_and_first_occurrence_order() {
+        let t = tree(
+            &[
+                ("a.txt", b"zzzz first".to_vec()),
+                ("b.txt", b"aaaa second".to_vec()),
+                ("c.txt", b"zzzz first".to_vec()),
+            ],
+            inventory::LARGE_FILE,
+        );
+        let mut fake = Fake::new(Some(advertised()));
+        let out = run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(
+            fake.ops(),
+            ["missing", "sync", "missing", "put_many", "sync"]
+        );
+        let order = vec![
+            inventory::hash(b"zzzz first"),
+            inventory::hash(b"aaaa second"),
+        ];
+        assert_eq!(fake.calls[2]["hashes"], json!(order));
+        assert_eq!(fake.uploaded(), order);
+        assert_eq!(
+            (out["sync_rounds"].as_u64(), out["uploaded_bytes"].as_u64()),
+            (Some(1), Some(21))
+        );
+        // Self-heal unlinks an object between missing and sync: one more round.
+        let mut fake = Fake::new(Some(advertised()));
+        fake.heal = vec![order[1].clone()];
+        let out = run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(out["sync_rounds"], 2);
+        assert_eq!(
+            fake.uploaded(),
+            [order[0].clone(), order[1].clone(), order[1].clone()]
+        );
+        // Never more than three rounds.
+        let mut fake = Fake::new(Some(advertised()));
+        fake.always_missing = true;
+        let error = run(&t.inv, &mut fake).0.unwrap_err();
+        assert!(error.message.starts_with("missing_chunks:"));
+        assert_eq!(fake.ops().iter().filter(|op| **op == "sync").count(), 4);
+    }
+    #[test]
+    fn a_snapshot_being_assembled_is_polled_until_done_or_stalled() {
+        let t = tree(&[("main.rs", b"fn main() {}\n".to_vec())], inventory::LARGE_FILE);
+        let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+        fake.assembling = VecDeque::from([0, 10, 10, 30]);
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        assert_eq!(out.unwrap()["materialize_polls"], 4);
+        assert_eq!(sleeps, secs(&[2, 2, 2, 2]));
+        let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+        fake.assembling = std::iter::repeat_n(5, 1000).collect();
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        let error = out.unwrap_err();
+        assert_eq!(error.code, 6);
+        assert!(
+            error.message.contains("no progress for 10 minutes")
+                && error.message.contains("run the same command again")
+        );
+        assert_eq!(sleeps.iter().sum::<Duration>(), Duration::from_secs(600));
+    }
+    #[test]
+    fn retries_are_bounded_and_never_override_owner_intent() {
+        let t = tree(&[("main.rs", b"fn main() {}\n".to_vec())], inventory::LARGE_FILE);
+        // Nothing has succeeded yet: the probe is never retried.
+        let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+        fake.inject.push_back(("missing", transient(TIMEOUT)));
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        assert_eq!((out.unwrap_err().code, sleeps.len()), (4, 0));
+        // After one success an ambiguous failure is retried with backoff.
+        let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+        fake.inject.push_back(("sync", transient(TIMEOUT)));
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        assert_eq!(out.unwrap()["transfer_retries"], 1);
+        assert_eq!(sleeps, secs(&[2]));
+        let unreachable = "Configured LAN addresses are unreachable";
+        for _ in 0..5 {
+            fake.inject.push_back(("sync", transient(unreachable)));
+        }
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        assert!(out.is_ok());
+        assert_eq!(sleeps, secs(&[2, 4, 8, 16, 30]));
+        for _ in 0..6 {
+            fake.inject.push_back(("sync", transient(unreachable)));
+        }
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        assert_eq!(
+            (out.unwrap_err().code, sleeps),
+            (4, secs(&[2, 4, 8, 16, 30]))
+        );
+        // Owner intent, authentication and controller rejections are final.
+        for error in [
+            transient("Bridge is disconnected; use sparkdev connect to enable new requests"),
+            transient("LAN-only mode does not permit the paired remote transport"),
+            AppError::new(
+                7,
+                "SSH authentication or pinned host-key verification failed; fallback refused",
+            ),
+            AppError::new(6, "controller_error: Controller operation failed"),
+        ] {
+            let code = error.code;
+            let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+            fake.inject.push_back(("sync", error));
+            let (out, sleeps) = run(&t.inv, &mut fake);
+            assert_eq!((out.unwrap_err().code, sleeps.len()), (code, 0));
+        }
+        // The owner disconnected during the sync: saved state is read before retrying.
+        let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
+        fake.enabled = false;
+        fake.inject.push_back(("sync", transient(TIMEOUT)));
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        assert_eq!((out.unwrap_err().code, sleeps.len()), (4, 0));
+        // A legacy sync is never retried, though its missing queries and uploads may be.
+        let mut fake = Fake::new(None);
+        fake.fail_calls = BTreeMap::from([(1, transient(TIMEOUT)), (4, transient(TIMEOUT))]);
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        assert_eq!((out.unwrap_err().code, sleeps), (4, secs(&[2])));
+        assert_eq!(
+            fake.ops(),
+            ["missing", "missing", "missing", "put_many", "sync"]
+        );
+    }
+    #[test]
+    fn upload_batches_follow_the_route_halve_on_timeout_and_switch_routes() {
+        let t = tree(&[("data.bin", chunks(8))], inventory::LARGE_FILE);
+        let ssh_cap = 8 * MIB as usize - 256;
+        let iroh_cap = 3 * MIB as usize - 256;
+        let counts = |fake: &Fake| fake.batches().iter().map(|b| b.0).collect::<Vec<_>>();
+        let mut fake = Fake::new(Some(advertised()));
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(counts(&fake), [5, 3]);
+        assert!(fake.batches().iter().all(|b| b.1 <= ssh_cap));
+        let mut fake = Fake::new(Some(advertised()));
+        fake.route = "iroh".into();
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(counts(&fake), [2, 2, 2, 2]);
+        assert!(fake.batches().iter().all(|b| b.1 <= iroh_cap));
+        // A legacy controller gets three-MiB bodies even over SSH.
+        let mut fake = Fake::new(None);
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(counts(&fake), [2, 2, 2, 2]);
+        // An advertised body smaller than the SSH cap is honored.
+        let mut narrow = advertised();
+        narrow["put_many_body"] = json!(5 * MIB);
+        let mut fake = Fake::new(Some(narrow));
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(counts(&fake), [3, 3, 2]);
+        assert!(fake.batches().iter().all(|b| b.1 <= 5 * MIB as usize - 256));
+        // A timeout halves the body for the rest of the sync.
+        let mut fake = Fake::new(Some(advertised()));
+        fake.inject.push_back(("put_many", transient(TIMEOUT)));
+        let (out, sleeps) = run(&t.inv, &mut fake);
+        out.unwrap();
+        assert_eq!(counts(&fake), [5, 2, 2, 2, 2]);
+        assert_eq!(sleeps, secs(&[2]));
+        // Falling back to the paired route mid-sync shrinks the next batches.
+        let mut fake = Fake::new(Some(advertised()));
+        fake.route_after_put = Some("iroh");
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(counts(&fake), [5, 2, 1]);
+        assert!(fake.batches()[1..].iter().all(|b| b.1 <= iroh_cap));
+    }
+    #[test]
+    fn chunks_missing_from_the_store_are_read_from_the_source_at_their_offset() {
+        let mut bytes = chunks(1);
+        bytes.extend_from_slice(b"tail of the file");
+        let mut large = vec![b'x'; 2 * CHUNK];
+        large.extend_from_slice(b"not staged at all");
+        let t = tree(
+            &[("two.bin", bytes.clone()), ("large.bin", large.clone())],
+            2 * MIB,
+        );
+        let second = inventory::hash(&bytes[CHUNK..]);
+        let unstaged = inventory::hash(&large[2 * CHUNK..]);
+        assert!(!t.cas.path().join(&unstaged).exists());
+        assert_eq!(t.inv.sources[&unstaged].offset, 2 * MIB);
+        fs::remove_file(t.cas.path().join(&second)).unwrap();
+        let mut fake = Fake::new(Some(advertised()));
+        run(&t.inv, &mut fake).0.unwrap();
+        assert!(fake.objects.contains(&second) && fake.objects.contains(&unstaged));
+        // A source changed after inventory never uploads different bytes.
+        let mut changed = bytes;
+        let end = changed.len();
+        changed[end - 1] = b'!';
+        fs::write(t.inv.root.join("two.bin"), &changed).unwrap();
+        let mut fake = Fake::new(Some(advertised()));
+        let error = run(&t.inv, &mut fake).0.unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (3, "Source changed during sync; rerun")
+        );
+        // A damaged staged object falls back to the source, which still matches.
+        let first = inventory::hash(&changed[..CHUNK]);
+        fs::write(t.cas.path().join(&first), b"damaged").unwrap();
+        let mut fake = Fake::new(Some(advertised()));
+        fake.objects.insert(second.clone());
+        fake.objects.extend([inventory::hash(&large[..CHUNK]), unstaged]);
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(fake.uploaded(), [first]);
+    }
+    #[test]
+    fn the_sync_request_is_preflighted_for_the_route_after_the_probe() {
+        let inv = sizes_only(&vec![0; 40_000]);
+        let body = serde_json::to_vec(
+            &json!({"v":1,"op":"sync","project":inv.project,"manifest":inv.manifest}),
+        )
+        .unwrap()
+        .len() as u64;
+        assert!(body > IROH_REQUEST_LIMIT && body < 32 * MIB);
+        let mut fake = Fake::new(Some(advertised()));
+        fake.route = "iroh".into();
+        let (out, sleeps) = run(&inv, &mut fake);
+        let error = out.unwrap_err();
+        assert_eq!(error.code, 5);
+        assert!(error.message.contains("paired remote route"));
+        assert_eq!((fake.ops(), sleeps.len()), (vec!["missing"], 0));
+        let mut tiny = advertised();
+        tiny["max_request"] = json!(1000);
+        let mut fake = Fake::new(Some(tiny));
+        assert_eq!(run(&inv, &mut fake).0.unwrap_err().code, 5);
+        assert_eq!(fake.ops(), ["missing"]);
+        let mut fake = Fake::new(Some(advertised()));
+        assert!(run(&inv, &mut fake).0.is_ok());
+        // A fallback to the paired route before the commit is refused, never retried.
+        let t = tree(&[("big.bin", chunks(1))], inventory::LARGE_FILE);
+        let mut many: Vec<_> = (0..40_000)
+            .map(|i| inventory::Entry {
+                path: format!("f{i:05}.txt"),
+                size: 0,
+                sha256: inventory::hash(b""),
+                mode: 0o644,
+                chunks: Vec::new(),
+            })
+            .collect();
+        many.extend(t.inv.manifest.iter().cloned());
+        let inv = Inventory {
+            manifest_id: inventory::hash(
+                &serde_json::to_vec(&serde_json::to_value(&many).unwrap()).unwrap(),
+            ),
+            manifest: many,
+            root: t.inv.root.clone(),
+            project: t.inv.project.clone(),
+            bytes: t.inv.bytes,
+            small_bytes: t.inv.small_bytes,
+            sources: t.inv.sources.clone(),
+            cas: t.inv.cas.clone(),
+        };
+        let mut fake = Fake::new(Some(advertised()));
+        fake.route_after_put = Some("iroh");
+        let (out, sleeps) = run(&inv, &mut fake);
+        assert_eq!((out.unwrap_err().code, sleeps.len()), (5, 0));
+        assert_eq!(fake.ops(), ["missing", "sync", "missing", "put_many"]);
     }
 }
