@@ -233,7 +233,14 @@ The watchdog depends on the running controller and is not a hardware memory quot
 
 Dependency preparation is a separate fixed job. Rust runs `cargo fetch --locked`,
 Node runs `npm ci --ignore-scripts`, and Python requires `requirements.lock` and
-`python3 -I -m pip --require-hashes --only-binary=:all:`. Lockfile hashes must remain unchanged.
+`python3 -I -X utf8 -m pip --require-hashes --only-binary=:all:`. Lockfile hashes must remain unchanged.
+Before pip runs, every line of a Python or CUDA lock must be a named requirement with
+per-requirement hashes. Option lines (`-r`, `-e`, `--index-url`, `--no-binary` and the
+rest), direct URLs, paths, and requirements whose text before any marker ends in an
+archive suffix (`evil==1.0.tar.gz`, `x.whl[extra]`) are refused: pip would read those
+as a local file or directory and build an sdist with the network attached. A coding
+cookie other than UTF-8 on either of the first two lines is refused too, because pip
+would decode the lock with it; UTF-8 mode keeps pip's decoding equal to this check's.
 Npm installed trees and Python site packages are saved by lock hash; actual jobs
 restore them while remaining offline. Npm lifecycle scripts are never given egress.
 pip runs isolated, so a project file beside the lock (for example `json.py`) never

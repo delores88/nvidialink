@@ -2,9 +2,11 @@
 """Fixed lockfile-enforcing dependency commands inside an isolated Docker job.
 
 No package code runs while this container has network access. pip installs wheels
-only, runs isolated (-I keeps /work off sys.path) with a fixed environment, and every
-CUDA check reads metadata or the filesystem without importing staged code.
+only, runs isolated (-I keeps /work off sys.path) with a fixed environment, every lock
+line is checked before pip reads it, and every CUDA check reads metadata or the
+filesystem without importing staged code.
 """
+import codecs
 import hashlib
 import importlib.machinery
 import importlib.metadata
@@ -30,6 +32,9 @@ NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
 COMMENT = re.compile(r"(^|\s+)#.*$")
 HASH = re.compile(r"--hash=(?:sha256|sha384|sha512):[0-9A-Fa-f]+")
 ARCHIVES = (".whl", ".zip", ".tar", ".tgz", ".tbz", ".txz", ".tlz", ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.lz", ".tar.lzma")
+EXTRAS = re.compile(r"\[[^\]]*\]$")
+# pip's PEP 263 cookie rule for requirements files: a '#' line among the first two.
+COOKIE = re.compile(rb"coding[:=]\s*([-\w.]+)")
 GENERIC = "sparkdev: dependency preparation requires supported, hash-locked manifests"
 CUDA_LOCK = ("sparkdev: cuda preparation requires requirements-cuda.lock: hash-locked, no-deps closure "
              "excluding packages the CUDA image provides")
@@ -103,7 +108,8 @@ def commands(runtime, root):
                 raise Refusal("python3 on PATH is not the CUDA image interpreter")
             python, extra = sys.executable, ["--no-deps"]
         # -I keeps the lockfile directory (/work) off sys.path while the network is attached.
-        return [(lock.parent, [python, "-I", "-m", "pip", "install", "--require-hashes", "--only-binary=:all:", *extra,
+        # UTF-8 mode makes pip decode a cookie-less lock exactly as precheck() does, whatever the locale.
+        return [(lock.parent, [python, "-I", "-X", "utf8", "-m", "pip", "install", "--require-hashes", "--only-binary=:all:", *extra,
                                "--target", str(ENVS / (".pending-" + hashlib.sha256(lock.read_bytes()).hexdigest())),
                                "-r", str(lock)], lock)
                 for lock in files(root, LOCKS[runtime])]
@@ -184,32 +190,55 @@ def lock_name(line):
         else:
             return None
     requirement = " ".join(tokens[:options])
+    # pip reads a requirement holding a path separator, or whose text before any marker
+    # ends in an archive suffix once trailing extras are stripped (`evil==1.0.tar.gz`,
+    # `x.whl[a]`), as a local file or directory, and builds an sdist from it.
+    if "/" in requirement or "\\" in requirement:
+        return None
+    target = requirement.split(";", 1)[0].strip()
+    while True:
+        if target.lower().endswith(ARCHIVES):
+            return None
+        stripped = EXTRAS.sub("", target).rstrip()
+        if stripped == target:
+            break
+        target = stripped
     match = NAME.match(requirement)
     if not match:
         return None
     tail = requirement[match.end():]
     if tail and tail[0] not in " [(<>=!~;":
         return None
-    if match.group().lower().endswith(ARCHIVES):
-        return None
     return normalize(match.group())
 
 
-def precheck(raw, provided):
-    """Refuse a CUDA lock before any download. Returns one message per hit."""
+def utf8_cookie(value):
+    try:
+        return codecs.lookup(value.decode("ascii")).name in ("utf-8", "utf-8-sig")
+    except (LookupError, UnicodeDecodeError):
+        return False
+
+
+def precheck(raw, provided, name=LOCKS["cuda"], cuda=True):
+    """Refuse a lock before any download; one message per hit. Package-name rules apply to CUDA only."""
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        return ["sparkdev: refused: requirements-cuda.lock is not UTF-8"]
+        return ["sparkdev: refused: " + name + " is not UTF-8"]
+    for line in raw.split(b"\n")[:2]:
+        cookie = COOKIE.search(line) if line[:1] == b"#" else None
+        if cookie and not utf8_cookie(cookie.group(1)):
+            # pip would decode the whole file with that codec and read lines this check never saw.
+            return ["sparkdev: refused: " + name + " declares a coding other than UTF-8"]
     hits = []
     for number, line in logical_lines(text):
-        name = lock_name(line)
-        if name is None:
+        project = lock_name(line)
+        if project is None:
             hits.append("sparkdev: refused: unsupported lock line " + str(number))
-        elif reserved(name):
-            hits.append("sparkdev: refused: " + name + " is reserved for the CUDA image")
-        elif name in provided:
-            hits.append("sparkdev: refused: " + name + " is provided by the CUDA image")
+        elif cuda and reserved(project):
+            hits.append("sparkdev: refused: " + project + " is reserved for the CUDA image")
+        elif cuda and project in provided:
+            hits.append("sparkdev: refused: " + project + " is provided by the CUDA image")
     return hits
 
 
@@ -372,8 +401,9 @@ def main():
         if pending is not None and pending.name != ".pending-" + original:
             say("sparkdev: lockfile changed; preparation refused")
             return 65
-        if runtime == "cuda":
-            hits = precheck(raw, provided)
+        if runtime in LOCKS:
+            # Both pip runtimes: no option, URL, path or local-archive line ever reaches pip.
+            hits = precheck(raw, provided, LOCKS[runtime], cuda=runtime == "cuda")
             for hit in hits:
                 say(hit)
             if hits:

@@ -104,14 +104,14 @@ class CommandTests(Sandbox):
         python = write(self.work, "requirements.lock", "six==1.17.0" + HASH + "\n")
         cuda = write(self.work, "gpu/requirements-cuda.lock", "tomli-w==1.2.0" + HASH + "\n")
         (_, plain, _), = prepare.commands("python", self.work)
-        self.assertEqual(plain[:4], ["python3", "-I", "-m", "pip"])
+        self.assertEqual(plain[:6], ["python3", "-I", "-X", "utf8", "-m", "pip"])
         self.assertNotIn("--no-deps", plain)
         self.assertEqual(plain[plain.index("--target") + 1], str(self.envs / (".pending-" + digest(python))))
         self.assertEqual(plain[plain.index("-r") + 1], str(python))
         with mock.patch.object(prepare.shutil, "which", return_value=sys.executable):
             (cwd, gpu, lock), = prepare.commands("cuda", self.work)
         self.assertEqual((cwd, lock), (cuda.parent, cuda))
-        self.assertEqual(gpu[:4], [sys.executable, "-I", "-m", "pip"])
+        self.assertEqual(gpu[:6], [sys.executable, "-I", "-X", "utf8", "-m", "pip"])
         for flag in ("--no-deps", "--require-hashes", "--only-binary=:all:"):
             self.assertIn(flag, gpu)
         self.assertEqual(gpu[gpu.index("--target") + 1], str(self.envs / (".pending-" + digest(cuda))))
@@ -175,6 +175,47 @@ class PrecheckTests(unittest.TestCase):
                          ["sparkdev: refused: unsupported lock line " + str(n) for n in range(1, 14)] +
                          ["sparkdev: refused: numpy is provided by the CUDA image",
                           "sparkdev: refused: pillow is provided by the CUDA image"])
+
+    def test_local_archive_and_path_requirements_are_refused(self):
+        # pip resolves each of these against the lock's directory and builds a committed sdist.
+        lines = ["evil==1.0.tar.gz", "x>=0.tar.gz", "a[b]==1.tar.gz", "EVIL==1.0.TAR.GZ", "evil == 1.0.tar.gz",
+                 "x.whl[extra]", "x==1.whl[y]", "x==1.zip [y] [z]", 'evil.tar.gz;python_version>"0"', "x==1/../sub",
+                 "x==1\\sub", "evil-1.0.tar.gz", "x<2.tgz ; python_version >= \"3\""]
+        raw = "\n".join(line + HASH for line in lines).encode()
+        self.assertEqual(prepare.precheck(raw, set()), ["sparkdev: refused: unsupported lock line " + str(n) for n in range(1, len(lines) + 1)])
+        self.assertEqual(prepare.precheck(raw, set(), "requirements.lock", cuda=False), prepare.precheck(raw, set()))
+        accepted = ["zipp==3.21.0", "backports.tarfile==1.2.0", 'attrs[tests] == 25.1.0 ; python_version >= "3.8"', "wheel==0.45.1"]
+        self.assertEqual([prepare.lock_name(line + HASH) for line in accepted], ["zipp", "backports-tarfile", "attrs", "wheel"])
+
+    @unittest.skipUnless(HAVE_PIP, "pip is not importable")
+    def test_pip_reads_a_versioned_archive_name_as_a_local_file(self):
+        try:
+            from pip._internal.req.constructors import install_req_from_line
+        except ImportError:
+            self.skipTest("pip internals moved")
+        name = "evil==1.0.tar.gz"
+        with tempfile.TemporaryDirectory() as folder, contextlib.chdir(folder):
+            Path(name).write_bytes(b"")
+            self.assertIsNotNone(install_req_from_line(name).link)  # The bypass this precheck closes.
+        self.assertIsNone(prepare.lock_name(name + HASH))
+
+    def test_coding_cookies_other_than_utf8_are_refused(self):
+        hidden = b"# note +AAo-torch==2.9.0 --hash=sha256:" + b"a" * 64 + b"\n"
+        for raw in (b"# -*- coding: utf-7 -*-\n" + hidden, b"# generated\n# vim: set fileencoding=utf-7 :\n" + hidden,
+                    b"# coding=latin-1\nsix==1.17.0" + HASH.encode() + b"\n", b"# coding: no-such-codec\n"):
+            self.assertEqual(prepare.precheck(raw, set()), ["sparkdev: refused: requirements-cuda.lock declares a coding other than UTF-8"])
+        self.assertEqual(prepare.precheck(b"# coding: utf-7\n", set(), "requirements.lock", cuda=False),
+                         ["sparkdev: refused: requirements.lock declares a coding other than UTF-8"])
+        # A UTF-8 cookie, or one past the first two lines, changes nothing pip reads.
+        for raw in (b"# -*- coding: utf-8 -*-\nsix==1.17.0" + HASH.encode() + b"\n",
+                    b"\xef\xbb\xbf# coding: UTF8\nsix==1.17.0" + HASH.encode() + b"\n",
+                    b"# one\n# two\n# coding: utf-7\nsix==1.17.0" + HASH.encode() + b"\n"):
+            self.assertEqual(prepare.precheck(raw, set()), [], raw)
+        try:
+            from pip._internal.utils.encoding import auto_decode
+        except ImportError:
+            return
+        self.assertIn("\ntorch==2.9.0", auto_decode(b"# -*- coding: utf-7 -*-\n" + hidden))  # What pip would read.
 
     def test_image_path_drops_only_the_script_directory(self):
         paths = ["/", "/usr/lib/python312.zip", "/usr/local/lib/python3.12/dist-packages"]
@@ -416,6 +457,27 @@ class PublishTests(Sandbox):
         with self.pip():
             code, output = self.main("cuda")
         self.assertEqual((code, output.strip(), self.calls), (65, prepare.CUDA_LOCK, []))
+
+    def test_python_lock_lines_are_checked_before_pip(self):
+        for text in ("evil-1.0.tar.gz" + HASH + "\n", "evil==1.0.tar.gz" + HASH + "\n", "-e .\n",
+                     "--no-binary :all:\nsix==1.17.0" + HASH + "\n", "./vendor/six-1.17.0.tar.gz" + HASH + "\n",
+                     "six @ https://files.pythonhosted.org/six-1.17.0.tar.gz" + HASH + "\n"):
+            self.calls.clear()
+            self.lock("python", text)
+            with self.pip():
+                code, output = self.main("python")
+            self.assertEqual((code, self.calls), (65, []), text)
+            self.assertIn("sparkdev: refused: unsupported lock line 1", output)
+        self.lockfile.write_bytes(b"\xff\xfe\x00")
+        with self.pip():
+            code, output = self.main("python")
+        self.assertEqual((code, self.calls), (65, []))
+        self.assertIn("sparkdev: refused: requirements.lock is not UTF-8", output)
+        # Package-name rules stay CUDA-only: the Python runtime may install CPU torch from PyPI.
+        self.lock("python", "torch==2.5.1" + HASH + "\n")
+        with self.pip():
+            code, output = self.main("python")
+        self.assertEqual((code, len(self.calls)), (0, 1), output)
 
     def test_cuda_precheck_refuses_before_download(self):
         dist(self.image, "numpy", "2.1.0")
