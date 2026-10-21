@@ -32,7 +32,7 @@ RETRY_SECONDS = 60
 HEARTBEAT_SECONDS = 10
 EXCLUDED = {".venv", "venv", "env", ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache",
             ".tox", ".nox", ".gradle", ".idea", ".sparkdev", ".sparkdev-output"}
-WINDOWS_DEVICE = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$", re.I)
+WINDOWS_DEVICE = re.compile(r"^(?:con|prn|aux|nul|clock\$|com[0-9]|lpt[0-9])(?:\..*)?$", re.I)
 
 
 class OutputFailure(Exception):
@@ -259,7 +259,7 @@ class OutputManager:
         path = "/".join(parts)
         if len(parts) > MAX_DEPTH or len(path.encode("utf-8")) > 2048 or any(
                 not p or p in (".", "..") or p[-1:] in (".", " ") or WINDOWS_DEVICE.fullmatch(p) or
-                any(ord(c) < 32 or c in '\\:<>"|?*' for c in p) for p in parts):
+                any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '\\:<>"|?*' for c in p) for p in parts):
             fail("outputs_unsafe", "A result filename is not a safe portable relative path")
         return path
 

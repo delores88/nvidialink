@@ -2,6 +2,12 @@
 
 `sparkdev` never prompts, invokes a pager, allocates a TTY, or interpolates workload arguments into SSH shell text. `--json` produces structured output. Attached runs stream JSON log events followed by the final result; detached commands return one JSON object. Client labels support accounting and fairness; they are not evidence that a particular AI agent actually ran a command.
 
+## Offload by default
+
+Use the installed CLI and owner-state path from **Agent setup**. Check `devices` and `status --all`, then send Linux-capable builds, tests, rendering, media conversion and compute through `run --where auto --detach`. Keep Windows/MSVC work on the laptop through its configured build gate. Retain the request ID and returned job ID, use bounded `wait` and incremental `logs`, and inspect the final workload exit code. Report an unavailable scheduler rather than silently bypassing it.
+
+The 0.5.0 candidate returns Spark job files automatically. There is no required fetch step: keep waiting while `state` is `returning`. The CLI, controller and installed Windows return worker must all be updated together. Source tests are separate from physical Spark transfer/render/package tests, installed Windows behavior and Marketplace acceptance; this page is the usage contract, not a receipt for those checks.
+
 ## Setup and state
 
 Run setup with your existing SSH alias and pinned `known_hosts` identity. All identifiers below are examples, not owner configuration.
@@ -104,11 +110,30 @@ Laptop process availability is separate from managed admission. Both runners nee
 
 `sparkdev plan DIR --where auto --runtime rust -- cargo test --locked` previews the same placement policy used by run. `--argv-json FILE` is also supported. Planning validates the source and exact arguments, computes the manifest without writing transfer objects, and returns `admission_required:true`, `claimed:false`, `uploaded:false` and `submitted:false`. It needs no network or SSH configuration. The result is a preview, not a reservation; run revalidates the tree and runtime against current scheduler admission. Runtime availability is not verified by plan.
 
-`--where auto` chooses the laptop for explicit Windows/MSVC targets, PowerShell/cmd scripts, Windows sandbox commands, NSIS tools and Tauri installers. Other work goes to the Spark. Use `--where laptop` or `--where spark` when the command has requirements the classifier cannot infer. The selected machine and reason are included in submission output. Runtime defaults are `rust` for cargo/rustc/rustup, `node` for node/npm/npx and `python` otherwise; `--runtime` selects only an owner-provisioned registry name.
+`--where auto` chooses the laptop for explicit Windows/MSVC targets, PowerShell/cmd scripts, Windows sandbox commands, NSIS tools and Tauri installers. Other work goes to the Spark. Use `--where laptop` or `--where spark` when the command has requirements the classifier cannot infer. The selected machine and reason are included in submission output. Runtime defaults are `rust` for cargo/rustc/rustup, `node` for node/npm/npx, `cuda` for direct ffmpeg/blender commands and `python` otherwise; `--runtime` selects only an owner-provisioned registry name. Request `--runtime cuda` explicitly for GPU Python. A CUDA runtime does not make arbitrary code use the GPU: select the supported encoder, Blender device or ML backend in the workload. Read observed `gpu_video` capabilities rather than assume an encoder name proves hardware acceleration.
 
 The laptop runner executes native owner processes and is not Docker-sandboxed. It obtains the same worktree lease from the Spark scheduler before starting, so it requires an authenticated scheduler connection. Laptop concurrency follows the saved owner setting (default two). Direct Cargo invocation is wrapped in the configured build gate, with per-project CARGO_TARGET_DIR under application state. On this owner's machine all local Cargo commands must use the prescribed PhaseForge build gate unchanged, and state/build output must stay on C:. Commands that indirectly invoke Cargo must themselves use the owner's build gate; the CLI cannot inspect arbitrary script behavior.
 
 Laptop workers persist independently of the invoking CLI. On Windows they launch without inheriting the caller's capture pipes, run at lower process priority, send a shared-board heartbeat every 15 s, counted from the start of the previous one so a slow heartbeat is followed at once by the next, and stop their owned process tree on cancellation or a lost lease (no successful heartbeat for 45 s). An expired laptop lease remains blocking on the scheduler because a sleeping laptop may resume a process. This protects the worktree from a second job; explicit terminal acknowledgement releases it. Final laptop log/board updates interrupted by a disconnect are saved and retried at the next authenticated command. `status --all` returns scheduler jobs plus laptop receipts and indicates unavailable remote state. Jobs for distinct worktrees may run independently on both machines. Laptop successful-result caching is disabled because the native host toolchain has no locked digest. Spark result reuse is scoped to the same worktree and requires matching source, exact argv, pinned runtime, worker and resource policy, including network mode. Different worktrees keep separate build caches and completed results; 0.4.1's `/cache` downloads are shared across worktrees. `--no-cache` forces a new execution but keeps using those saved downloads.
+
+## Automatic returned files (0.5.0)
+
+Normal Spark batch jobs return newly created and modified regular files from `/work` to their original project-relative paths. Files written under `/sparkdev-output` instead arrive under `results/JOB_ID` in the local owner state directory; `results_folder` reports the full path. Use that output directory for videos, renders, reports and other deliverables that should not replace project files. Logs are independent and remain available through `logs`. Native laptop jobs already write locally; services use their separate `call` response protocol.
+
+Only files are returned; remote deletions do not delete laptop files. Rebuildable/control directories such as `target`, `node_modules`, `dist`, `build`, virtual environments, Python caches, `.git` and bridge state are excluded. Put a deliverable in `/sparkdev-output` if its normal build folder is excluded. Secret/key paths, links and unsafe destinations are refused. Return filters cannot recognize every possible secret; never put credentials in results.
+
+A changed work file replaces its original only when the laptop copy still matches the uploaded hash. A newer local edit is kept, and the Spark file becomes a sibling such as `report.spark-JOB_ID.txt`. If that sibling already contains different bytes, it is preserved and the return reports an error. Safe replacement can leave a hidden `.report.txt.spark-original-JOB_ID-UUID` backup of the prior file; these backups are currently retained for recovery, not automatically deleted. Review conflicts and backups before removing them yourself.
+
+The detached `sparkdev-return` worker resumes transfers after the submitting agent exits, with one worker per owner state. The Windows installer registers the installed worker to start at user logon. Pending transfers resume when the laptop is awake, signed in and the saved bridge connection is enabled and reachable. An update stops this worker to replace its executable and preserves its receipts, configuration and admitted jobs; the updated worker resumes from those receipts. This candidate behavior still requires installed Windows acceptance.
+
+`wait`/`status` expose `returned` entries (`path`, `source_path`, `scope`, `bytes`, `sha256`, `status`), `results_folder` and `return_status` (`pending`, `retrying`, `complete` or `disabled`). While delivery is incomplete, a terminal remote workload is presented as `state:"returning"`, with its original `workload_state` and exit code retained. `return_error` explains failures; they remain retryable rather than becoming false success. Completion requires verified chunk and whole-file hashes and acknowledgement of the exact manifest. Failed/cancelled jobs can also have useful files to return. Cached successful jobs reuse retained immutable files as well as logs.
+
+```powershell
+sparkdev --client codex --json outputs JOB_ID
+sparkdev --client codex --json run C:/work/project --where spark --detach --no-return --request-id keep-remote-001 -- python3 task.py
+```
+
+`outputs` is optional manifest/receipt inspection, not a download step. `--no-return` explicitly disables automatic return for that run. The result limits are 64 GiB per file and per job, 10,000 files and a 3 MiB manifest. Split oversized results into separate jobs. Unacknowledged frozen files are retained for seven days; after every receiver acknowledges delivery, retention becomes one day. Cache reuse can extend the expiry. `outputs.retention.expires_at` is authoritative; expiry and later housekeeping apply only to frozen result copies, not source snapshots or job logs. Locally returned files/receipts have no automatic expiry. After remote expiry, rerun the workload with a new request ID when files must be recreated.
 
 ## Saved downloads
 
@@ -144,9 +169,30 @@ A sync first asks the Spark which limits it advertises. A controller that predat
 
 `prepare` submits a fixed runtime-specific locked downloader, with the same job/wait/logs interface. It cannot run caller-supplied setup commands. Dependency egress uses the separately installed allowlisting proxy and fails closed if it is unavailable, independently of the 0.4.1 job-internet switch. `--runtime cuda` installs `requirements-cuda.lock` in the CUDA image without a GPU and refuses packages the image provides; `status --json` lists the Spark's `preparable_runtimes`. See the remote controller docs for registry provisioning and supported lockfiles.
 
+## Locked system packages (0.5.0)
+
+Use `sparkdev-system.lock` in the project root for system libraries, tools and fonts. Generate it once using the fixed helper in a **fresh scratch project without an existing system lock**, using the same runtime as the target project. The resolver accepts `NAME` or `NAME=EXACT_VERSION`; it resolves the dependency closure against the pinned base, verifies signed apt metadata and emits exact versions, URLs, sizes and hashes. Package maintainer scripts do not run during resolution. Public job internet must be enabled by the owner; do not change that policy yourself.
+
+```powershell
+New-Item -ItemType Directory C:/work/package-lock-scratch
+sparkdev --client codex --json run C:/work/package-lock-scratch --where spark --runtime python --detach --request-id fonts-lock-001 -- python3 /sparkdev-system.py lock --package fonts-dejavu-core --package imagemagick --output /work/sparkdev-system.lock
+sparkdev --client codex --json wait LOCK_JOB_ID --timeout 20
+sparkdev --client codex --json logs LOCK_JOB_ID --since 0
+# Continue wait/logs until successful completion and automatic file return.
+Copy-Item C:/work/package-lock-scratch/sparkdev-system.lock C:/work/project/sparkdev-system.lock
+sparkdev --client codex --json prepare C:/work/project --runtime python --request-id fonts-prepare-001
+# Poll the returned preparation job to success before submitting project work.
+```
+
+Review the generated lock before deliberately replacing a project's old lock. To change requested versions or the base runtime, repeat resolution in a new scratch directory; the helper refuses resolution from an already-derived image and does not overwrite an existing output. No manual dependency-by-dependency lock construction is needed. Supported bases are Debian 12/13 and Ubuntu 22.04/24.04 on arm64/amd64; the image's distro and architecture must match.
+
+The lock is JSON with required `v:1`, `manager:"apt"`, `base_image:"sha256:<64 lowercase hex>"`, `distro:{"id":"ubuntu","version_id":"24.04"}` (or the supported Debian equivalent), `architecture:"arm64"|"amd64"`, and `packages`. Each package requires `name`, exact `version`, HTTPS `.deb` `url`, lowercase `sha256` and integer `bytes`. Optional `requested` lists the original package requests. These digest/version descriptions are placeholders, not a usable lock. URLs may not contain credentials, queries or fragments. The generated file includes the needed dependency closure, up to 2,048 packages, 2 GiB per package and 16 GiB in total.
+
+Preparation downloads the exact locked bytes through the guarded public proxy, then installs them in an offline, capped build container. Root is confined to that image-build step; normal jobs, dependency download and language preparation remain nonroot. The existing language-package domain allowlist remains in force for language preparation. No host apt or sudo is needed. The project-derived image is keyed by base/lock/installer identity and recorded by immutable digest. Normal runs and model services select it automatically once preparation succeeds. An unprepared or stale lock fails clearly; prepare with the matching runtime instead of bypassing it. Job status exposes `system_packages.phase`, `lock_sha256`, `base_image`, `image` and `count`. Repeating an unchanged prepared lock reuses the image.
+
 ## MCP
 
-Start `sparkdev --client codex mcp` or `sparkdev --client claude mcp` as an MCP stdio server. It supports initialization, tools/list, connection/resources/devices/plan/prepare/run/wait/logs/status/cancel and, in 0.4.1, serve/call through the same core. Inspect devices and plan placement before submission; neither reserves capacity. Run and locked dependency preparation detach; wait is bounded. Server launch arguments bind the accounting client, and tool calls cannot override it. JSON-RPC output contains no progress chatter. The transport uses newline-delimited JSON with a 2 MiB message limit. Real agent-session acceptance is separate from these protocol tests.
+Start `sparkdev --client codex mcp` or `sparkdev --client claude mcp` as an MCP stdio server. It supports initialization, tools/list and connection/resources/devices/plan/prepare/run/wait/logs/status/cancel/serve/call/outputs through the same core. Inspect devices and plan placement before submission; neither reserves capacity. Run and locked dependency preparation detach; wait is bounded. Files return automatically; `outputs` only inspects metadata. Server launch arguments bind the accounting client, and tool calls cannot override it. JSON-RPC output contains no progress chatter. The transport uses newline-delimited JSON with a 2 MiB message limit. Real agent-session acceptance is separate from these protocol tests.
 
 ## Stable control exit codes
 
@@ -167,7 +213,7 @@ Attached workload exit codes take precedence and may overlap control codes. Dist
 
 For AGENTS.md or CLAUDE.md in a project that uses this utility:
 
-> Prefer sparkdev for Linux-capable builds, tests and heavy compute. Use your actual client label (`codex` or `claude`), `--json`, `run --detach` with a retained request ID, bounded `wait --timeout 20`, and incremental `logs --since OFFSET`. Check `status --all` before submitting. Keep Windows installers and Windows-only tests local using `--where laptop`. Never claim another agent's label as acceptance evidence. Never run sparkdev discover; Find my Spark is an owner-only action. Treat host-key rejection as a hard stop; never disable host verification. After tool interruption reuse the request ID or job ID, rather than submit duplicate work.
+> Offload Linux-capable builds, tests, renders, media and compute through sparkdev by default. Use your actual client label (`codex` or `claude`), `--json`, `run --where auto --detach` with a retained request ID, bounded `wait --timeout 20`, and incremental `logs --since OFFSET`. Check `devices` and `status --all` first. Files return automatically: wait through `returning`, inspect the final workload exit code and `returned` receipts; `outputs JOB` is optional inspection, not a required fetch. Preserve conflict copies and recovery backups. Write deliverables under `/sparkdev-output` when they should land in local state/results/JOB. Use `--no-return` only for deliberate opt-out. GPU Python needs `--runtime cuda`; direct ffmpeg/blender infer it. Keep Windows installers/tests local through the configured build gate. Never claim another agent's label as acceptance evidence, change owner policy, run owner-only discover or weaken host verification. Reuse retained request/job IDs after an interruption. Use the documented system-lock resolver and prepare workflow for libraries/fonts; never host apt/sudo.
 
 Codex requires process-launch permission for the installed executable and SSH/paired-link network access. In restricted environments allow those capabilities explicitly through the environment's existing controls; never weaken SSH identity verification. The owner's present session is unrestricted, which does not prove behavior in a different Codex sandbox.
 

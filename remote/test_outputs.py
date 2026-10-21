@@ -331,7 +331,7 @@ class OutputTests(unittest.TestCase):
         (output / "café.txt").write_text("hello")
         saved = self.collect(job)
         self.assertEqual(saved["manifest_sha256"], controller.sha(json.dumps(saved["manifest"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()))
-        for name in ("CON.txt", "trailing.", "back\\slash", "colon:name"):
+        for name in ("CON.txt", "CLOCK$", "COM0", "control\x7f", "trailing.", "back\\slash", "colon:name"):
             job, _, output = self.setup_job(no_cache=True)
             (output / name).write_text("unsafe name")
             self.c.outputs_manager.collect(job)

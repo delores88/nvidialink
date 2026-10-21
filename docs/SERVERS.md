@@ -1,10 +1,11 @@
 # Named model services
 
-The 0.4.1 candidate lets an agent load a model once on the Spark and call a named
+DGXBridge lets an agent load a model once on the Spark and call a named
 HTTP service repeatedly. It does not publish a TCP port. Calls travel over the
 authenticated DGXBridge route and a private per-service request/reply spool.
-This page describes the candidate source contract, not a published installer,
-installed update or measured physical Spark TTS result.
+This page describes the source contract, including 0.5.0 preparation integration.
+It does not establish a published 0.5.0 installer, installed update or measured
+physical Spark TTS result.
 
 ## Start, call and stop
 
@@ -72,6 +73,23 @@ writable by all the owner's Spark jobs; do not store credentials there. HF token
 and generated executable/module caches have job-private paths. Use an appropriate
 provisioned runtime; CUDA is the default when available, otherwise Python.
 Internet-enabled services use the same public proxy/private-network guard as jobs.
+
+For system libraries, tools or fonts, generate `sparkdev-system.lock` in a fresh
+scratch project using the same runtime, then copy the returned lock into the
+service project and run `prepare` to success. Follow the
+[system-package recipe](CLI.md#locked-system-packages-050); the generated lock
+contains the exact dependency closure. `serve` then selects that prepared
+project-derived image automatically. A changed/unprepared lock is rejected
+rather than installed at service startup. Use a new start request ID for changed
+code or dependencies; an existing running service keeps its original image.
+Package installation uses root only in the capped, offline image-build step;
+the service remains nonroot. No host apt/sudo is required.
+
+Automatic `/work` and `/sparkdev-output` return in 0.5.0 applies to batch `run`
+jobs. Named services continue to deliver checked HTTP replies through `call`
+and optional `--save`; they do not wait for service termination to return a
+reply. Choose batch offload for one-shot renders/conversions and a named service
+when repeated requests benefit from keeping a model loaded.
 
 ## Capacity and lifecycle
 
