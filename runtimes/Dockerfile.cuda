@@ -1,14 +1,25 @@
 # Optional owner-local runtime, derived from the official immutable NGC base.
 # This creates a distinct Spark Dev Bridge image; it does not retag any existing image.
+ARG BLENDER_IMAGE
+FROM ${BLENDER_IMAGE} AS blender
 FROM nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130
 LABEL org.opencontainers.image.title="DGXBridge CUDA runtime"
 # The pinned base carries Pillow 11.3.0. Update only Pillow for its actual
 # CPython 3.12 interpreter; NVIDIA's torch and other dependencies stay intact.
-# ADD fetches the fixed artifact before RUN, which retains --network=none.
+# ADD fetches the fixed artifact; the next RUN uses only that hash-locked wheel.
 ADD https://files.pythonhosted.org/packages/3b/bb/9e30e8ed18c20800ee327a12107d5249ad8dc444867b3adfcc21654e3c71/pillow-13.0.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl /opt/sparkdev/wheels/
 RUN printf '%s\n' 'pillow==13.0.0 --hash=sha256:8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d' > /opt/sparkdev/pillow-requirements.txt \
  && /usr/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check --no-index --find-links=/opt/sparkdev/wheels --require-hashes --only-binary=:all: --no-deps --force-reinstall --break-system-packages -r /opt/sparkdev/pillow-requirements.txt
 RUN /usr/bin/python3 -c 'import site,pip,torch; assert site.ENABLE_USER_SITE'
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+# This setup-only step resolves signed Ubuntu packages before the final image ID
+# is pinned. It does not grant package installation or root to running jobs.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg libx11-6 libxext6 libxfixes3 libxi6 libglvnd0 libopengl0 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=blender /opt/blender /opt/blender
+COPY --from=blender /usr/lib/aarch64-linux-gnu/libEGL.so.1* /usr/lib/aarch64-linux-gnu/
+COPY --from=blender /usr/share/glvnd/egl_vendor.d/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+COPY media_probe.py /opt/sparkdev/media_probe.py
+ENV PATH=/opt/blender:${PATH} NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /work
 ENTRYPOINT ["/usr/bin/python3"]

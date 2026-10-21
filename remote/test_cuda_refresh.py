@@ -28,7 +28,7 @@ class CudaRefreshTests(unittest.TestCase):
     source_files = fixture.RefreshTests.source_files
 
     def cuda_bundle(self):
-        for name in ("install-cuda.py", "runtime/Dockerfile.cuda"):
+        for name in ("install-cuda.py", *bootstrap.CUDA_SOURCES):
             raw = ("fixture:" + name).encode()
             self.files[name] = raw
             self.envelope["files"][name] = {"data": base64.b64encode(raw).decode(), "sha256": hashlib.sha256(raw).hexdigest()}
@@ -38,7 +38,10 @@ class CudaRefreshTests(unittest.TestCase):
     def cuda_sources(self):
         digest = self.cuda_bundle()
         self.source_files()
-        (self.root / "runtime" / "Dockerfile.cuda").write_bytes(self.files["runtime/Dockerfile.cuda"])
+        for name in bootstrap.CUDA_SOURCES:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(self.files[name])
         return digest
 
     @contextlib.contextmanager
@@ -46,7 +49,7 @@ class CudaRefreshTests(unittest.TestCase):
         helper = {"runtime_inputs": fixture.installer.runtime_inputs,
                   "publish_runtime_status": fixture.installer.publish_runtime_status,
                   "register_runtimes": register or mock.Mock()}
-        with mock.patch.object(cuda, "helpers", return_value=helper), mock.patch.object(cuda, "require_probe_headroom"), mock.patch.object(cuda.subprocess, "run", side_effect=self.fake_run), mock.patch("builtins.print"):
+        with mock.patch.object(cuda, "helpers", return_value=helper), mock.patch.object(cuda, "blender_image", return_value=(cuda.BLENDER_EXISTING, "fixture")), mock.patch.object(cuda, "require_probe_headroom"), mock.patch.object(cuda.subprocess, "run", side_effect=self.fake_run), mock.patch("builtins.print"):
             yield helper
 
     def test_both_refreshes_use_one_sequential_launcher_with_distinct_receipts(self):
@@ -110,22 +113,61 @@ class CudaRefreshTests(unittest.TestCase):
 
     def test_success_uses_immutable_context_caps_exact_worker_python_and_probe(self):
         digest = self.cuda_sources()
-        outputs = [json.dumps([{"Id": fixture.IMAGE, "Architecture": "arm64"}]).encode(), b'{"user_site":true}']
+        outputs = [json.dumps([{"Id": fixture.IMAGE, "Architecture": "arm64"}]).encode(), b'{"user_site":true}',
+                   json.dumps({"gpu_video": {"listed_encoders": ["h264_nvenc", "hevc_nvenc", "av1_nvenc"], "nvenc": False}, "blender": {"version": "4.5.9"}}).encode()]
         with self.cuda_context() as helper, mock.patch.object(cuda.subprocess, "check_output", side_effect=outputs) as check:
             self.assertEqual(cuda.build_cuda(self.root, digest, "a" * 32), 0)
         build = next(a for a in self.calls if a[:2] == ["docker", "build"])
         self.assertEqual(build[-1], str(self.root / "runtime-build-inputs" / digest))
         self.assertEqual(build[build.index("--cpu-quota") + 1], "100000")
         self.assertEqual(build[build.index("--memory") + 1], "1g")
-        probe = check.call_args_list[-1]
+        self.assertIn("BLENDER_IMAGE=" + cuda.BLENDER_EXISTING, build)
+        probe = check.call_args_list[-2]
         self.assertEqual(probe.kwargs["timeout"], 120)
         args = probe.args[0]
         self.assertEqual(args[args.index("--entrypoint") + 1], "/usr/bin/python3")
         self.assertEqual(args[args.index("--memory") + 1], "4g")
         self.assertIn("site.ENABLE_USER_SITE", args[-1])
+        self.assertIn("NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video", args)
+        media = check.call_args_list[-1]
+        self.assertEqual(media.kwargs["timeout"], 300)
+        self.assertEqual(media.args[0][-2:], ["/opt/sparkdev/media_probe.py", "--probe"])
         helper["register_runtimes"].assert_called_once()
         receipt = json.loads((self.root / "runtime-cuda-build.json").read_text())
         self.assertEqual((receipt["state"], receipt["source_digest"]), ("succeeded", digest))
+        self.assertFalse(receipt["probe"]["gpu_video"]["nvenc"])
+
+    def test_existing_blender_is_only_inspected_by_exact_digest(self):
+        with mock.patch.object(cuda, "inspect_image", return_value=cuda.BLENDER_EXISTING) as inspect, mock.patch.object(cuda.subprocess, "run") as run:
+            image, origin = cuda.blender_image(self.root, self.root, {})
+        self.assertEqual(image, cuda.BLENDER_EXISTING)
+        inspect.assert_called_once_with(cuda.BLENDER_EXISTING)
+        run.assert_not_called()
+
+    def test_missing_compiled_video_support_never_activates_candidate(self):
+        digest = self.cuda_sources()
+        original = self.registry()
+        outputs = [json.dumps([{"Id": fixture.IMAGE, "Architecture": "arm64"}]).encode(), b'{"user_site":true}',
+                   b'{"gpu_video":{"listed_encoders":[]},"blender":{"version":"4.5.9"}}']
+        with self.cuda_context() as helper, mock.patch.object(cuda.subprocess, "check_output", side_effect=outputs):
+            self.assertEqual(cuda.build_cuda(self.root, digest, "a" * 32), 1)
+        helper["register_runtimes"].assert_not_called()
+        self.assertEqual(json.loads((self.root / "runtimes.json").read_text()), original)
+
+    def test_missing_owner_image_builds_bounded_standalone_blender(self):
+        for name in cuda.BLENDER_FILES:
+            (self.root / name).write_text("fixed source " + name)
+        helper = {"atomic": fixture.installer.atomic}
+        with mock.patch.object(cuda, "inspect_image", side_effect=[subprocess.CalledProcessError(1, ["docker"]), fixture.IMAGE]), \
+                mock.patch.object(cuda, "helpers", return_value=helper), mock.patch.object(cuda.subprocess, "run", side_effect=self.fake_run):
+            image, _ = cuda.blender_image(self.root, self.root, {})
+        self.assertEqual(image, fixture.IMAGE)
+        build = self.calls[-1]
+        self.assertEqual(build[build.index("--cpu-quota") + 1], "200000")
+        self.assertEqual(build[build.index("--memory") + 1], "8g")
+        self.assertIn("JOBS=2", build)
+        self.assertEqual(build[build.index("--tag") + 1], "sparkdev/blender:4.5.9-arm64")
+        self.assertEqual(json.loads((self.root / "runtime-blender-build.json").read_text())["image"], fixture.IMAGE)
 
     def test_cuda_lock_timeout_preserves_active_builder_receipt(self):
         active = {"state": "building", "attempt_id": "b" * 32}

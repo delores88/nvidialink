@@ -41,8 +41,8 @@ against [official PyPI release metadata](https://pypi.org/pypi/Pillow/13.0.0/jso
 Pillow 13.0.0 requires Python 3.11 or later. A managed physical Spark probe of the
 prior CUDA image confirmed `/usr/bin/python3` 3.12.3, Pillow 11.3.0 and NVIDIA torch
 `2.9.0a0+50eac811a6.nv25.9`. Its Dockerfile fetches only the fixed official cp312
-wheel and installs with `--require-hashes --no-index --no-deps`, retaining the
-network-disabled build step and NVIDIA's existing dependencies. Both runtime
+wheel and installs with `--require-hashes --no-index --no-deps`, using only the
+downloaded wheel and retaining NVIDIA's existing dependencies. Both runtime
 activation probes require the exact Pillow 13.0.0 version and a native PNG
 decode/resize check before registration.
 
@@ -66,3 +66,40 @@ It verifies the extracted tool digest as well. The release URL and checksum bind
 are recorded in `evidence/link/2026-10-13-arm64-auditable.json`. The tool is not
 redistributed with DGXBridge; compiled binary dependency metadata identifies
 the libraries actually linked into each release.
+
+## 0.5.0 Blender and GPU video
+
+`runtimes/Dockerfile.blender` and `runtimes/blender/` adapt the owner's read-only
+PhaseForge Blender build artifact. That artifact resides outside the PhaseForge
+Git checkout, so no PhaseForge commit is claimed. `runtimes/blender/PROVENANCE.json`
+records every original file's SHA-256 and the narrow adaptations (two compiler
+workers, flattened bootstrap paths, separate `sparkdev` image name). Blender is
+checked out at upstream commit `8bf95cbd38d1456c94e9d751f3804eea4d5b137b`
+(`v4.5.9`); NVIDIA OptiX headers are pinned at
+`f60c1e44f18426f426a2ed948f28515b3cf67b8a` (`v8.0.0`). Blender's dependency builder
+verifies its source archives against its pinned hashes. These third-party
+components retain their own licenses; this repository ships recipes and patches,
+not Blender or NVIDIA image layers.
+
+The installer can reuse existing immutable image
+`sha256:69504fa0aa66263511d356be871df4ab56c8332ea629525fbb832a7249abff62`
+as a read-only COPY source. It never retags or modifies that image. If absent,
+it builds its own `sparkdev/blender:4.5.9-arm64` with two CPUs and 8 GiB memory,
+records the immutable result and copies Blender into its own CUDA image. The
+source build uses pinned `nvidia/cuda:13.0.1-devel-ubuntu24.04` digest
+`5c36750138dc1447a17dafbb397674f167d3b44ce18d9160d769df114577b35d` and Ubuntu
+24.04 digest `08571ca13e00ca07a2a84eab83a959b4242e22cceb16486a11bef1428c9e93a7`.
+Both paths provide the same Blender version, sm_121 CUDA kernel, OptiX and OIDN.
+The activation probe checks these capabilities; separate admitted ten-frame
+renders remain the physical acceptance gate.
+
+CUDA setup additionally installs Ubuntu's signed FFmpeg package and Blender
+system libraries. Package versions are resolved at setup before the final image
+ID is pinned; this is not a reproducible package lock. The Pillow wheel install
+retains `--no-index --require-hashes --no-deps`. CUDA image setup now requires
+network for system packages; normal jobs still run as non-root with unchanged
+network policy. `video` joins the NVIDIA driver capabilities so encode/decode
+libraries are mounted. [NVIDIA's Spark hardware documentation](https://docs.nvidia.com/dgx/dgx-spark/hardware.html)
+lists NVENC/NVDEC, but DGXBridge reports only its cached physical FFmpeg probes:
+encoder enumeration, actual ten-frame encode/verification and explicit CUVID
+decode are separate fields. See [NVIDIA's FFmpeg guidance](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.0/ffmpeg-with-nvidia-gpu/index.html).

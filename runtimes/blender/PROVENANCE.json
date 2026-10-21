@@ -1,0 +1,22 @@
+{
+  "source": "Owner-provided read-only PhaseForge Blender runtime build artifact",
+  "phaseforge_git_commit": null,
+  "note": "Artifact resides outside the PhaseForge Git checkout; no PhaseForge commit is claimed. Exact source bytes are pinned below.",
+  "blender_commit": "8bf95cbd38d1456c94e9d751f3804eea4d5b137b",
+  "optix_commit": "f60c1e44f18426f426a2ed948f28515b3cf67b8a",
+  "files_sha256": {
+    "build/prune_deps.py": "f3fc57ba13f8a8e009032102796386c8f31215779949ce9889e86a3f92e02675",
+    "build/patch_deps_cuda13.py": "67a8f078448ae216411bd3eefe6711f1ddf8e101dbb5ccb4255b9dd0f8b34427",
+    "build/patch_deps_toolchain.py": "3e7ffdd77d75c79632bfccbd080b0e451b2e0481f12892228707bf6ad0618009",
+    "build/patch_deps_ispc.py": "314ae4d076ef6cade3f499d1d44081713e944b9647209b3faa9ae467940798f8",
+    "build/patch_deps_oidn_cudart.py": "81d11f92adee0a53cb1d9bf096e15dd4c2fb34bfeef094d691a3a057ce095784",
+    "build/patch_deps_numpy.py": "8e0f7df6cc5a2d51e71eda1f4619edd9c80eba47f9f9069be276ecd6634bcb8c",
+    "build/runtime/10_nvidia.json": "9e6f14afaa7523370ad96e6675d3357441ee3985e60405cb3e0ced30b2ddaf76",
+    "Dockerfile": "59f8773a92b0111943930cd658b3b4c08bdbf2544c0cd11404b98715ff5f32fb"
+  },
+  "adaptations": [
+    "Default compiler parallelism reduced from 18 to 2",
+    "COPY paths flattened for hash-checked bootstrap context",
+    "Own sparkdev image title"
+  ]
+}

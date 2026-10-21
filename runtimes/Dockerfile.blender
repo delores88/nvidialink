@@ -1,0 +1,214 @@
+# Adapted read-only PhaseForge build artifact; see PROVENANCE.json. Builds only sparkdev images.
+# Blender 4.5.9 for linux-aarch64 (NVIDIA DGX Spark, GB10) with Cycles CUDA + OptiX,
+# OpenImageDenoise (CPU + CUDA) and FFmpeg. Built ON the Spark; see README.md.
+#
+# Every base image and source is pinned: base images by arm64 manifest digest, Blender
+# and the OptiX headers by git commit, and every `make deps` source by Blender's own
+# hashes in build_files/build_environment/cmake/versions.cmake.
+#
+# The deps build is split into several RUN layers on purpose, so that a failure late in
+# the build does not repeat LLVM. BuildKit keys each cached layer on the exact instructions
+# above it, so an iterated build runs the same steps as a from-scratch one; BUILD_LOG.md
+# also records a --no-cache build of this file.
+
+ARG BUILDER_BASE=nvidia/cuda:13.0.1-devel-ubuntu24.04@sha256:5c36750138dc1447a17dafbb397674f167d3b44ce18d9160d769df114577b35d
+ARG RUNTIME_BASE=ubuntu:24.04@sha256:08571ca13e00ca07a2a84eab83a959b4242e22cceb16486a11bef1428c9e93a7
+
+###############################################################################
+FROM ${BUILDER_BASE} AS builder
+
+ARG BLENDER_TAG=v4.5.9
+ARG BLENDER_COMMIT=8bf95cbd38d1456c94e9d751f3804eea4d5b137b
+ARG OPTIX_TAG=v8.0.0
+ARG OPTIX_COMMIT=f60c1e44f18426f426a2ed948f28515b3cf67b8a
+# GB10 is compute capability 12.1. Cycles loads a cubin only on an exact sm_<major><minor>
+# match (intern/cycles/device/cuda/device_impl.cpp:261), so sm_121 is required to avoid
+# PTX JIT; compute_120 PTX is the JIT fallback for any other SM 12.x part.
+ARG CYCLES_CUDA_ARCH="sm_121;compute_120"
+ARG JOBS=2
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    SOURCE_DATE_EPOCH=1745584760
+
+# Tools `make deps` requires (cmake/check_software.cmake) plus X11/EGL headers for GHOST.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      autoconf automake autopoint bison build-essential bzip2 ca-certificates cmake curl \
+      file flex gettext git git-lfs libtool m4 meson nasm ninja-build patch patchelf perl \
+      pkg-config python3 python3-mako tcl texinfo unzip wget xz-utils yasm zstd \
+      libx11-dev libxext-dev libxi-dev libxxf86vm-dev libxcursor-dev libxrandr-dev \
+      libxinerama-dev libxfixes-dev libxrender-dev libxkbcommon-dev libxkbcommon-x11-dev \
+      libegl-dev libgl-dev libglvnd-dev libdbus-1-dev libsm-dev libice-dev libxt-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Blender source at the exact v4.5.9 commit. Git LFS: only the runtime data
+# (release/datafiles, assets, scripts); the 5,800 test-data files are skipped.
+WORKDIR /src
+RUN git lfs install --system --skip-smudge \
+ && git clone --depth 1 --branch "${BLENDER_TAG}" https://projects.blender.org/blender/blender.git blender \
+ && test "$(git -C blender rev-parse HEAD)" = "${BLENDER_COMMIT}" \
+ && git -C blender lfs pull --include="release/datafiles/**,assets/**,scripts/**" \
+ && test "$(head -c 7 blender/release/datafiles/startup.blend)" = "BLENDER" \
+ && git clone --depth 1 --branch "${OPTIX_TAG}" https://github.com/NVIDIA/optix-dev.git /opt/optix-dev \
+ && test "$(git -C /opt/optix-dev rev-parse HEAD)" = "${OPTIX_COMMIT}" \
+ && grep -q "define OPTIX_VERSION 80000" /opt/optix-dev/include/optix.h
+
+# Prune the deps superbuild to what PhaseForge uses, make OIDN build with CUDA 13, and
+# keep archive timestamps so Ubuntu 24.04's libtool 2.4.7 is never mixed into tarballs
+# generated with 2.4.6 (BUILD_LOG.md, failure 2).
+COPY prune_deps.py patch_deps_cuda13.py patch_deps_toolchain.py /build-scripts/
+RUN python3 /build-scripts/prune_deps.py /src/blender/build_files/build_environment \
+ && python3 /build-scripts/patch_deps_cuda13.py /src/blender/build_files/build_environment \
+ && python3 /build-scripts/patch_deps_toolchain.py /src/blender/build_files/build_environment
+
+ENV DEPS_BUILD=/build/deps_arm64 \
+    DEPS_LIB=/src/blender/lib/linux_arm64
+ARG DEPS_MAKE="/src/blender/build_files/build_environment/linux/make_deps_wrapper.sh -s"
+
+# Configure (this downloads every remaining source package). Sources come from Blender's
+# own release mirror (projects.blender.org/blender/lib-source, branch blender-v4.5-release),
+# as on Blender's build farm; the fourth try falls back to the upstream URLs for anything
+# still missing. download_source() skips files already present, so retries resume. The final
+# configure runs with the mirror setting, which re-checks the hash of every package.
+RUN ok=0; for i in 1 2 3 4; do \
+      src=OFF; if [ "$i" = 4 ]; then src=ON; fi; \
+      if cmake -S /src/blender/build_files/build_environment -B "${DEPS_BUILD}" \
+           -DHARVEST_TARGET="${DEPS_LIB}" -DMAKE_THREADS="${JOBS}" \
+           -DPACKAGE_USE_UPSTREAM_SOURCES="$src"; then ok=1; break; fi; \
+      echo "deps configure attempt $i failed (upstream sources: $src)"; sleep 20; \
+    done; \
+    test "$ok" = 1 \
+ && cmake -S /src/blender/build_files/build_environment -B "${DEPS_BUILD}" \
+      -DPACKAGE_USE_UPSTREAM_SOURCES=OFF \
+ && du -sh "${DEPS_BUILD}/packages"
+
+# Layered deps build through Blender's make_deps_wrapper.sh with -j${JOBS}.
+RUN ${DEPS_MAKE} -C "${DEPS_BUILD}" -j"${JOBS}" ll
+# Build-time packages Blender's Rocky 8 recipe (linux/linux_rocky8_setup.sh) lists for the
+# remaining deps: ncurses + zlib headers (external_ispc), autogen (external_sndfile),
+# GLU headers (external_opensubdiv). Added after LLVM so its layer stays cached
+# (BUILD_LOG.md, failure 3).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libncurses-dev zlib1g-dev autogen libglu1-mesa-dev \
+ && rm -rf /var/lib/apt/lists/*
+# ISPC: skip its 32-bit ARM (armv7) C++ builtins, which need a 32-bit ARM sysroot
+# (BUILD_LOG.md, failure 4). The superbuild re-runs CMake on its own after this edit.
+COPY patch_deps_ispc.py /build-scripts/
+RUN python3 /build-scripts/patch_deps_ispc.py /src/blender/build_files/build_environment
+# OIDN 2.3.3's CUDA driver shim lacks CUDA 13's __cudaLaunchKernel, so its CUDA module
+# would not load and Cycles would silently denoise on the CPU; link the static CUDA
+# runtime instead (BUILD_LOG.md, failure 7).
+COPY patch_deps_oidn_cudart.py /build-scripts/
+RUN python3 /build-scripts/patch_deps_oidn_cudart.py /src/blender/build_files/build_environment
+RUN ${DEPS_MAKE} -C "${DEPS_BUILD}" -j"${JOBS}" external_ispc external_openimagedenoise \
+ && ! nm -D --undefined-only \
+      "${DEPS_BUILD}/Release/openimagedenoise/lib/libOpenImageDenoise_device_cuda.so.2.3.3" \
+      | grep -q __cudaLaunchKernel
+RUN ${DEPS_MAKE} -C "${DEPS_BUILD}" -j"${JOBS}" external_ffmpeg
+# NumPy: build single-threaded. Its parallel distutils build races on lapack_lite objects
+# shared by two extensions and can leave numpy.linalg (and so `import numpy`) broken
+# (BUILD_LOG.md, failure 8). The check below exercises the LAPACK routines that broke.
+COPY patch_deps_numpy.py /build-scripts/
+RUN python3 /build-scripts/patch_deps_numpy.py /src/blender/build_files/build_environment
+RUN ${DEPS_MAKE} -C "${DEPS_BUILD}" -j"${JOBS}" external_openimageio external_opencolorio \
+      openvdb external_embree external_openpgl external_opensubdiv external_numpy \
+ && "${DEPS_BUILD}/Release/python/bin/python3.11" -I -c "import numpy as np; \
+      np.linalg.svd(np.eye(3) + 1j * np.ones((3, 3))); np.linalg.svd(np.eye(4)); \
+      np.linalg.eig(np.diag([1.0, 2.0])); np.linalg.solve(np.eye(3), np.ones(3)); \
+      print('numpy', np.__version__, 'linalg ok')"
+# Everything else, then harvest (install rules) and strip into lib/linux_arm64.
+RUN ${DEPS_MAKE} -C "${DEPS_BUILD}" -j"${JOBS}" install \
+ && test -d "${DEPS_LIB}/python" && test -d "${DEPS_LIB}/openimagedenoise" \
+ && ls "${DEPS_LIB}" > /build/deps-harvested.txt
+
+# Blender itself. blender_release.cmake is the official release configuration; the
+# overrides below are the PhaseForge feature set (README.md, "Features"). LIBDIR is
+# explicit: Blender auto-detects lib/linux_arm64 only when it is the precompiled git
+# submodule (has .git), not a `make deps` output (BUILD_LOG.md, failure 6).
+# WITH_STRICT_BUILD_OPTIONS turns any requested-but-missing library into an error instead
+# of silently disabling the feature.
+RUN cmake -S /src/blender -B /build/blender -G Ninja \
+      -C /src/blender/build_files/cmake/config/blender_release.cmake \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/blender \
+      -DLIBDIR="${DEPS_LIB}" \
+      -DWITH_STRICT_BUILD_OPTIONS=ON \
+      -DWITH_INSTALL_PORTABLE=ON \
+      -DWITH_BUILDINFO=OFF \
+      -DWITH_CYCLES_DEVICE_CUDA=ON \
+      -DWITH_CYCLES_CUDA_BINARIES=ON \
+      -DCYCLES_CUDA_BINARIES_ARCH="${CYCLES_CUDA_ARCH}" \
+      -DWITH_CYCLES_DEVICE_OPTIX=ON \
+      -DOPTIX_ROOT_DIR=/opt/optix-dev \
+      -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda \
+      -DWITH_CYCLES_DEVICE_HIP=OFF -DWITH_CYCLES_HIP_BINARIES=OFF -DWITH_CYCLES_DEVICE_HIPRT=OFF \
+      -DWITH_CYCLES_DEVICE_ONEAPI=OFF -DWITH_CYCLES_ONEAPI_BINARIES=OFF \
+      -DWITH_OPENIMAGEDENOISE=ON \
+      -DWITH_CODEC_FFMPEG=ON \
+      -DWITH_USD=OFF -DWITH_MATERIALX=OFF -DWITH_HYDRA=OFF \
+      -DWITH_ALEMBIC=OFF -DWITH_OPENCOLLADA=OFF -DWITH_CYCLES_OSL=OFF \
+      -DWITH_XR_OPENXR=OFF -DWITH_OPENAL=OFF -DWITH_SDL=OFF -DWITH_JACK=OFF \
+      -DWITH_PULSEAUDIO=OFF -DWITH_PIPEWIRE=OFF -DWITH_INPUT_NDOF=OFF \
+      -DWITH_HARU=OFF -DWITH_POTRACE=OFF \
+      -DWITH_GHOST_WAYLAND=OFF -DWITH_VULKAN_BACKEND=OFF \
+      -DWITH_DOC_MANPAGE=OFF -DWITH_BLENDER_THUMBNAILER=OFF \
+ && grep -E "^(CYCLES_CUDA_BINARIES_ARCH|WITH_CYCLES_DEVICE_OPTIX|WITH_OPENIMAGEDENOISE|WITH_CODEC_FFMPEG|WITH_OPENVDB|WITH_CYCLES_EMBREE):" /build/blender/CMakeCache.txt
+
+RUN ninja -C /build/blender -j"${JOBS}" install \
+ && ls /opt/blender/4.5/scripts/addons_core/cycles/lib/ > /opt/blender/cycles-kernels.txt \
+ && grep -q "kernel_sm_121.cubin.zst" /opt/blender/cycles-kernels.txt \
+ && grep -q "kernel_compute_120.ptx.zst" /opt/blender/cycles-kernels.txt \
+ && grep -q "kernel_optix.ptx.zst" /opt/blender/cycles-kernels.txt \
+ && chmod -R a+rX,go-w /opt/blender
+
+###############################################################################
+FROM ${RUNTIME_BASE} AS runtime
+
+# Only what Blender needs from the system: the X11 client libraries it links (ldd of
+# the 4.5.9 binary: libX11, libXext, libXfixes, libXi) and the glvnd EGL/OpenGL
+# dispatch libraries libepoxy loads for headless GPU contexts (EEVEE). No Mesa: the
+# NVIDIA driver libraries (libcuda, libnvoptix, libEGL_nvidia, ...) and the glvnd EGL
+# vendor file are injected by the container toolkit at run time. Ubuntu's libegl1
+# package hard-depends on Mesa's EGL vendor (libegl-mesa0 -> libgallium + libllvm20,
+# about 230 MB), so the glvnd libEGL.so.1 is copied from the builder (same noble
+# libglvnd build) instead of installed (BUILD_LOG.md, attempt 9).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libx11-6 libxext6 libxfixes3 libxi6 libglvnd0 libopengl0 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/lib/aarch64-linux-gnu/libEGL.so.1* /usr/lib/aarch64-linux-gnu/
+# glvnd EGL vendor file for the NVIDIA driver. The toolkit's legacy (non-CDI) mode on the
+# Spark injects libEGL_nvidia.so.0 but not this file, so without it glvnd finds no EGL
+# vendor and EEVEE aborts (BUILD_LOG.md, attempt 10). Identical to the host's
+# /usr/share/glvnd/egl_vendor.d/10_nvidia.json from libnvidia-gl-580.
+COPY 10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+
+COPY --from=builder /opt/blender /opt/blender
+
+# Every ELF file must resolve against the image alone; libcuda.so.1 is the only library
+# allowed to come from the injected driver.
+RUN find /opt/blender -type f \( -name "*.so*" -o -name blender \) -exec sh -c \
+      'for f; do if head -c 4 "$f" | grep -q ELF; then ldd "$f" 2>/dev/null | grep "not found" | grep -v libcuda.so.1 | sed "s|^|$f: |"; fi; done' _ {} + \
+      > /tmp/ldd-missing.txt \
+ && ldd /usr/lib/aarch64-linux-gnu/libEGL.so.1 /usr/lib/aarch64-linux-gnu/libOpenGL.so.0 \
+      | grep "not found" >> /tmp/ldd-missing.txt || true \
+ && if [ -s /tmp/ldd-missing.txt ]; then cat /tmp/ldd-missing.txt; exit 1; fi \
+ && rm /tmp/ldd-missing.txt \
+ && /opt/blender/4.5/python/bin/python3.11 -I -c "import numpy as np; \
+      np.linalg.svd(np.eye(3) + 1j * np.ones((3, 3))); np.linalg.solve(np.eye(3), np.ones(3)); \
+      print('bundled numpy', np.__version__, 'linalg ok')"
+
+ENV PATH=/opt/blender:${PATH} \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
+    LANG=C.UTF-8
+
+LABEL org.opencontainers.image.title="sparkdev-blender" \
+      org.opencontainers.image.version="4.5.9" \
+      org.opencontainers.image.description="Blender 4.5.9 linux-aarch64, Cycles CUDA sm_121+compute_120, OptiX 8.0 (ABI 87), OIDN 2.3.3, FFmpeg" \
+      org.opencontainers.image.source="https://projects.blender.org/blender/blender (v4.5.9 8bf95cbd38d1456c94e9d751f3804eea4d5b137b)"
+
+USER 65534:65534
+WORKDIR /tmp
+CMD ["blender", "-b", "--version"]
