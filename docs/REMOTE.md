@@ -61,16 +61,16 @@ images are only pulled/built during explicit owner provisioning, never job submi
 
 | Operation | Fields after `v,op` | Result |
 |---|---|---|
-| `missing` | `hashes` (at most 10,000) | `missing` hashes |
+| `missing` | `hashes` (at most 10,000; `[]` probes) | `missing` hashes, sync `limits`, `storage` free and reserve bytes |
 | `put` | `sha256,data` (base64, at most 1 MiB decoded) | accepted hash and size |
-| `put_many` | `chunks:[{sha256,data}]` (128 objects / 3 MiB JSON body maximum) | ordered `accepted` objects and decoded byte count |
-| `sync` | `project,manifest` | `manifest_id,files,bytes,project` |
+| `put_many` | `chunks:[{sha256,data}]` (128 objects / 12 MiB JSON body maximum) | ordered `accepted` objects and decoded byte count |
+| `sync` | `project,manifest` | `manifest_id,files,bytes,project`, or `materializing` while the Spark assembles it |
 | `run` | `project,manifest_id,argv,runtime,client,request_id,no_cache?` | job receipt |
 | `prepare` | `project,manifest_id,runtime,client,request_id` | dependency job receipt |
 | `wait` | `job,timeout?` (0â€“60 seconds) | current job receipt |
 | `logs` | `job,since,limit?` (1 MiB maximum) | base64 `data`, display `text`, `next_offset`, receipt |
 | `cancel` | `job` | durable cancellation receipt |
-| `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, limits, runtimes, observed `network` link |
+| `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, resource `limits`, runtimes, observed `network` link, `storage`, `sync_limits`, `materializing` queue |
 | `doctor` | none | status (including `network`) plus SQLite, Docker, Linux and memory checks |
 | `resources` | `limits?` (complete owner policy) | effective policy, hardware bounds, persistence and application timing |
 | `claim` | `project,client,request_id,job?,ttl?` | laptop `lease,job,expires_at` |
@@ -84,7 +84,53 @@ as UTF-8 JSON with sorted object keys, no insignificant whitespace, and unescape
 Unicode. Its SHA-256 is the manifest ID. Files are rebuilt from verified chunk hashes
 and whole-file hashes, without archive extraction. Symlinks, traversal, duplicate
 case-insensitive names, excluded directories and credential patterns are refused.
-Maximum file/tree sizes are 4/20 GiB and maximum file count is 100,000.
+A file may be up to 16 GiB and a project up to 32 GiB, of which files of 512 MiB or
+less ("small" files) may total at most 8 GiB. At most 100,000 files are accepted.
+These limits keep a full manifest well inside the 4 MiB paired-route frame; a 64 GiB
+project waits for measured wired throughput and a prune operation.
+
+## Limits handshake and snapshot assembly
+
+A new CLI first sends `missing` with no hashes. The response carries `limits`
+(`chunk`, `max_file`, `max_tree`, `max_small_tree`, `large_file`, `max_files`,
+`max_request`, `put_many_body`, `missing_batch`) and `storage`
+(`free_bytes`, `total_bytes`, `reserve_bytes`). A controller without `limits` is
+treated as legacy: the CLI then refuses, before any upload, any file over 512 MiB or
+project over 8 GiB, and asks the owner to update Spark setup. A different advertised
+chunk size is refused. `missing` checks presence with `lstat` only (a regular object
+of at most 1 MiB); it never re-reads objects. Assembly re-verifies every chunk.
+
+`sync` validates the manifest, refuses `missing_chunks` before writing anything,
+and queues the snapshot as `~/sparkdev/state/pending/<manifest>.json`. Snapshots that
+need at most 512 MiB of new bytes are assembled inside the RPC, exactly as before, so
+older CLIs and small projects see a synchronous sync. Larger ones are assembled by
+one detached materializer (`controller.py materialize`, started with stdio closed in
+its own session), which holds a single global lock and processes the queue oldest
+first; at most four snapshots may be queued. A sync waits up to 20 seconds, then
+answers `materializing` with progress ("X of Y MiB"); running the same command again
+continues where it left off. The scheduler restarts the materializer whenever work is
+queued and none holds the lock; its unit's `KillMode=process` keeps a running
+materializer alive across scheduler restarts.
+
+Assembly applies the same checks as before to every chunk: length, SHA-256 and the
+credential scan with the previous chunk's 512-byte tail, then the whole-file hash. A
+chunk whose content no longer matches its name is unlinked, and that sync answers
+`hash_mismatch` once, so the CLI uploads it again. Files over 512 MiB are written once
+to `files/<sha256>-<mode>`, fsynced, made read-only and hard-linked into each
+snapshot that uses them (a fresh copy if the link count is exhausted). An interrupted
+assembly resumes file by file: completed large files are kept, completed small files
+are re-hashed because they were never fsynced, and a partial file restarts from zero.
+A failure leaves a one-shot marker that the next sync returns (`insufficient_disk`
+for a full disk) and removes the partial tree; `files/` is kept. No prune operation
+exists yet.
+
+`DISK_RESERVE` is 64 GiB of free space on the state filesystem. `put` and `put_many`
+refuse with `insufficient_disk` when the incoming bytes would cut into it, `sync`
+counts the bytes of snapshots already queued, and the scheduler leaves a job queued
+while its work copy would cut into it (`status` shows `admission_blocked`). This also
+blocks small syncs when the Spark has less than 64 GiB free; that is intentional,
+because a full disk would also break running jobs, caches and the controller's own
+database. Refusals and `status.storage` report free and reserve figures in GiB only.
 
 Logs use byte offsets, not character counts. Base64 `data` is authoritative for
 non-UTF-8 output; `text` is a lossy convenience field. Repeating an offset reads the
@@ -173,6 +219,13 @@ with the job, included in cache identity, and cannot be changed for existing job
 The container is nonroot, read-only-root, cap-drop ALL, no-new-privileges, PID limited,
 CPU/memory/swap limited, nice 10, bounded tmpfs, and network-none. Host mounts contain
 only this job's private work copy, output, supervisor and per-worktree/per-image caches.
+The work copy is built from the manifest into `work.pending` and renamed into place:
+small files are copied with modes 0644/0755, and each file over 512 MiB becomes a
+symlink to `/sparkdev-source/<path>`. Only a manifest with large files adds one
+read-only bind of its whole snapshot at `/sparkdev-source`; no project path text ever
+appears in Docker arguments, the job cannot write or chmod a shared store inode, and a
+small-only manifest gets byte-identical arguments to earlier releases. A work copy that
+cannot be built fails the job with exit 125 (`insufficient_disk` or `work_copy_failed`).
 The Docker socket, host home, Ollama, PhaseForge services and other caches are absent.
 CUDA uses the same limits plus an active `MemAvailable` watchdog; on GB10 this is
 necessary because CUDA unified-memory allocations can evade the cgroup RAM limit.
@@ -229,10 +282,13 @@ prove controller decisions, not container isolation by themselves. Real runtime 
 and probe receipts live on the Spark; CLI acceptance receipts identify actual job
 IDs and observed outcomes. Phone-hotspot roaming, physical laptop sleep, real Claude
 Code invocation, Windows installation behavior and Marketplace admission require
-their own evidence. None follows from unit tests or a client label.
+their own evidence. None follows from unit tests or a client label. Large-file
+transfer (5 GB and 16 GiB files) has unit-test coverage only so far; owner acceptance
+receipts recording MB/s, link type and seconds per GiB are still required.
 
 Logs are limited to 256 MiB per job; exceeding the bound kills the workload with
-exit 125. Individual files are capped at 4 GiB. Jobs and source snapshots are retained
+exit 125. A job may write files of at most 4 GiB (`--ulimit fsize`), although it can
+read synced inputs of up to 16 GiB. Jobs and source snapshots are retained
 for inspection; no garbage collector currently deletes them automatically. The
 controller refuses new jobs at 4096 retained records. Owners should monitor disk
 space and archive old completed work deliberately. There is no general remote output
