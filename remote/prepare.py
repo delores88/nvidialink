@@ -122,7 +122,7 @@ def commands(runtime, root):
 
 def pip_env():
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("PIP_", "PYTHON"))}
-    env.update(PIP_CONFIG_FILE=os.devnull, PIP_CACHE_DIR="/pip-cache", PIP_INDEX_URL="https://pypi.org/simple",
+    env.update(PIP_CONFIG_FILE=os.devnull, PIP_CACHE_DIR="/prepare-cache/pip", PIP_INDEX_URL="https://pypi.org/simple",
                PIP_DISABLE_PIP_VERSION_CHECK="1", PIP_NO_INPUT="1", TMPDIR=str(TMP))
     return env
 
