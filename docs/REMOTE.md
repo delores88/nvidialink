@@ -100,13 +100,23 @@ project over 8 GiB, and asks the owner to update Spark setup. A different advert
 chunk size is refused. `missing` checks presence with `lstat` only (a regular object
 of at most 1 MiB); it never re-reads objects. Assembly re-verifies every chunk.
 
-`sync` validates the manifest, refuses `missing_chunks` before writing anything,
-and queues the snapshot as `~/sparkdev/state/pending/<manifest>.json`. Snapshots that
-need at most 512 MiB of new bytes are assembled inside the RPC, exactly as before, so
-older CLIs and small projects see a synchronous sync. Larger ones are assembled by
-one detached materializer (`controller.py materialize`, started with stdio closed in
-its own session), which holds a single global lock and processes the queue oldest
-first; at most four snapshots may be queued. A sync waits up to 20 seconds, then
+`sync` validates the manifest and counts what the snapshot still needs: the bytes of
+absent chunks (each distinct chunk once), the new bytes assembly will write, and the
+small files kept from an interrupted pass, which assembly re-hashes. Before anything is
+uploaded it refuses `insufficient_disk` when the absent and new bytes plus every queued
+snapshot's outstanding bytes would cut into the disk reserve, then `missing_chunks`
+when chunks are absent. Otherwise it queues the snapshot as
+`~/sparkdev/state/pending/<manifest>.json`; reading the queue, both checks and writing
+the record happen under one short `pending/.queue.lock`, so concurrent syncs cannot
+both pass them against the same queue. A snapshot whose new and re-hashed bytes total
+at most 512 MiB is assembled inside the RPC, exactly as before, even while a background
+build holds the global lock, and the queue cap never applies to it, so older CLIs and
+small projects see a synchronous sync. Larger ones are assembled by one detached
+materializer (`controller.py materialize`, started with stdio closed in its own
+session), which holds a single global lock and processes the queue oldest first; at
+most four such snapshots may be queued. Every builder, in an RPC or in the background,
+holds an exclusive lock on the snapshot's queue record, so one snapshot is never built
+twice at once. A sync waits up to 20 seconds, then
 answers `materializing` with progress ("X of Y MiB"); running the same command again
 continues where it left off. The scheduler restarts the materializer whenever work is
 queued and none holds the lock; its unit's `KillMode=process` keeps a running

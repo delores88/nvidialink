@@ -1141,18 +1141,28 @@ class Controller:
     def store_ready(self, entry):
         return regular_size(self.files / store_name(entry)) == entry["size"]
 
-    def remaining_bytes(self, manifest_id, manifest):
-        """New bytes this snapshot still needs; refuses before any write when a chunk is absent."""
-        tree, remaining = self.pending_tree(manifest_id), 0
+    def snapshot_needs(self, manifest_id, manifest):
+        """(new bytes assembly writes, bytes of chunks still to upload, kept small bytes it re-verifies).
+
+        Absent chunks are counted, each hash once, instead of refusing at the first, so the
+        disk guard can run before the CLI uploads anything.
+        """
+        tree, remaining, absent, reverify, seen = self.pending_tree(manifest_id), 0, 0, 0, set()
         for entry in manifest:
-            if entry["size"] > LARGE_FILE and self.store_ready(entry):
+            large = entry["size"] > LARGE_FILE
+            if large and self.store_ready(entry):
                 continue
             if os.path.lexists(tree.joinpath(*entry["path"].split("/"))):
+                if not large:
+                    reverify += entry["size"]  # Kept from an interrupted pass; never fsynced, so re-hashed.
                 continue
-            if not all(self.object_present(chunk["sha256"]) for chunk in entry["chunks"]):
-                reject("missing_chunks", "Upload missing chunks before committing the snapshot")
+            for chunk in entry["chunks"]:
+                if chunk["sha256"] not in seen:
+                    seen.add(chunk["sha256"])
+                    if not self.object_present(chunk["sha256"]):
+                        absent += chunk["size"]
             remaining += entry["size"]
-        return remaining
+        return remaining, absent, reverify
 
     def read_pending(self, manifest_id):
         with os.fdopen(safe_open(self.pending / (manifest_id + ".json")), "rb") as stream:
@@ -1207,6 +1217,67 @@ class Controller:
         return view
 
     @contextlib.contextmanager
+    def queue_lock(self):
+        """Serialize queue admission: reading the queue, the disk and cap checks, and writing a record.
+
+        Each RPC is its own process, so without it two syncs could pass both checks against the
+        same queue. Never the materialize lock, which a background build holds for minutes.
+        """
+        if os.name != "posix":
+            yield
+            return
+        import fcntl
+        fd = os.open(self.pending / ".queue.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+    @contextlib.contextmanager
+    def record_lock(self, manifest_id):
+        """Yield True while this process exclusively holds one queued record, else False.
+
+        A record is written once and removed by whoever built it, so its inode names one
+        queued assembly: an inline RPC and the background materializer never build the same
+        snapshot at once. Off posix this only checks that the record exists.
+        """
+        path = self.pending / (manifest_id + ".json")
+        if os.name != "posix":
+            yield os.path.lexists(path)
+            return
+        import fcntl
+        try:
+            fd = safe_open(path)
+        except (FileNotFoundError, Rejected):
+            yield False
+            return
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            # Built and removed (or never this inode) before the lock was ours.
+            try:
+                current = os.lstat(path)
+            except FileNotFoundError:
+                yield False
+                return
+            mine = os.fstat(fd)
+            yield (current.st_ino, current.st_dev) == (mine.st_ino, mine.st_dev)
+        finally:
+            os.close(fd)
+
+    def claimable(self):
+        """Whether some queued record is free for a builder; an inline RPC may hold the others."""
+        for manifest_id in self.pending_ids():
+            with self.record_lock(manifest_id) as held:
+                if held:
+                    return True
+        return False
+
+    @contextlib.contextmanager
     def materialize_lock(self):
         """Yield True while this process holds the one global materialization lock (a no-op off posix)."""
         if os.name != "posix":
@@ -1226,7 +1297,7 @@ class Controller:
 
     def kick(self):
         """Spawn the background materializer when work is queued and none is running."""
-        if not self.pending_ids():
+        if not self.claimable():
             return False
         with self.materialize_lock() as free:
             pass
@@ -1243,21 +1314,28 @@ class Controller:
             self.commit_snapshot(project, manifest_id, encoded, total)
             return result
         self.take_failure(manifest_id)
-        remaining = self.remaining_bytes(manifest_id, manifest)
+        remaining, absent, reverify = self.snapshot_needs(manifest_id, manifest)
+        # Small snapshots assemble inside this RPC, never queued behind a large background
+        # build. Kept small files count: each one is re-hashed here.
+        inline = remaining + reverify <= INLINE_BYTES
         record = self.pending / (manifest_id + ".json")
-        if not os.path.lexists(record):
-            queue = self.queue_view()
-            free = self.free_bytes()
-            queued = sum(item["remaining_bytes"] for item in queue)
-            if free - (remaining + queued) < DISK_RESERVE:
-                disk_refusal(free, remaining + queued)
-            if len(queue) >= MAX_PENDING:
-                reject("materializing", f"Spark is already assembling {len(queue)} snapshots; run the same command again to continue")
-            atomic_write(record, canonical({"v": 1, "project": project, "manifest": manifest, "remaining": remaining}))
-        if remaining <= INLINE_BYTES:
-            with self.materialize_lock() as held:
-                if held:
-                    self.materialize_one(manifest_id)
+        with self.queue_lock():
+            if not os.path.lexists(record):
+                queue = self.queue_view()
+                free = self.free_bytes()
+                # Before any upload: chunks still to send count with what assembly will write.
+                needed = absent + remaining + sum(item["remaining_bytes"] for item in queue)
+                if free - needed < DISK_RESERVE:
+                    disk_refusal(free, needed)
+                if absent:
+                    reject("missing_chunks", "Upload missing chunks before committing the snapshot")
+                if not inline and len(queue) >= MAX_PENDING:
+                    reject("materializing", f"Spark is already assembling {len(queue)} snapshots; run the same command again to continue")
+                atomic_write(record, canonical({"v": 1, "project": project, "manifest": manifest, "remaining": remaining}))
+            elif absent:
+                reject("missing_chunks", "Upload missing chunks before committing the snapshot")
+        if inline:
+            self.materialize_one(manifest_id)
         self.kick()
         deadline = self.started + MATERIALIZE_WAIT
         while True:
@@ -1265,6 +1343,9 @@ class Controller:
                 self.commit_snapshot(project, manifest_id, encoded, total)
                 return result
             self.take_failure(manifest_id)
+            # Another process held the record a moment ago; whoever holds it next builds it.
+            if inline and self.materialize_one(manifest_id) is not None:
+                continue
             if self.clock() >= deadline:
                 break
             self.sleep(MATERIALIZE_POLL)
@@ -1279,18 +1360,27 @@ class Controller:
             with self.materialize_lock() as held:
                 if not held:
                     return processed
-                while True:
-                    queue = self.pending_ids()
-                    if not queue:
-                        break
-                    self.materialize_one(queue[0])
+                while self.materialize_next() is not None:
                     processed += 1
             # A sync that saw the lock held may have queued work after the last look.
-            if not self.pending_ids():
+            if not self.claimable():
                 return processed
 
+    def materialize_next(self):
+        """Build the oldest record no inline RPC holds: True built, False failed, None when none is free."""
+        for manifest_id in self.pending_ids():
+            done = self.materialize_one(manifest_id)
+            if done is not None:
+                return done
+        return None
+
     def materialize_one(self, manifest_id):
-        """Build one queued snapshot. Call only while holding the materialization lock."""
+        """Build one queued snapshot unless another process holds its record (then None)."""
+        with self.record_lock(manifest_id) as held:
+            return self.build_snapshot(manifest_id) if held else None
+
+    def build_snapshot(self, manifest_id):
+        """Build one queued snapshot. Call only while holding its record lock."""
         record_path = self.pending / (manifest_id + ".json")
         tree, partial = self.pending_tree(manifest_id), self.partial_dir(manifest_id)
         try:

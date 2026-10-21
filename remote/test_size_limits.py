@@ -215,10 +215,13 @@ class SizeLimitTests(unittest.TestCase):
             self.c.tick()
             small = b"inline"
             self.upload(small)
-            # Below the inline threshold, but another process holds the lock: queue, never race it.
-            self.assertEqual(self.sync(entry("small.txt", small))["error"]["code"], "materializing")
+            # A large background build holds the global lock: a small snapshot still commits inside the RPC.
+            self.assertTrue(self.sync(entry("small.txt", small))["ok"])
+            fourth = large(3)
+            self.upload(fourth)
+            self.assertEqual(self.sync(entry("f3.bin", fourth))["error"]["code"], "materializing")
         self.assertEqual(self.spawned, 3)  # Only the three unlocked syncs spawned a materializer.
-        names.append(sha(canonical([entry("small.txt", small)])))
+        names.append(sha(canonical([entry("f3.bin", fourth)])))
         order = [names[2], names[0], names[3], names[1]]
         for position, manifest_id in enumerate(order):
             # Queue order is the record's write time, not the identifier.
@@ -229,13 +232,99 @@ class SizeLimitTests(unittest.TestCase):
         self.upload(extra)
         full = self.sync(entry("extra.bin", extra))["error"]
         self.assertEqual((full["code"], full["message"]), ("materializing", "Spark is already assembling 4 snapshots; run the same command again to continue"))
+        # The cap never holds back a snapshot the RPC assembles itself.
+        tiny = b"tiny but new"
+        self.upload(tiny)
+        self.assertTrue(self.sync(entry("tiny.txt", tiny))["ok"])
         self.assertEqual(len(self.queued()), controller.MAX_PENDING)
         status = self.rpc("status")
         self.assertEqual([item["manifest_id"] for item in status["materializing"]], order)
-        self.assertEqual(status["storage"]["queued_bytes"], sum(len(large(i)) for i in range(3)) + len(small))
+        self.assertEqual(status["storage"]["queued_bytes"], sum(len(large(i)) for i in range(4)))
         self.assertEqual(self.c.materialize_queue(), controller.MAX_PENDING)
         committed = [json.loads(r[0])["data"]["manifest"] for r in self.c.db.execute("SELECT data FROM audit WHERE kind='snapshot_committed' ORDER BY seq")]
-        self.assertEqual(committed, order)
+        self.assertEqual([m for m in committed if m in order], order)  # Inline commits are audited too.
+
+    def test_a_resumed_tree_counts_its_reverified_bytes_toward_the_inline_threshold(self):
+        files = [entry(f"f{i:04d}.txt", (f"{i:04d}" * 1024).encode()) for i in range(40)]  # 40 x 4 KiB small files.
+        for item in files:  # Stored directly: a put RPC per file would only slow the test.
+            (self.root / "objects" / item["sha256"]).write_bytes((item["path"][1:5] * 1024).encode())
+        with mock.patch.object(controller, "INLINE_BYTES", 64 * 1024):
+            self.assertEqual(self.sync(*files)["error"]["code"], "materializing")  # 160 KiB: above 64 KiB.
+            with self.crash_on(files[35]["sha256"]), self.assertRaises(Crash):
+                self.c.materialize_queue()
+            verified = []
+            real = Controller.verify_file
+            with mock.patch.object(Controller, "verify_file", lambda s, path, e: verified.append(e["path"]) or real(s, path, e)):
+                # Only 20 KiB is new, but 140 KiB of kept files would be re-hashed: still background work.
+                waiting = self.sync(*files)["error"]
+            self.assertEqual((waiting["code"], verified), ("materializing", []))
+            self.assertEqual(self.c.materialize_queue(), 1)
+            self.assertTrue(self.sync(*files)["ok"])
+
+    def test_disk_is_checked_before_any_upload(self):
+        content = large(14)  # Three chunks plus a tail: about 3 MiB to upload, 3 MiB to assemble.
+        self.free = RESERVE + 4 * CHUNK
+        refused = self.sync(entry("big.bin", content))["error"]
+        self.assertEqual(refused["code"], "insufficient_disk")
+        self.assertIn("64 GiB in reserve", refused["message"])
+        self.assertFalse(any((self.root / "objects").iterdir()))
+        self.assertFalse(self.queued())
+        self.free = RESERVE + 7 * CHUNK
+        self.assertEqual(self.sync(entry("big.bin", content))["error"]["code"], "missing_chunks")
+        # Each distinct chunk counts once: a repeated chunk is uploaded once.
+        twice = b"r" * CHUNK * 2
+        self.free = RESERVE + CHUNK + 2 * CHUNK
+        self.assertEqual(self.sync(entry("twice.bin", twice))["error"]["code"], "missing_chunks")
+
+    def test_queue_admission_runs_under_the_queue_lock(self):
+        inside, events = [False], []
+        real_lock, real_write = Controller.queue_lock, controller.atomic_write
+
+        @contextlib.contextmanager
+        def lock(controller_self):
+            with real_lock(controller_self):
+                inside[0] = True
+                try:
+                    yield
+                finally:
+                    inside[0] = False
+
+        def write(path, data, mode=0o600):
+            if Path(path).parent == self.root / "pending" and Path(path).suffix == ".json":
+                events.append(inside[0])
+            return real_write(path, data, mode)
+        big = large(15)
+        self.upload(big)
+        with mock.patch.object(Controller, "queue_lock", lock), mock.patch.object(controller, "atomic_write", write), \
+             mock.patch.object(Controller, "queue_view", lambda s: events.append(inside[0]) or []):
+            self.sync(entry("big.bin", big))
+        self.assertEqual(events, [True, True])  # The queue read and the record write.
+
+    @unittest.skipUnless(os.name == "posix", "flock is posix-only")
+    def test_held_record_and_global_locks_on_posix(self):
+        import fcntl
+        big, small = large(16), b"small and new"
+        self.upload(big, small)
+        self.assertEqual(self.sync(entry("big.bin", big))["error"]["code"], "materializing")
+        mid = sha(canonical([entry("big.bin", big)]))
+        with self.c.record_lock(mid) as held:
+            self.assertTrue(held)
+            other = self.make()
+            try:
+                self.assertIsNone(other.materialize_one(mid))  # Another process holds the record.
+                self.assertFalse(other.claimable())
+                self.assertEqual(other.materialize_queue(), 0)
+            finally:
+                other.db.close()
+        fd = os.open(self.root / "snapshots" / ".materialize.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # A background build owns the global lock.
+            self.assertTrue(self.sync(entry("small.txt", small))["ok"])
+            self.assertEqual(self.c.materialize_queue(), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(self.c.materialize_queue(), 1)
+        self.assertTrue(self.sync(entry("big.bin", big))["ok"])
 
     def test_scheduler_backstop_spawns_only_for_queued_work(self):
         self.c.tick()
