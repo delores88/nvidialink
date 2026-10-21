@@ -399,6 +399,7 @@ pub struct Deps {
     pub verify: Box<PerAddress>,
     pub private: fn(Ipv4Addr) -> bool,
     pub diagnostics: Box<dyn Fn() -> Value>,
+    pub learned: Box<dyn Fn(&Config) -> Option<crate::lan_learn::Learned>>,
 }
 /// The pinned check: the unchanged `Transport::command` with BatchMode,
 /// strict host-key checking against the HostKeyAlias pin and no known_hosts
@@ -445,6 +446,7 @@ impl Deps {
             }),
             private: rfc1918,
             diagnostics: Box::new(state::diagnostics),
+            learned: Box::new(crate::lan_learn::learned),
         }
     }
 }
@@ -605,7 +607,7 @@ pub fn search(config: &Config, deps: &Deps) -> Result<Value> {
     for (index, ip) in swept.iter().enumerate() {
         match reach.get(index).copied().unwrap_or(Reach::Unchecked) {
             Reach::Open => open.push(*ip),
-            Reach::Unchecked => {
+            Reach::Unchecked | Reach::Late => {
                 seen.insert(*ip, Seen::Unchecked);
             }
             Reach::Closed | Reach::Unresolved => {
@@ -668,6 +670,11 @@ pub fn search(config: &Config, deps: &Deps) -> Result<Value> {
         }
     }
     let count = |wanted: Seen| seen.values().filter(|s| **s == wanted).count();
+    decorate_found(&mut found, (deps.learned)(config).as_ref(), state::now());
+    out["recommended_host"] = found
+        .first()
+        .map(|v| v["host"].clone())
+        .unwrap_or(Value::Null);
     out["found"] = json!(found);
     out["login_rejected"] = json!(count(Seen::Checked(Class::LoginRejected)));
     out["local_key_error"] = json!(count(Seen::Checked(Class::LocalKeyError)));
@@ -694,6 +701,32 @@ pub fn search(config: &Config, deps: &Deps) -> Result<Value> {
     }
     out["pin_hint"] = json!(!pin_proven && pin_hint);
     Ok(out)
+}
+
+/// The existing `medium` describes the laptop interface, never the Spark.
+/// Label and recommend a Spark cable only when its authenticated, recent
+/// route report says so. This helper does no network work and saves nothing.
+fn decorate_found(found: &mut [Value], learned: Option<&crate::lan_learn::Learned>, now: u64) {
+    let recent = learned.filter(|s| now.saturating_sub(s.learned_at) <= 24 * 60 * 60);
+    for entry in found.iter_mut() {
+        let route = recent.and_then(|s| s.routes.iter().find(|r| entry["host"] == r.host));
+        entry["spark_kind"] = json!(route.map(|r| r.kind.as_str()));
+        entry["speed_mbps"] = json!(route.and_then(|r| r.speed_mbps));
+        entry["hint_learned_at"] = json!(route.and(recent).map(|s| s.learned_at));
+    }
+    found.sort_by_key(|entry| {
+        (
+            match entry["spark_kind"].as_str() {
+                Some("wired") => 0,
+                Some("wifi") => 2,
+                _ => 1,
+            },
+            std::cmp::Reverse(entry["speed_mbps"].as_u64().unwrap_or(1000)),
+        )
+    });
+    for (index, entry) in found.iter_mut().enumerate() {
+        entry["preselected"] = json!(index == 0);
+    }
 }
 
 /// Whether `fresh` is still the SSH identity `verified` checked against, and
@@ -1132,6 +1165,28 @@ mod windows {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn found_labels_use_recent_spark_hints_not_the_laptop_medium() {
+        let learned = crate::lan_learn::validate(
+            &json!({"v":1,"epoch":"0123456789abcdef","shared_network":true,"routes":[
+            {"ipv4":"192.168.0.7","prefix":24,"kind":"wired","speed_mbps":2500},
+            {"ipv4":"192.168.0.8","prefix":24,"kind":"wifi","speed_mbps":866}]}),
+            "a".repeat(64),
+            100,
+        )
+        .unwrap();
+        let mut found = vec![
+            json!({"host":"192.168.0.8","medium":"wired"}),
+            json!({"host":"192.168.0.7","medium":"wifi"}),
+        ];
+        decorate_found(&mut found, Some(&learned), 101);
+        assert_eq!(found[0]["host"], "192.168.0.7");
+        assert_eq!(found[0]["spark_kind"], "wired");
+        assert_eq!(found[0]["medium"], "wifi");
+        assert_eq!(found[0]["preselected"], true);
+        decorate_found(&mut found, Some(&learned), 100 + 24 * 60 * 60 + 1);
+        assert!(found.iter().all(|v| v["spark_kind"].is_null()));
+    }
     use std::{
         collections::HashMap,
         net::TcpListener,
@@ -1271,6 +1326,7 @@ pub(crate) mod tests {
                 }),
                 private: documentation,
                 diagnostics: Box::new(move || json!({"redirected":redirected.clone()})),
+                learned: Box::new(|_| None),
             };
             (deps, calls)
         }
@@ -1754,7 +1810,7 @@ pub(crate) mod tests {
         assert_eq!(out["unchecked"], 1);
         assert_eq!(
             out["found"],
-            json!([{"host":"192.0.2.40","adapter":"Ethernet","medium":"wired","configured_index":null}])
+            json!([{"host":"192.0.2.40","adapter":"Ethernet","medium":"wired","configured_index":null,"spark_kind":null,"speed_mbps":null,"hint_learned_at":null,"preselected":true}])
         );
         assert_eq!(
             out["searched"],

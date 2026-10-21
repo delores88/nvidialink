@@ -1,5 +1,6 @@
 use crate::{
     AppError, Result,
+    lan_learn::{self, Learned, Route},
     state::{self, Config},
 };
 use serde_json::{Value, json};
@@ -27,6 +28,11 @@ pub struct Transport {
     /// Whether the planned route is dialed directly from this computer, so a
     /// local TCP precheck tests the path ssh uses. Kept for the sticky host.
     direct: bool,
+    learned: Option<Learned>,
+    learned_sources: std::collections::BTreeMap<String, String>,
+    alias_hostname: Option<String>,
+    faster_unanswered: bool,
+    pub lan_learn: Value,
 }
 
 /// Where a LAN candidate came from. Every source is dialed through the same
@@ -36,6 +42,7 @@ pub enum Source {
     Sticky,
     Remembered,
     Configured,
+    Learned,
     Alias,
 }
 impl Source {
@@ -44,6 +51,7 @@ impl Source {
             Self::Sticky => "sticky",
             Self::Remembered => "remembered",
             Self::Configured => "configured",
+            Self::Learned => "learned",
             Self::Alias => "alias",
         }
     }
@@ -139,7 +147,7 @@ pub fn repeat_for(request: &Value) -> Repeat {
     match request["op"].as_str() {
         Some(
             "missing" | "put" | "put_many" | "sync" | "status" | "logs" | "wait" | "doctor"
-            | "cancel" | "heartbeat" | "release",
+            | "cancel" | "heartbeat" | "release" | "lan_routes",
         ) => Repeat::Idempotent,
         Some("resources") if request.get("limits").is_none() => Repeat::Idempotent,
         Some("run" | "prepare" | "claim") if request_id => Repeat::Idempotent,
@@ -327,6 +335,9 @@ pub enum Reach {
     /// Every resolved address refused, or stayed silent for the full
     /// per-connect budget.
     Closed,
+    /// Still pending after 300 ms while a later candidate is open. The
+    /// sorted order is preserved; configured candidates are held back.
+    Late,
 }
 
 fn add_candidate(plan: &mut Vec<Candidate>, source: Source, host: &str) {
@@ -390,6 +401,66 @@ pub fn plan_candidates(
     if let Some(host) = alias_hostname.filter(|_| plan.len() < MAX_CANDIDATES) {
         add_candidate(&mut plan, Source::Alias, host);
     }
+    plan
+}
+/// Add authenticated route hints without changing the legacy wrapper.
+/// Configured duplicates keep their owner provenance. Sorting is stable, so
+/// equal media/rates preserve owner order and unknown rates mean 1000 Mb/s.
+pub fn plan_candidates_with(
+    sticky: Option<&str>,
+    remembered: &[String],
+    configured: &[String],
+    alias_hostname: Option<&str>,
+    learned: &[Route],
+) -> Vec<Candidate> {
+    if sticky.is_some() || learned.is_empty() {
+        return plan_candidates(sticky, remembered, configured, alias_hostname);
+    }
+    let additions: Vec<&Route> = learned
+        .iter()
+        .filter(|r| !configured.iter().any(|h| h.eq_ignore_ascii_case(&r.host)))
+        .take(3)
+        .collect();
+    let current = |host: &str| {
+        configured
+            .iter()
+            .map(String::as_str)
+            .chain(alias_hostname)
+            .chain(additions.iter().map(|r| r.host.as_str()))
+            .any(|h| h.eq_ignore_ascii_case(host))
+    };
+    let mut plan = Vec::new();
+    for host in configured {
+        add_candidate(&mut plan, Source::Configured, host);
+    }
+    for host in remembered
+        .iter()
+        .filter(|h| current(h))
+        .take(MAX_REMEMBERED)
+    {
+        add_candidate(&mut plan, Source::Remembered, host);
+    }
+    for route in additions {
+        add_candidate(&mut plan, Source::Learned, &route.host);
+    }
+    if configured.is_empty() {
+        plan.push(Candidate {
+            source: Source::Alias,
+            host: None,
+        });
+    } else if let Some(host) = alias_hostname.filter(|_| plan.len() < MAX_CANDIDATES) {
+        add_candidate(&mut plan, Source::Alias, host);
+    }
+    plan.sort_by_key(|candidate| {
+        let hint = learned
+            .iter()
+            .find(|r| candidate.host.as_deref() == Some(r.host.as_str()));
+        let medium = hint.map_or(1, |r| if r.kind == "wired" { 0 } else { 2 });
+        (
+            medium,
+            std::cmp::Reverse(hint.and_then(|r| r.speed_mbps).unwrap_or(1000)),
+        )
+    });
     plan
 }
 /// What the alias's local OpenSSH configuration says about reaching it.
@@ -562,6 +633,82 @@ fn with_probe<T>(
                 receiver.recv_timeout(wait).ok()
             })
             .unwrap_or(Reach::Unchecked)
+    }))
+}
+const EARLY_OPEN: Duration = Duration::from_millis(300);
+/// A pure decision function lets tests advance a scripted clock. Never
+/// reorders Open candidates ahead of a configured candidate: Late goes
+/// through the existing held-back guarantees instead.
+fn board_decision(
+    index: usize,
+    slots: &[Option<Reach>],
+    elapsed: Duration,
+    deadline: Duration,
+) -> Option<Reach> {
+    if let Some(result) = slots[index] {
+        return Some(result);
+    }
+    if elapsed >= EARLY_OPEN && slots[index + 1..].contains(&Some(Reach::Open)) {
+        return Some(Reach::Late);
+    }
+    (elapsed >= deadline + PRECHECK_GRACE).then_some(Reach::Unchecked)
+}
+fn with_ranked_probe<T>(
+    hosts: &[Option<&str>],
+    deadline: Duration,
+    probe: impl Fn(String, Instant) -> Reach + Clone + Send + 'static,
+    consume: impl FnOnce(&mut dyn Iterator<Item = Reach>) -> T,
+) -> T {
+    let started = Instant::now();
+    let until = started + deadline;
+    let (sender, receiver) = mpsc::channel();
+    let mut slots = vec![None; hosts.len()];
+    for (index, host) in hosts.iter().enumerate() {
+        let Some(host) = host else {
+            slots[index] = Some(Reach::Unchecked);
+            continue;
+        };
+        let host = (*host).to_owned();
+        let sender = sender.clone();
+        let probe = probe.clone();
+        if thread::Builder::new()
+            .spawn(move || {
+                let _ = sender.send((index, probe(host, until)));
+            })
+            .is_err()
+        {
+            slots[index] = Some(Reach::Unchecked);
+        }
+    }
+    drop(sender);
+    let mut index = 0;
+    consume(&mut std::iter::from_fn(|| {
+        if index >= slots.len() {
+            return None;
+        }
+        loop {
+            while let Ok((i, result)) = receiver.try_recv() {
+                slots[i] = Some(result);
+            }
+            let elapsed = started.elapsed();
+            if let Some(result) = board_decision(index, &slots, elapsed, deadline) {
+                index += 1;
+                return Some(result);
+            }
+            let next = if elapsed < EARLY_OPEN {
+                EARLY_OPEN
+            } else {
+                deadline + PRECHECK_GRACE
+            };
+            match receiver.recv_timeout(next.saturating_sub(elapsed)) {
+                Ok((i, result)) => slots[i] = Some(result),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    index += 1;
+                    return Some(Reach::Unchecked);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
     }))
 }
 pub fn precheck(
@@ -862,7 +1009,45 @@ impl Transport {
             attempts: Vec::new(),
             remembered_head: None,
             direct: false,
+            learned: None,
+            learned_sources: Default::default(),
+            alias_hostname: None,
+            faster_unanswered: false,
+            lan_learn: json!({"state":"not_requested","learned_at":null}),
         }
+    }
+    pub(crate) fn refresh_learned_hints(&mut self) {
+        self.learned = lan_learn::learned(&self.config);
+        self.learned_sources.clear();
+        if let Some(set) = &self.learned {
+            for route in &set.routes {
+                if let Some(source) = lan_learn::source_for(route)
+                    .filter(|source| set.eligible(route, source, state::now()))
+                {
+                    self.learned_sources.insert(route.host.clone(), source);
+                }
+            }
+        }
+    }
+    fn learned_hint(&self, host: Option<&str>) -> Option<&Route> {
+        let host = host?;
+        self.learned
+            .as_ref()?
+            .routes
+            .iter()
+            .find(|r| r.host.eq_ignore_ascii_case(host))
+    }
+    /// Membership, not the candidate's label, determines the conservative
+    /// learned-only rules (including when a learned host becomes sticky).
+    fn learned_only(&self, host: Option<&str>) -> bool {
+        self.learned_hint(host).is_some()
+            && host.is_some_and(|h| {
+                self.configured_index(h).is_none()
+                    && !self
+                        .alias_hostname
+                        .as_deref()
+                        .is_some_and(|a| a.eq_ignore_ascii_case(h))
+            })
     }
     fn push_attempt(&mut self, attempt: Value) {
         if self.attempts.len() >= 32 {
@@ -1017,8 +1202,8 @@ impl Transport {
         remote: &str,
         timeout: Duration,
         retry: Retry,
-        run: impl FnMut(Command, Duration) -> Result<Ran>,
-        pause: impl FnMut(Duration),
+        mut run: impl FnMut(Command, Duration) -> Result<Ran>,
+        mut pause: impl FnMut(Duration),
     ) -> Result<Vec<u8>> {
         self.authenticated = false;
         self.check_enabled()?;
@@ -1035,20 +1220,66 @@ impl Transport {
                 "Remote-only mode does not permit SSH; choose LAN-only or Both for initial setup",
             ));
         }
-        let plan = self.lan_plan(alias_route);
-        let hosts = self.precheck_targets(&plan);
-        let port = self.config.port;
-        with_precheck(&hosts, port, PRECHECK_CONNECT, PRECHECK_DEADLINE, |reach| {
-            self.dial_with(&plan, reach, remote, timeout, retry, run, pause)
-        })
+        let sticky = self.host.is_some();
+        for replanned in [false, true] {
+            let plan = self.lan_plan(alias_route);
+            let hosts = self.precheck_targets(&plan);
+            let port = self.config.port;
+            let has_learned = plan
+                .iter()
+                .any(|c| self.learned_hint(c.host.as_deref()).is_some());
+            let result = if has_learned && self.direct {
+                with_ranked_probe(
+                    &hosts,
+                    PRECHECK_DEADLINE,
+                    move |host, until| probe(&host, port, PRECHECK_CONNECT, until),
+                    |reach| {
+                        self.dial_with(
+                            &plan,
+                            reach,
+                            remote,
+                            timeout,
+                            retry.clone(),
+                            &mut run,
+                            &mut pause,
+                        )
+                    },
+                )
+            } else {
+                with_precheck(&hosts, port, PRECHECK_CONNECT, PRECHECK_DEADLINE, |reach| {
+                    self.dial_with(
+                        &plan,
+                        reach,
+                        remote,
+                        timeout,
+                        retry.clone(),
+                        &mut run,
+                        &mut pause,
+                    )
+                })
+            };
+            if !replanned
+                && sticky
+                && !self.authenticated
+                && result
+                    .as_ref()
+                    .is_err_and(|e| e.code == 4 && e.message == LAN_UNREACHABLE)
+            {
+                self.host = None;
+                continue;
+            }
+            return result;
+        }
+        unreachable!("the full replan returns")
     }
     /// The candidate plan for the next LAN request. `alias_lookup` reads the
     /// alias's HostName and routing (a local `ssh -G`) and is only called
     /// when needed; a sticky host keeps the routing seen when it was planned.
     fn lan_plan(&mut self, alias_lookup: impl FnOnce(&Config) -> AliasRoute) -> Vec<Candidate> {
+        self.refresh_learned_hints();
         match self.host.clone() {
             Some(sticky) => plan_candidates(Some(&sticky), &[], &[], None),
-            None if self.config.hosts.is_empty() => {
+            None if self.config.hosts.is_empty() && self.learned_sources.is_empty() => {
                 self.direct = false;
                 plan_candidates(None, &[], &[], None)
             }
@@ -1057,11 +1288,37 @@ impl Transport {
                 self.remembered_head = remembered.fresh_head;
                 let alias = alias_lookup(&self.config);
                 self.direct = alias.direct;
-                plan_candidates(
+                self.alias_hostname = alias.hostname.clone();
+                let mut eligible: Vec<Route> = if self.direct {
+                    self.learned
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|s| &s.routes)
+                        .filter(|r| self.learned_sources.contains_key(&r.host))
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                eligible.sort_by_key(|r| {
+                    (
+                        if r.kind == "wired" { 0 } else { 2 },
+                        std::cmp::Reverse(r.speed_mbps.unwrap_or(1000)),
+                    )
+                });
+                // Saved owner order is authoritative. Remembered successes
+                // must not silently move a stale address in front of it.
+                let remembered = if self.config.auto_addresses {
+                    Vec::new()
+                } else {
+                    remembered.hosts
+                };
+                plan_candidates_with(
                     None,
-                    &remembered.hosts,
+                    &remembered,
                     &self.config.hosts,
                     alias.hostname.as_deref(),
+                    &eligible,
                 )
             }
         }
@@ -1074,7 +1331,8 @@ impl Transport {
     /// lookup would test the wrong path (and expose names the proxy keeps
     /// private): nothing is prechecked.
     fn precheck_targets<'a>(&self, plan: &'a [Candidate]) -> Vec<Option<&'a str>> {
-        let direct = self.direct && plan.len() > 1;
+        let direct = self.direct
+            && (plan.len() > 1 || plan.iter().any(|c| self.learned_only(c.host.as_deref())));
         plan.iter()
             .map(|c| c.host.as_deref().filter(|_| direct))
             .collect()
@@ -1120,9 +1378,18 @@ impl Transport {
             let skipped = match reach {
                 Reach::Closed => Some(CLOSED_REASON),
                 Reach::Unresolved => Some(UNRESOLVED_REASON),
+                Reach::Late => Some(
+                    "The earlier port check was still pending after 300ms while another candidate answered",
+                ),
+                Reach::Unchecked if self.learned_only(candidate.host.as_deref()) => {
+                    Some("Learned-only addresses are dialed only after an open port check")
+                }
                 Reach::Open | Reach::Unchecked => None,
             };
             if let Some(reason) = skipped {
+                self.faster_unanswered |= self
+                    .learned_hint(candidate.host.as_deref())
+                    .is_some_and(|r| r.kind == "wired");
                 self.record_candidate(candidate, "host_unreachable", reason);
                 if self.dialed_before_rediscovery(candidate.host.as_deref()) {
                     held_back.push(candidate);
@@ -1254,9 +1521,11 @@ impl Transport {
     ) -> Outcome {
         let host = candidate.host.as_deref();
         let configured = self.dialed_before_rediscovery(host);
+        let learned_only = self.learned_only(host);
         let remembered = candidate.source == Source::Remembered;
         // A try here dropped where the command may have run.
         let mut session = false;
+        let mut other_host = false;
         let mut attempt = 0;
         let (failure, before) = loop {
             attempt += 1;
@@ -1268,7 +1537,7 @@ impl Transport {
                         let never_authenticated = stderr.is_some_and(|e| {
                             !authenticated(&String::from_utf8_lossy(&e).to_lowercase())
                         });
-                        if never_authenticated && !configured && !session {
+                        if never_authenticated && !configured && !session && !learned_only {
                             self.record_try(
                                 candidate,
                                 attempt,
@@ -1296,7 +1565,9 @@ impl Transport {
                     "authenticated",
                     "Strict SSH host pin and key authentication succeeded",
                 );
-                if let Some(host) = host {
+                if let Some(host) = host.filter(|_| learned_only) {
+                    lan_learn::verified(&self.config, host);
+                } else if let Some(host) = host {
                     if self.remembered_head.as_deref() != Some(host) {
                         // Best effort: a failed write never fails the request.
                         let _ = state::remember_host(&self.config, host);
@@ -1306,6 +1577,14 @@ impl Transport {
                 return Outcome::Done(out);
             }
             let message = String::from_utf8_lossy(&err).to_lowercase();
+            let own = openssh_own(&message);
+            other_host |= has_any(
+                &own,
+                &[
+                    "remote host identification has changed",
+                    "has changed and you have requested strict checking",
+                ],
+            );
             let failure = classify(code, &out, &message);
             let before = before_auth(code, &out, &message);
             let Failure::Dropped(phase) = failure else {
@@ -1363,12 +1642,20 @@ impl Transport {
             return Outcome::Stop(AppError::new(4, COMMAND_FAILED));
         }
         if failure == Failure::Unreachable {
+            self.faster_unanswered |= self.learned_hint(host).is_some_and(|r| r.kind == "wired");
             self.record_try(candidate, attempt, failure.status(), UNREACHABLE_REASON);
             return Outcome::Next;
         }
         // Evidence that something other than the pinned Spark now holds a
         // remembered address; a drop or another failure is not.
         let stale = remembered && (rejected || failure == Failure::Mismatch);
+        if learned_only && other_host {
+            if let Some((host, source)) =
+                host.and_then(|h| self.learned_sources.get(h).map(|s| (h, s)))
+            {
+                lan_learn::suppress_other_host(&self.config, host, source);
+            }
+        }
         if !configured || stale {
             let reason = match failure {
                 Failure::Rejected if configured => REMEMBERED_REJECTED_REASON,
@@ -1520,6 +1807,20 @@ impl Transport {
             "paired_iroh"
         };
         let mut info = json!({"selected":self.selected,"route":route,"authenticated":self.authenticated,"reason":self.reason,"attempted_routes":self.attempts,"connection":self.config.connection_info()});
+        info["lan_learn"] = self.lan_learn.clone();
+        let hint = if route == "lan_ssh" {
+            self.learned_hint(self.host.as_deref())
+        } else {
+            None
+        };
+        let cable_elsewhere = self.learned.as_ref().is_some_and(|s| {
+            s.routes
+                .iter()
+                .any(|r| r.kind == "wired" && !lan_learn::on_network(r))
+        });
+        info["lan_path"] = json!({"kind":hint.map(|r|r.kind.as_str()),"speed_mbps":hint.and_then(|r|r.speed_mbps),
+            "faster_unanswered":self.faster_unanswered,"cable_elsewhere":cable_elsewhere,
+            "shared_network":self.learned.as_ref().is_some_and(|s|s.shared_network)});
         if let (Some(host), "lan_ssh") = (&self.host, route) {
             info["lan_host"] = json!(host);
         }
@@ -1554,10 +1855,10 @@ mod tests {
     use Reach::{Closed, Open, Unchecked, Unresolved};
     use std::{ffi::OsStr, net::TcpListener};
     fn configured(mode: &str, enabled: bool) -> Transport {
-        Transport::from_config(serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":[],"host_key_alias":"test-pin","connection_mode":mode,"connection_enabled":enabled})).unwrap())
+        Transport::from_config(serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":[],"host_key_alias":"test-pin","connection_mode":mode,"connection_enabled":enabled,"auto_addresses":false})).unwrap())
     }
     fn fixture(hosts: &[&str], mode: &str) -> Transport {
-        Transport::from_config(serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":hosts,"host_key_alias":"test-pin","user":"owner","connection_mode":mode})).unwrap())
+        Transport::from_config(serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":hosts,"host_key_alias":"test-pin","user":"owner","connection_mode":mode,"auto_addresses":false})).unwrap())
     }
     fn candidate(source: Source, host: Option<&str>) -> Candidate {
         Candidate {
@@ -1567,6 +1868,287 @@ mod tests {
     }
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
+    }
+    fn learned_route(host: &str, kind: &str, speed: Option<u64>) -> Route {
+        Route {
+            host: host.into(),
+            prefix: 24,
+            kind: kind.into(),
+            speed_mbps: speed,
+            verified_at: None,
+        }
+    }
+    fn install_learned(tr: &mut Transport, home: &state::TestHome) {
+        tr.config.auto_addresses = true;
+        let set = Learned {
+            binding: state::lan_binding(&tr.config),
+            epoch: "0123456789abcdef".into(),
+            learned_at: state::now(),
+            retry_after: 0,
+            shared_network: false,
+            routes: vec![learned_route("192.168.33.7", "wired", Some(2500))],
+            suppressed: Vec::new(),
+        };
+        state::atomic_json(
+            &home.path.join("lan-learned.json"),
+            &json!({"v":1,"sets":[set]}),
+        )
+        .unwrap();
+        tr.learned = Some(set);
+        tr.learned_sources
+            .insert("192.168.33.7".into(), "192.168.33.2".into());
+        tr.direct = true;
+    }
+    #[test]
+    fn new_route_planner_ranks_hints_and_preserves_the_legacy_wrapper() {
+        let configured = strings(&["192.168.33.8", "192.168.33.7", "192.168.33.9"]);
+        let remembered = strings(&["192.168.33.9"]);
+        assert_eq!(
+            plan_candidates_with(None, &remembered, &configured, None, &[]),
+            plan_candidates(None, &remembered, &configured, None)
+        );
+        let routes = vec![
+            learned_route("192.168.33.8", "wifi", Some(866)),
+            learned_route("192.168.33.7", "wired", Some(2500)),
+            learned_route("192.168.33.10", "wired", None),
+        ];
+        let plan = plan_candidates_with(None, &remembered, &configured, None, &routes);
+        assert_eq!(
+            plan.iter()
+                .map(|c| c.host.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "192.168.33.7",
+                "192.168.33.10",
+                "192.168.33.9",
+                "192.168.33.8"
+            ]
+        );
+        assert_eq!(plan[0].source, Source::Configured);
+        assert_eq!(plan[1].source, Source::Learned);
+        let alias = plan_candidates_with(None, &[], &[], None, &routes);
+        assert!(
+            alias
+                .iter()
+                .any(|c| c.host.is_none() && c.source == Source::Alias)
+        );
+        let many = vec![
+            learned_route("192.168.33.10", "wired", Some(10000)),
+            learned_route("192.168.33.11", "wired", Some(5000)),
+            learned_route("192.168.33.12", "wired", Some(2500)),
+            learned_route("192.168.33.13", "wired", Some(1000)),
+            learned_route("192.168.33.8", "wifi", Some(866)),
+        ];
+        let plan = plan_candidates_with(None, &[], &configured, None, &many);
+        assert_eq!(
+            plan.iter().filter(|c| c.source == Source::Learned).count(),
+            3
+        );
+        assert_eq!(plan.last().unwrap().host.as_deref(), Some("192.168.33.8"));
+    }
+    #[test]
+    fn default_on_saved_owner_order_beats_remembered_success() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&["192.0.2.10", "192.0.2.11"], "lan-only");
+        tr.config.auto_addresses = true;
+        state::remember_host(&tr.config, "192.0.2.11").unwrap();
+        let plan = tr.lan_plan(|_| route(None, true));
+        assert_eq!(
+            plan,
+            [
+                candidate(Source::Configured, Some("192.0.2.10")),
+                candidate(Source::Configured, Some("192.0.2.11"))
+            ]
+        );
+    }
+    #[test]
+    fn shared_probe_board_marks_late_without_reordering() {
+        let slots = [None, Some(Open), Some(Closed)];
+        assert_eq!(
+            board_decision(0, &slots, Duration::from_millis(299), PRECHECK_DEADLINE),
+            None
+        );
+        assert_eq!(
+            board_decision(0, &slots, Duration::from_millis(300), PRECHECK_DEADLINE),
+            Some(Reach::Late)
+        );
+        assert_eq!(
+            board_decision(1, &slots, Duration::from_millis(300), PRECHECK_DEADLINE),
+            Some(Open)
+        );
+        assert_eq!(
+            board_decision(
+                0,
+                &[Some(Open), Some(Open)],
+                Duration::from_secs(1),
+                PRECHECK_DEADLINE
+            ),
+            Some(Open)
+        );
+        assert_eq!(
+            board_decision(
+                0,
+                &[None, Some(Closed)],
+                PRECHECK_DEADLINE + PRECHECK_GRACE,
+                PRECHECK_DEADLINE
+            ),
+            Some(Unchecked)
+        );
+    }
+    #[test]
+    fn sticky_unreachable_replans_once_but_session_failure_does_not() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&[], "lan-only");
+        tr.host = Some("192.0.2.7".into());
+        let mut calls = Vec::new();
+        let out = tr
+            .exchange(
+                "true",
+                Duration::from_secs(10),
+                Retry::none(),
+                |command, _| {
+                    let host = hostname_of(&command);
+                    calls.push(host.clone());
+                    if host.is_some() {
+                        ssh_error("ssh: connect to host 192.0.2.7 port 22: Connection refused")
+                    } else {
+                        ok(b"replanned")
+                    }
+                },
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(out, b"replanned");
+        assert_eq!(calls, [Some("192.0.2.7".into()), None]);
+        tr.host = Some("192.0.2.7".into());
+        let mut calls = 0;
+        let result = tr.exchange(
+            "true",
+            Duration::from_secs(10),
+            Retry::none(),
+            |_, _| {
+                calls += 1;
+                after_auth("192.0.2.7", "remote service failed")
+            },
+            |_| {},
+        );
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+        assert_eq!(tr.host.as_deref(), Some("192.0.2.7"));
+    }
+    #[test]
+    fn learned_membership_never_bypasses_open_check_or_blocks_fallback() {
+        let home = state::TestHome::new();
+        for source in [Source::Learned, Source::Remembered, Source::Sticky] {
+            let mut tr = fixture(&[], "both");
+            install_learned(&mut tr, &home);
+            let plan = [candidate(source, Some("192.168.33.7"))];
+            let error = tr
+                .dial_with(
+                    &plan,
+                    [Unchecked],
+                    "true",
+                    Duration::from_secs(10),
+                    Retry::none(),
+                    |_, _| panic!("unchecked learned host must not dial"),
+                    |_| {},
+                )
+                .unwrap_err();
+            assert_eq!(error.message, LAN_UNREACHABLE);
+            let error = tr
+                .dial_with(
+                    &plan,
+                    [Open],
+                    "true",
+                    Duration::from_secs(10),
+                    Retry::none(),
+                    |_, _| refused(),
+                    |_| {},
+                )
+                .unwrap_err();
+            assert_eq!(error.code, 4);
+            assert!(tr.can_fallback(&error));
+        }
+    }
+    #[test]
+    fn learned_success_is_verified_without_route_memory_and_session_failures_stop() {
+        let home = state::TestHome::new();
+        let mut tr = fixture(&[], "both");
+        install_learned(&mut tr, &home);
+        let plan = [
+            candidate(Source::Learned, Some("192.168.33.7")),
+            candidate(Source::Alias, None),
+        ];
+        assert_eq!(
+            tr.dial_with(
+                &plan,
+                [Open, Unchecked],
+                "true",
+                Duration::from_secs(10),
+                Retry::none(),
+                |_, _| ok(b"done"),
+                |_| {}
+            )
+            .unwrap(),
+            b"done"
+        );
+        assert!(!home.path.join("lan-route.json").exists());
+        assert!(
+            lan_learn::learned(&tr.config).unwrap().routes[0]
+                .verified_at
+                .is_some()
+        );
+        for timeout in [false, true] {
+            let mut count = 0;
+            let error = tr
+                .dial_with(
+                    &plan,
+                    [Open, Unchecked],
+                    "true",
+                    Duration::from_secs(10),
+                    Retry::none(),
+                    |_, _| {
+                        count += 1;
+                        if timeout {
+                            Ok(Ran::TimedOut(Some(b"before authentication".to_vec())))
+                        } else {
+                            after_auth("192.168.33.7", "remote service failed")
+                        }
+                    },
+                    |_| {},
+                )
+                .unwrap_err();
+            assert_eq!(count, 1);
+            assert!(!tr.can_fallback(&error));
+        }
+    }
+    #[test]
+    fn late_configured_candidate_gets_its_dial_before_a_later_rejection() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&["192.0.2.1", "192.0.2.2"], "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts, None);
+        let mut dialed = Vec::new();
+        let result = tr
+            .dial_with(
+                &plan,
+                [Reach::Late, Open],
+                "true",
+                Duration::from_secs(10),
+                Retry::none(),
+                |command, _| {
+                    let host = hostname_of(&command).unwrap();
+                    dialed.push(host.clone());
+                    if host == "192.0.2.2" {
+                        refused()
+                    } else {
+                        ok(b"first host wins")
+                    }
+                },
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(dialed, ["192.0.2.2", "192.0.2.1"]);
+        assert_eq!(result, b"first host wins");
     }
     fn arguments(command: &Command) -> Vec<String> {
         command

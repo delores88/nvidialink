@@ -32,6 +32,9 @@ pub struct Config {
     pub connection_mode: Option<ConnectionMode>,
     #[serde(default = "default_enabled")]
     pub connection_enabled: bool,
+    /// Learn this Spark's LAN addresses over an authenticated status request.
+    #[serde(default = "default_enabled")]
+    pub auto_addresses: bool,
     #[serde(default = "default_laptop_jobs")]
     pub laptop_jobs: usize,
     #[serde(default)]
@@ -58,7 +61,7 @@ impl Config {
         self.mode() != ConnectionMode::LanOnly
     }
     pub fn connection_info(&self) -> Value {
-        serde_json::json!({"mode":self.mode(),"enabled":self.connection_enabled,"remote_allowed":self.allows_remote()})
+        serde_json::json!({"mode":self.mode(),"enabled":self.connection_enabled,"remote_allowed":self.allows_remote(),"auto_addresses":self.auto_addresses})
     }
     pub fn laptop_info(&self) -> Value {
         serde_json::json!({"concurrency_limit":self.laptop_jobs,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"cpu_memory_caps_enforced":false})
@@ -433,7 +436,7 @@ fn lan_routes_writable(diagnostics: &Value) -> bool {
     diagnostics["redirected"] == false
 }
 /// The one write path for remember and forget, so both share the guard.
-fn with_lan_routes(change: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+pub(crate) fn with_lan_routes(change: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let directory = root()?;
     with_lan_routes_in(&directory, lan_routes_writable(&diagnostics()), change)
 }
