@@ -123,7 +123,7 @@ class InternetControllerTests(unittest.TestCase):
         self.assertNotIn("SPARKDEV_PROXY_MODE=public", helper)
 
     def test_cache_does_not_cross_network_setting(self):
-        first, request = self.run_job()
+        first, request = self.run_job(no_return=True)
         row = self.c.get_job(first["job"])
         self.c.finish(row, "succeeded", 0)
         cached = self.rpc("run", **{**request, "request_id": "repeat-on"})

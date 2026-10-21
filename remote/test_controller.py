@@ -220,7 +220,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.c.rpc({"v": 1, "op": "logs", "job": first["job"], "since": 100})["error"]["code"], "invalid_offset")
 
     def test_success_cache_has_new_receipt_and_bypass(self):
-        first, request = self.run_job()
+        # This legacy receipt-only test also runs on Windows. Linux output
+        # snapshots and their cache prerequisites have separate filesystem tests.
+        first, request = self.run_job(no_return=True)
         self.c.tick()
         self.docker.containers["sparkdev-job-" + first["job"]]["State"].update(Status="exited", ExitCode=0)
         self.c.tick()
