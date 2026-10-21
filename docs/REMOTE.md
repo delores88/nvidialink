@@ -61,17 +61,17 @@ images are only pulled/built during explicit owner provisioning, never job submi
 
 | Operation | Fields after `v,op` | Result |
 |---|---|---|
-| `missing` | `hashes` (at most 10,000) | `missing` hashes |
+| `missing` | `hashes` (at most 10,000; `[]` probes) | `missing` hashes, sync `limits`, `storage` free and reserve bytes |
 | `put` | `sha256,data` (base64, at most 1 MiB decoded) | accepted hash and size |
-| `put_many` | `chunks:[{sha256,data}]` (128 objects / 3 MiB JSON body maximum) | ordered `accepted` objects and decoded byte count |
-| `sync` | `project,manifest` | `manifest_id,files,bytes,project` |
+| `put_many` | `chunks:[{sha256,data}]` (128 objects / 12 MiB JSON body maximum) | ordered `accepted` objects and decoded byte count |
+| `sync` | `project,manifest` | `manifest_id,files,bytes,project`, or `materializing` while the Spark assembles it |
 | `run` | `project,manifest_id,argv,runtime,client,request_id,no_cache?` | job receipt |
 | `prepare` | `project,manifest_id,runtime,client,request_id` | dependency job receipt |
 | `wait` | `job,timeout?` (0â€“60 seconds) | current job receipt |
 | `logs` | `job,since,limit?` (1 MiB maximum) | base64 `data`, display `text`, `next_offset`, receipt |
 | `cancel` | `job` | durable cancellation receipt |
-| `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, limits, runtimes |
-| `doctor` | none | status plus SQLite, Docker, Linux and memory checks |
+| `status` | `all?` | shared laptop/Spark board, scheduler heartbeat, resource `limits`, runtimes, observed `network` link, `storage`, `sync_limits`, `materializing` queue |
+| `doctor` | none | status (including `network`) plus SQLite, Docker, Linux and memory checks |
 | `resources` | `limits?` (complete owner policy) | effective policy, hardware bounds, persistence and application timing |
 | `claim` | `project,client,request_id,job?,ttl?` | laptop `lease,job,expires_at` |
 | `heartbeat` | `lease,job?,ttl?,state?,exit_code?,data?,since?` | renewed lease and next log offset |
@@ -84,7 +84,76 @@ as UTF-8 JSON with sorted object keys, no insignificant whitespace, and unescape
 Unicode. Its SHA-256 is the manifest ID. Files are rebuilt from verified chunk hashes
 and whole-file hashes, without archive extraction. Symlinks, traversal, duplicate
 case-insensitive names, excluded directories and credential patterns are refused.
-Maximum file/tree sizes are 4/20 GiB and maximum file count is 100,000.
+A file may be up to 16 GiB and a project up to 32 GiB, of which files of 512 MiB or
+less ("small" files) may total at most 8 GiB. At most 100,000 files are accepted.
+These limits keep a full manifest well inside the 4 MiB paired-route frame; a 64 GiB
+project waits for measured wired throughput and a prune operation.
+
+## Limits handshake and snapshot assembly
+
+A new CLI first sends `missing` with no hashes. The response carries `limits`
+(`chunk`, `max_file`, `max_tree`, `max_small_tree`, `large_file`, `max_files`,
+`max_request`, `put_many_body`, `missing_batch`) and `storage`
+(`free_bytes`, `total_bytes`, `reserve_bytes`). A controller without `limits` is
+treated as legacy: the CLI then refuses, before any upload, any file over 512 MiB or
+project over 8 GiB, and asks the owner to update Spark setup. A different advertised
+chunk size is refused. `missing` checks presence with `lstat` only (a regular object
+of at most 1 MiB); it never re-reads objects. Assembly re-verifies every chunk.
+
+`sync` validates the manifest and counts what the snapshot still needs: the bytes of
+absent chunks (each distinct chunk once), the new bytes assembly will write, and the
+small files kept from an interrupted pass, which assembly re-hashes. Before anything is
+uploaded it refuses `insufficient_disk` when the absent and new bytes plus every queued
+snapshot's outstanding bytes would cut into the disk reserve, then `missing_chunks`
+when chunks are absent. Otherwise it queues the snapshot as
+`~/sparkdev/state/pending/<manifest>.json`; reading the queue, both checks and writing
+the record happen under one short `pending/.queue.lock`, so concurrent syncs cannot
+both pass them against the same queue. A snapshot whose new and re-hashed bytes total
+at most 512 MiB is assembled inside the RPC, exactly as before, even while a background
+build holds the global lock, and the queue cap never applies to it, so older CLIs and
+small projects see a synchronous sync. Larger ones are assembled by one detached
+materializer (`controller.py materialize`, started with stdio closed in its own
+session), which holds a single global lock and processes the queue oldest first; at
+most four such snapshots may be queued. Every builder, in an RPC or in the background,
+holds an exclusive lock on the snapshot's queue record, so one snapshot is never built
+twice at once. A sync waits until 8 seconds after its controller process started
+(reading the resent manifest counts), then answers `materializing` with progress
+("X of Y MiB"). That leaves the rest of the CLI's fixed 30-second sync timeout for
+connection setup and the manifest upload: on the paired route, up to 12 seconds for the
+sidecar to connect and 10 for the Spark daemon to read the frame. Running the same command again
+continues where it left off. A sync never forks the materializer while the scheduler
+is alive: the scheduler's next tick, about a second later, starts it whenever work is
+queued and none holds the lock, so it runs inside `sparkdev-controller.service`, whose
+`KillMode=process` keeps it alive across scheduler restarts. A new session is not a
+new cgroup, so a materializer forked by an RPC would belong to whatever served that
+RPC (`sparkdev-link.service` on the paired route) and die when that unit restarts.
+Only when the scheduler's heartbeat is at least 15 seconds old does a sync start the
+materializer itself; if that serving unit then restarts, the partial file restarts
+from zero when the scheduler resumes the queue.
+
+Assembly applies the same checks as before to every chunk: length, SHA-256 and the
+credential scan with the previous chunk's 512-byte tail, then the whole-file hash. A
+chunk whose content no longer matches its name is unlinked, and that sync answers
+`hash_mismatch` once, so the CLI uploads it again. Files over 512 MiB are written once
+to `files/<sha256>-<mode>`, fsynced, made read-only and hard-linked into each
+snapshot that uses them (a fresh copy if the link count is exhausted). An interrupted
+assembly resumes file by file: completed large files are kept, completed small files
+are re-hashed because they were never fsynced, and a partial file restarts from zero.
+A failure leaves a one-shot marker that the next sync returns (`insufficient_disk`
+for a full disk) and removes the partial tree; `files/` is kept. No prune operation
+exists yet.
+
+`DISK_RESERVE` is 64 GiB of free space on the state filesystem. Bytes that queued
+snapshots will still write are already promised, so every guard counts them: `put` and
+`put_many` refuse with `insufficient_disk` when the incoming bytes would cut into the
+reserve, `sync` refuses before any upload as above, and the scheduler leaves a job
+queued while its work copy would cut into it (`status` shows `admission_blocked`).
+Assembly checks again before each file it writes and fails the snapshot with
+`insufficient_disk` instead of crossing the reserve, because uploads and jobs may have
+used space since the snapshot was queued. This also
+blocks small syncs when the Spark has less than 64 GiB free; that is intentional,
+because a full disk would also break running jobs, caches and the controller's own
+database. Refusals and `status.storage` report free and reserve figures in GiB only.
 
 Logs use byte offsets, not character counts. Base64 `data` is authoritative for
 non-UTF-8 output; `text` is a lossy convenience field. Repeating an offset reads the
@@ -97,6 +166,67 @@ manifest content/modes, exact argv, runtime image/provenance, fixed policy, reso
 limits, and the supervisor content hash. Failed jobs never populate this cache.
 `no_cache:true` executes again. Cached receipts are previous execution results, so
 time-dependent commands should use this bypass. No artifact export is inferred.
+
+## Network link report
+
+`status`, and therefore `doctor`, carries `network`: an observation of which Spark
+link carries this controller's traffic. It is observation only and never changes
+route choice, admission or retry classification. The probe reads bounded sysfs and
+procfs files (4 KiB per sysfs file, at most 1,024 interfaces, all classified before
+the wired list is capped at 16). For Wi-Fi it runs `/usr/sbin/iw` or `/sbin/iw`
+(`dev IF link`, `dev IF info`), else `/usr/bin/nmcli -t -e yes -f
+ACTIVE,FREQ,CHAN,BANDWIDTH device wifi list ifname IF --rescan no`, with argv only,
+`LC_ALL=C`, a fixed `PATH`, no stdin or stderr, 64 KiB of stdout, a one-second
+timeout per call and a 2.5-second overall deadline. A tool still running at its timeout
+is killed, given 0.2 seconds to exit, then abandoned, because a tool wedged in a
+driver can ignore SIGKILL. The whole probe, sysfs reads included, runs on its own
+thread for at most 3 seconds; one that has not returned by then reports
+`observed:false`, so a wedged driver cannot hold `status` past the CLI's timeout. Signal falls back to
+`/proc/net/wireless`. It never scans and never requests SSID or BSSID fields. Raw
+tool output is parsed in memory and discarded, never logged. A single sanitizer
+rebuilds the object from whitelisted, bounded fields, so it holds no SSID, BSSID,
+MAC or IP address; the probe never reads an interface `address` file. An interface
+name derived from a MAC address (`enx<MAC>`, `wlx<MAC>`, `wwx`, `ibx`, `slx`: Ubuntu
+names USB network adapters this way) is reported as `usb-ethernet-N`, `usb-wifi-N`,
+`usb-wwan-N`, `usb-ib-N` or `usb-slip-N`, numbered in sorted name order and identical in
+every field; the real name is used only in the probe tools' argv.
+
+```json
+{"v":1,"observed":true,"basis":"ssh_session",
+ "active":{"interface":"wlP9s9","kind":"wifi","operstate":"up","speed_mbps":null},
+ "underlay":null,
+ "wired":[{"interface":"enP7s7","carrier":false,"operstate":"down","speed_mbps":null,"driver":"r8127","default_route":false}],
+ "wired_up":0,"wired_lan_up":0,
+ "wifi":{"interface":"wlP9s9","band":"2.4","channel":11,"frequency_mhz":2462,"width_mhz":20,
+         "tx_bitrate_mbps":144.4,"rx_bitrate_mbps":72.2,"signal_dbm":-52,"links":1,"source":"iw"}}
+```
+
+- `basis` is `ssh_session` only when `SSH_CONNECTION` parses, its exact 4-tuple is an
+  ESTABLISHED socket in `/proc/net/tcp` or `tcp6`, and a local interface owns the
+  server address. Otherwise it is `default_route` (lowest-metric IPv4 default, else
+  IPv6), which includes a stale `SSH_CONNECTION` inherited on the paired route. With
+  no default route it is `unknown` and `active` is null.
+- `kind` is `wired` (sysfs type 1 or 32), `wifi`, `virtual` (no `device`) or `unknown`.
+  `active.egress_interface` appears only when the main-table route back to the client
+  leaves through a different interface; it is not computed for a virtual owner, whose
+  policy routing the main table does not show.
+- `underlay` is set only when `active` is virtual: the first physical `lower_*` member
+  with carrier, else the physical default-route interface.
+- `wired_up` counts wired ports with carrier. `wired_lan_up` counts those that also
+  have a default route, so a QSFP cluster cable alone is not a LAN link. A port's
+  `default_route` is true when the port itself, or a bridge, bond or VLAN master stacked
+  on it (followed through its `upper_*` links, at most three layers), holds a default.
+- `wifi` is reported only for an active or underlay Wi-Fi interface. `band` is `2.4`,
+  `5`, `6`, `multi` (multi-link operation, with `links`; channel, frequency and width
+  are then null) or null. `source` is `iw`, `nmcli`, `proc` (signal only) or null.
+  Out-of-bounds or unknown values are null.
+- `{"v":1,"observed":false,"basis":"unknown"}` means this controller could not observe
+  its link (non-Linux host, unreadable sysfs or a failed probe); status still
+  succeeds. A missing `network` key means an older controller, which a bridge repair
+  replaces. `sparkdev devices` passes the object through as the Spark device's
+  `network` and reports null for a missing key, an unreachable Spark or a version
+  other than 1.
+- Additive fields keep `v:1`; only a breaking change bumps `v`.
 
 ## Isolation, fairness and dependency access
 
@@ -122,6 +252,13 @@ with the job, included in cache identity, and cannot be changed for existing job
 The container is nonroot, read-only-root, cap-drop ALL, no-new-privileges, PID limited,
 CPU/memory/swap limited, nice 10, bounded tmpfs, and network-none. Host mounts contain
 only this job's private work copy, output, supervisor and per-worktree/per-image caches.
+The work copy is built from the manifest into `work.pending` and renamed into place:
+small files are copied with modes 0644/0755, and each file over 512 MiB becomes a
+symlink to `/sparkdev-source/<path>`. Only a manifest with large files adds one
+read-only bind of its whole snapshot at `/sparkdev-source`; no project path text ever
+appears in Docker arguments, the job cannot write or chmod a shared store inode, and a
+small-only manifest gets byte-identical arguments to earlier releases. A work copy that
+cannot be built fails the job with exit 125 (`insufficient_disk` or `work_copy_failed`).
 The Docker socket, host home, Ollama, PhaseForge services and other caches are absent.
 CUDA uses the same limits plus an active `MemAvailable` watchdog; on GB10 this is
 necessary because CUDA unified-memory allocations can evade the cgroup RAM limit.
@@ -129,9 +266,51 @@ The watchdog depends on the running controller and is not a hardware memory quot
 
 Dependency preparation is a separate fixed job. Rust runs `cargo fetch --locked`,
 Node runs `npm ci --ignore-scripts`, and Python requires `requirements.lock` and
-`pip --require-hashes --only-binary=:all:`. Lockfile hashes must remain unchanged.
+`python3 -I -X utf8 -m pip --require-hashes --only-binary=:all:`. Lockfile hashes must remain unchanged.
+Before pip runs, every line of a Python or CUDA lock must be a named requirement with
+per-requirement hashes. Option lines (`-r`, `-e`, `--index-url`, `--no-binary` and the
+rest), direct URLs, paths, and requirements whose text before any marker ends in an
+archive suffix (`evil==1.0.tar.gz`, `x.whl[extra]`) are refused: pip would read those
+as a local file or directory and build an sdist with the network attached. A coding
+cookie other than UTF-8 on either of the first two lines is refused too, because pip
+would decode the lock with it; UTF-8 mode keeps pip's decoding equal to this check's.
 Npm installed trees and Python site packages are saved by lock hash; actual jobs
 restore them while remaining offline. Npm lifecycle scripts are never given egress.
+pip runs isolated, so a project file beside the lock (for example `json.py`) never
+executes in the network-attached container, and every inherited `PIP_*` and `PYTHON*`
+variable is replaced with fixed values. A site directory is built under a pending name
+and replaces the previous one only after success. Jobs put prepared site directories
+ahead of any `PYTHONPATH` the image already sets, in the sorted lock order preparation
+uses. Because every prepared environment of a runtime shares that one `PYTHONPATH`, a
+lock that pins a distribution at a different version than an earlier lock, or ships a
+module an earlier lock's environment already provides from a different distribution or
+version, is refused; identical copies and merging namespace packages are allowed.
+
+CUDA preparation (`--runtime cuda`) runs in the CUDA image under its own
+`/usr/bin/python3` and installs `requirements-cuda.lock`: a hash-locked `--no-deps`
+closure that excludes every package the CUDA image provides. The proxy remains the
+Python image, so `status` lists `preparable_runtimes` only when the Python runtime is
+installed. The preparation gets no GPU (`NVIDIA_VISIBLE_DEVICES=void`, no `--gpus`),
+refuses to continue if any `/dev/nvidia*` device is visible, and is exempt from the
+MemAvailable watchdog, which still stops CUDA runs. Before any download it applies the
+lock-line rules above and refuses `torch`, `torchvision`, `torchaudio`, `triton`,
+`pytorch-triton`, `cuda-toolkit`, every `nvidia-*` distribution except `nvidia-ml-py`
+(CUDA 13 wheels such as `nvidia-cublas` carry no `-cuNN` suffix) and any distribution
+already in the image; torch and the CUDA stack come only from the pinned image. After
+the wheel-only install, metadata-only checks refuse duplicate image distributions or
+modules, a staged top-level `nvidia` namespace, standard-library shadows,
+`sitecustomize`/`usercustomize`, and requirements that are missing from both
+the image and the lock or conflict with the lock. A conflict with the image's own
+version only warns. No staged package code runs while the network is attached.
+
+Upgrade by redeploying the controller through the setup bundle. The old CLI already
+passes `--runtime cuda`; the old MCP server still refuses it. A new CLI or MCP server
+against an old controller gets `invalid_request` and no job row; retry with the same
+request ID after upgrading. Admitted jobs keep the `worker.py` and `prepare.py` copied
+at admission. The new worker changes the run-cache key, so each runtime sees one cache
+miss. A legacy partial Python environment stays loadable until the next `prepare`
+rebuilds it. `remote/verify_cuda_dependencies.py` is the owner-run physical acceptance;
+it uses only the CLI and requires the real `--client`.
 
 Each preparation job gets an internal bridge with Docker's `isolated` gateway mode,
 which removes the host bridge address. This prevents the host-service access that
@@ -149,10 +328,13 @@ prove controller decisions, not container isolation by themselves. Real runtime 
 and probe receipts live on the Spark; CLI acceptance receipts identify actual job
 IDs and observed outcomes. Phone-hotspot roaming, physical laptop sleep, real Claude
 Code invocation, Windows installation behavior and Marketplace admission require
-their own evidence. None follows from unit tests or a client label.
+their own evidence. None follows from unit tests or a client label. Large-file
+transfer (5 GB and 16 GiB files) has unit-test coverage only so far; owner acceptance
+receipts recording MB/s, link type and seconds per GiB are still required.
 
 Logs are limited to 256 MiB per job; exceeding the bound kills the workload with
-exit 125. Individual files are capped at 4 GiB. Jobs and source snapshots are retained
+exit 125. A job may write files of at most 4 GiB (`--ulimit fsize`), although it can
+read synced inputs of up to 16 GiB. Jobs and source snapshots are retained
 for inspection; no garbage collector currently deletes them automatically. The
 controller refuses new jobs at 4096 retained records. Owners should monitor disk
 space and archive old completed work deliberately. There is no general remote output

@@ -2,11 +2,11 @@
 
 A Windows desktop app and agent CLI for running Linux builds, tests and compute on your own NVIDIA DGX Spark, while Windows work stays on your laptop. Claude Code, Codex and humans share job status, worktree claims and retained logs. First-party source is MIT licensed; this is an independent DeloresAI utility.
 
-**0.3.0:** redesigns the desktop window around the shared job board, with a CodaClauda-style rail and status bar. Its searchable job list shows inline output, workload exit codes, cached-result and long-running markers, and a two-step cancel. The Spark view reports which configured address the route used. The CLI, link sidecar and Spark payload are the unchanged 0.2.1 builds. See the [release notes](docs/RELEASE-0.3.0.md), including what was not verified while the Spark was offline.
+**0.3.1:** declares Marketplace "Not specified" minimum Windows and memory instead of the test laptop's values, which had blocked installation on many PCs, and uses the Marketplace-recognized WebView2 runtime name. 0.3.0 redesigned the desktop window around the shared job board. See the [0.3.1 notes](docs/RELEASE-0.3.1.md) and [0.3.0 notes](docs/RELEASE-0.3.0.md).
 
 ## Connect your Spark
 
-Download the [Windows installer](https://github.com/delores88/nvidialink/releases/download/v0.3.0/DGXBridge_0.3.0_x64-setup.exe). The [GitHub release](https://github.com/delores88/nvidialink/releases/tag/v0.3.0) includes checksums, notices, dependency inventories and a Linux ARM64 CLI. Start the installer from ordinary Windows Explorer for a normal current-user installation. Launching setup from a packaged coding-agent process can redirect it into that package’s private cache. The installer is unsigned; review the release notes and verify its hash before running it.
+Download the [Windows installer](https://github.com/delores88/nvidialink/releases/download/v0.3.1/DGXBridge_0.3.1_x64-setup.exe). The [GitHub release](https://github.com/delores88/nvidialink/releases/tag/v0.3.1) includes checksums, notices, dependency inventories and a Linux ARM64 CLI. Start the installer from ordinary Windows Explorer for a normal current-user installation. Launching setup from a packaged coding-agent process can redirect it into that package’s private cache. The installer is unsigned; review the release notes and verify its hash before running it.
 
 1. Start with a working OpenSSH alias and a host key verified against the Spark. Install Docker for your existing user on the Spark; the bridge never uses sudo.
 2. Open **Connection**, save your SSH alias, LAN address, user and existing key-file reference. For a new Spark, explicitly choose **Install / repair Spark bridge**; this installs separate user services and provisions its CPU runtime under `~/sparkdev`. Saving or testing a connection does not reinstall services.
@@ -37,7 +37,7 @@ Retain the returned job ID and log `next_offset`. Poll until terminal state and 
 
 ## Isolation and limits
 
-- Spark jobs use a closed registry of image IDs, owner-configured resource limits and no network. `prepare` uses a separate allowlisted dependency proxy with lockfiles enforced. Optional CUDA provisioning is distinct from the CPU runtime.
+- Spark jobs use a closed registry of image IDs, owner-configured resource limits and no network. `prepare` uses a separate allowlisted dependency proxy with lockfiles enforced. Optional CUDA provisioning is distinct from the CPU runtime; CUDA preparation installs `requirements-cuda.lock` without a GPU and refuses packages the CUDA image provides.
 - Default jobs use 4 CPU cores and 8 GiB; the scheduler enforces total and per-client quotas and memory headroom. Use **Resources** to save per-job, total and per-client limits plus reserved memory headroom. Saved caps govern new jobs; existing jobs keep their allocations. Legacy project overrides remain until the first policy save, then are clamped to the saved caps. Existing PhaseForge and Ollama resources are left alone.
 - Sync hashes tracked and non-ignored files into resumable content-addressed chunks. Build output, symlinks, paths outside the root and recognized credential material are excluded or rejected. Never place secrets in a submitted project or command line.
 - Successful Spark results can be reused only when source, argv and runtime match. `--no-cache` bypasses reuse. Laptop result caching is disabled because the native host has no immutable runtime digest.

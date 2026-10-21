@@ -35,7 +35,7 @@
   <div class="crumbs"><span class="product">DGX<b>Bridge</b></span><span class="crumb-sep">/</span><h1 id="page-title">Jobs</h1></div>
   <div class="topbar-actions">
     <button class="status-pill" data-view="connection" title="Open Spark connection"><i class="status-dot" data-connection-dot></i><span data-connection-state>Not checked</span><span class="pill-detail" data-mode-label>LAN only</span></button>
-    <span class="status-pill passive" id="activity-pill"><i class="activity-dot" id="activity-dot"></i><span id="activity-label">No active jobs</span></span>
+    <span class="status-pill passive" id="activity-pill"><i class="activity-dot" id="activity-dot"></i><span id="activity-label">Checking jobs…</span></span>
     <button class="icon-button" id="refresh" title="Refresh now" aria-label="Refresh"><svg class="icon"><use href="#i-refresh"/></svg></button>
     <button class="icon-button" id="theme-toggle" title="Switch theme" aria-label="Switch to light theme"><svg class="icon"><use href="#i-sun"/></svg></button>
   </div>
@@ -45,13 +45,13 @@
 <section id="overview" class="view jobs-view">
   <div class="machine-strip">
     <article class="machine" id="laptop-card">
-      <div class="machine-head"><span class="machine-icon"><svg class="icon"><use href="#i-laptop"/></svg></span><div class="machine-name"><h2>This laptop</h2><p>Windows, MSVC and installer jobs</p></div><strong class="machine-count" id="laptop-jobs">— active</strong></div>
+      <div class="machine-head"><span class="machine-icon"><svg class="icon"><use href="#i-laptop"/></svg></span><div class="machine-name"><h2>This laptop</h2><p>Windows, MSVC and installer jobs</p></div><strong class="machine-count" id="laptop-jobs">Checking…</strong></div>
       <div class="meter" role="img" id="laptop-meter" aria-label="Laptop job slots"><span id="laptop-meter-fill"></span></div>
       <p class="machine-foot" id="laptop-foot">Native jobs run as you, without enforced CPU or memory caps.</p>
     </article>
     <div class="machine-link" data-connection-link><span></span></div>
     <article class="machine spark" id="spark-card">
-      <div class="machine-head"><span class="machine-icon"><svg class="icon"><use href="#i-spark"/></svg></span><div class="machine-name"><h2 data-spark-name>Your Spark</h2><p data-connection-route>Not checked yet</p></div><strong class="machine-count" id="spark-jobs">— active</strong></div>
+      <div class="machine-head"><span class="machine-icon"><svg class="icon"><use href="#i-spark"/></svg></span><div class="machine-name"><h2 data-spark-name>Your Spark</h2><p data-connection-route>Not checked yet</p></div><strong class="machine-count" id="spark-jobs">Checking…</strong></div>
       <div class="meter" role="img" id="spark-meter" aria-label="Spark CPU reserved by running jobs"><span id="spark-meter-fill"></span></div>
       <p class="machine-foot" id="spark-foot">Linux builds, tests and compute.</p>
     </article>

@@ -33,6 +33,7 @@ def main():
         laptop, spark = devices["devices"]
         assert laptop["availability"] == "available" and laptop["can_submit"] is False
         assert spark["availability"] == "unconfigured" and spark["transport"]["route"] == "none"
+        assert spark["network"] is None, "An unconfigured Spark must not report a network link"
         assert laptop["admission"]["available"] == "unavailable"
         receipt["checks"].append({"name": "unconfigured_spark_does_not_imply_offline_laptop_admission", "passed": True})
         # Refused loopback port, without reading/copying an owner key or changing
@@ -41,6 +42,7 @@ def main():
         devices = call("devices")
         laptop, spark = devices["devices"]
         assert spark["availability"] == "unreachable" and spark["transport"]["authenticated"] is False
+        assert spark["network"] is None, "An unreachable Spark must not report a network link"
         assert spark["transport"]["route"] == "none"
         attempts = spark["transport"]["attempted_routes"]
         assert any(a["route"] == "lan_ssh" and a["status"] == "host_unreachable" for a in attempts)

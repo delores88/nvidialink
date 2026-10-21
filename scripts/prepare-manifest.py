@@ -106,7 +106,7 @@ def verify_media(item, label, input_directory):
 
 def validate_input(value):
     object_keys(value, ['publisherId', 'releaseId', 'assetId', 'sourceCommit', 'tag', 'version', 'installer',
-                        'requirements', 'artwork', 'screenshots', 'screenshotsReviewed'], 'Release input')
+                        'requirements', 'testedHost', 'artwork', 'screenshots', 'screenshotsReviewed'], 'Release input')
     publisher = value['publisherId']
     require(isinstance(publisher, str) and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}', publisher)
             and not re.match(r'(?i)(replace|placeholder|example|test-only|todo)', publisher),
@@ -122,9 +122,14 @@ def validate_input(value):
     require(isinstance(value['installer']['localPath'], str) and value['installer']['localPath'], 'Local installer is required')
     object_keys(value['requirements'], ['minimumOs', 'memoryGb', 'diskMb'], 'requirements')
     r = value['requirements']
-    require(isinstance(r['minimumOs'], str) and re.fullmatch(r'\d+(\.\d+){0,3}', r['minimumOs']), 'Supply the tested numeric Windows version')
-    require(type(r['memoryGb']) in {int, float} and 0 < r['memoryGb'] <= 4096, 'Supply the tested client memory requirement')
+    # Marketplace enforces these as install floors. "0" and 0 are its "Not specified" values; never copy the
+    # test machine into them. The observed host is recorded separately as testedHost.
+    require(isinstance(r['minimumOs'], str) and re.fullmatch(r'\d+(\.\d+){0,3}', r['minimumOs']), 'Supply a numeric minimum Windows version, or "0" when not established')
+    require(type(r['memoryGb']) in {int, float} and 0 <= r['memoryGb'] <= 4096, 'Supply client memoryGb from 0 to 4096; 0 means not specified')
     require(type(r['diskMb']) in {int, float} and 0 < r['diskMb'] <= 4000000, 'Supply the measured positive client disk requirement')
+    object_keys(value['testedHost'], ['os', 'memoryGb'], 'testedHost')
+    require(isinstance(value['testedHost']['os'], str) and re.fullmatch(r'\d+(\.\d+){0,3}', value['testedHost']['os']), 'Record the observed test host Windows version')
+    require(type(value['testedHost']['memoryGb']) in {int, float} and 0 < value['testedHost']['memoryGb'] <= 4096, 'Record the observed test host memory')
     object_keys(value['artwork'], ['icon', 'thumbnail'], 'artwork')
     require(isinstance(value['screenshots'], list) and 1 <= len(value['screenshots']) <= 10, 'One to ten actual application screenshots are required')
     require(value['screenshotsReviewed'] is True, 'Review screenshots for actual installed app content and removal of private data/tokens before generation')
@@ -164,7 +169,13 @@ def verify_release(value, input_directory, require_published):
     require(0 < installer.stat().st_size <= 2000000000 and asset['size'] == installer.stat().st_size, 'Installer byte size differs from GitHub')
     require(asset.get('digest') == 'sha256:' + digest, 'GitHub installer SHA-256 metadata differs or is unavailable')
     expected = f'https://github.com/{REPOSITORY}/releases/download/{quote(value["tag"], safe="")}/{quote(asset["name"], safe="")}'
-    require(asset['browser_download_url'] == expected, 'Installer download URL is not the canonical release URL')
+    # GitHub serves draft assets from an untagged-* path until publication. The manifest names the installer by
+    # asset ID and filename, so it can be validated and attached to the complete draft before Marketplace intake
+    # can observe the release; --require-published then confirms the canonical URL after publication.
+    draft_url = re.fullmatch(rf'https://github\.com/{re.escape(REPOSITORY)}/releases/download/untagged-[0-9a-f]+/{re.escape(quote(asset["name"], safe=""))}',
+                             asset['browser_download_url'])
+    require(asset['browser_download_url'] == expected or (release.get('draft') is True and not require_published and draft_url is not None),
+            'Installer download URL is not the canonical release URL')
     return {'repositoryId': repo['id'], 'releaseId': release['id'], 'draft': release['draft'], 'prerelease': prerelease,
             'sourceCommit': ref['sha'], 'assetId': asset['id'], 'filename': asset['name'], 'bytes': asset['size'], 'sha256': digest}
 
@@ -201,7 +212,7 @@ def manifest(value, downloads):
         'repository': {'id': REPOSITORY_ID, 'url': repo_url},
         'release': {'id': value['releaseId'], 'tag': value['tag'], 'version': value['version'], 'channel': 'beta' if '-' in value['version'] else 'stable', 'sourceCommit': commit},
         'summary': 'Run agent-directed builds and tests on your own NVIDIA DGX Spark, with a Windows desktop job board and CLI.',
-        'description': 'DGXBridge connects a Windows laptop to an owner-controlled NVIDIA DGX Spark. It provides a shared job board, resumable project transfer, durable job IDs, retained output, cancellation, per-project caches and a stdio MCP interface for coding agents. Windows work can run as native owner processes; Linux work runs in restricted Spark containers. Native laptop execution is not sandboxed.\n\nFirst setup requires an existing authenticated SSH configuration with a verified host key, Windows OpenSSH and preinstalled Microsoft Edge WebView2. Spark requires ARM64 Linux, Python 3, a working user Docker setup, systemd user services and sufficient disk/memory headroom. Setup installs independent bridge services. Phone QR approval is a separate owner action on the same LAN; optional encrypted public n0 relays can then provide remote connectivity. No owner VM is configured or assumed.\n\nRuntime setup downloads a digest-pinned OCI base, installs Debian repository packages and hash-locked Python wheels, then locks jobs to the resulting local image ID. Debian package versions are resolved at setup rather than pinned individually in this release. Optional CUDA provisioning is separate. Dependency preparation downloads project packages through a fixed domain allowlist; normal Spark jobs have no network. This release has no automatic data cleanup and does not bundle an AI model or call model APIs. Consult the release receipts for the exact tested workflows and remaining phone/hotspot/native acceptance limits.',
+        'description': 'DGXBridge connects a Windows laptop to an owner-controlled NVIDIA DGX Spark. It provides a shared job board, resumable project transfer, durable job IDs, retained output, cancellation, per-project caches and a stdio MCP interface for coding agents. Windows work can run as native owner processes; Linux work runs in restricted Spark containers. Native laptop execution is not sandboxed.\n\nFirst setup requires an existing authenticated SSH configuration with a verified host key, Windows OpenSSH and preinstalled Microsoft Edge WebView2. Spark requires ARM64 Linux, Python 3, a working user Docker setup, systemd user services and sufficient disk/memory headroom. Setup installs independent bridge services. Phone QR approval is a separate owner action on the same LAN; optional encrypted public n0 relays can then provide remote connectivity. No owner VM is configured or assumed.\n\nRuntime setup downloads a digest-pinned OCI base, installs Debian repository packages and hash-locked Python wheels, then locks jobs to the resulting local image ID. Debian package versions are resolved at setup rather than pinned individually in this release. Optional CUDA provisioning is separate. Dependency preparation downloads project packages through a fixed domain allowlist; normal Spark jobs have no network. This release has no automatic data cleanup and does not bundle an AI model or call model APIs. Consult the release receipts for the exact tested workflows and remaining phone/hotspot/native acceptance limits.\n\nWindows OpenSSH Client must be installed separately for Spark connections. Minimum Windows version and memory are not specified when their compatibility fields use the Marketplace unknown values; this does not assert compatibility with every system. The release receipts record the observed test host separately.',
         'category': 'automation', 'sourceVisibility': 'public', 'license': 'MIT',
         'featureNotices': [
             {'name': 'Codex Windows sandbox', 'status': 'beta', 'description': 'Actual Claude Code and Codex MCP jobs ran concurrently on the physical Spark and both succeeded. The separate Codex restricted Windows shell check failed on the tested laptop with missing writable-root capability SIDs. Restricted shell execution is not accepted by this beta receipt; no global security setting was changed.'},
@@ -239,7 +250,7 @@ def manifest(value, downloads):
         'artwork': {'iconUrl': value['artwork']['icon']['url'], 'thumbnailUrl': value['artwork']['thumbnail']['url']},
         'screenshots': [{'url': row['url'], 'alt': row['alt'].strip()} for row in value['screenshots']],
         'artifacts': [{'os': 'windows', 'architectures': ['x64'], 'format': 'nsis', 'assetId': value['assetId'], 'filename': value['installer']['filename'], 'installationAdapter': 'windows-nsis', 'preferred': True,
-                       'requirements': {**value['requirements'], 'gpu': None, 'runtimes': ['Microsoft Edge WebView2 Runtime (preinstalled)', 'Windows OpenSSH Client (preinstalled)'], 'distributions': []}}]
+                       'requirements': {**value['requirements'], 'gpu': None, 'runtimes': ['Microsoft Edge WebView2'], 'distributions': []}}]
     }
 
 
@@ -284,7 +295,7 @@ def main():
     require(not args.output.exists() or args.output.read_bytes() == raw, 'Refusing to overwrite a different release manifest; use a fresh output directory')
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(raw)
-    receipt = {'manifestSha256': hashlib.sha256(raw).hexdigest(), 'release': identity, 'media': media, 'validation': checked,
+    receipt = {'manifestSha256': hashlib.sha256(raw).hexdigest(), 'release': identity, 'media': media, 'validation': checked, 'testedHost': value['testedHost'],
                'publisherIdentity': 'Supplied by the release operator; account ownership is checked by the Marketplace submission workflow.',
                'submitted': False, 'admissionApproved': False}
     args.output.with_name('manifest-validation.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')

@@ -11,11 +11,11 @@ fn schema(properties: Value, required: &[&str]) -> Value {
 fn tools() -> Value {
     let job = json!({"type":"string","minLength":1});
     json!([
-      {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access and known capacity; unknown capacity remains unknown. This is an observation, not a reservation.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access and known capacity; unknown capacity remains unknown. This is an observation, not a reservation. Includes the Spark's observed network link; never SSIDs or addresses.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"connection","description":"Read the owner's saved route preference and enabled/disconnected state. Does not connect, change settings or reveal SSH credentials. Existing admitted jobs retain their connections after disconnect.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
       {"name":"resources","description":"Read the authenticated Spark scheduler resource policy and detected hardware bounds. Settings apply to new requests and admissions; this tool cannot change them. Laptop native CPU and memory are not capped by Spark settings.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"plan","description":"Preview job placement and validate source and exact argv without uploading files, claiming a worktree or launching a job. Does not verify runtime availability or reserve capacity; use devices for current connectivity.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"}}), &["dir","argv"]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
-      {"name":"prepare","description":"Sync a project and submit fixed locked dependency preparation on Spark for Rust, Node or Python. No caller commands accepted. Reconnection also delivers cancellations previously queued by the owner. Retain the detached job ID and poll wait/logs to completion before running an offline workload. Reuse request_id when retrying.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"runtime":{"type":"string","enum":["rust","node","python"]},"request_id":{"type":"string"}}), &["dir","runtime"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"prepare","description":"Sync a project and submit fixed locked dependency preparation on Spark for Rust, Node, Python or CUDA (requirements-cuda.lock; packages the CUDA image provides are refused). No caller commands accepted. Reconnection also delivers cancellations previously queued by the owner. Retain the detached job ID and poll wait/logs to completion before running an offline workload. Reuse request_id when retrying.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"request_id":{"type":"string"}}), &["dir","runtime"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
       {"name":"run","description":"Sync a project and submit a detached build/test job. Returns durable job ID; follow with wait/logs. Laptop commands run natively with owner permissions and can change files outside the project. Reuse request_id to retry without duplicate execution.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"},"request_id":{"type":"string"},"no_cache":{"type":"boolean","default":false}}), &["dir","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
       {"name":"wait","description":"Bound the remote job wait to timeout seconds (0–60) and return status and exit code when terminal. Connection and queued-cancellation delivery add overhead. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"timeout":{"type":"integer","minimum":0,"maximum":60,"default":10}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"logs","description":"Read and save a bounded chunk of retained output from a byte offset; next_offset supports lossless repeated polling. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"since":{"type":"integer","minimum":0,"default":0}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
@@ -74,8 +74,8 @@ fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> 
             }
             if name == "prepare" {
                 let runtime = required_string(v, "runtime")?;
-                if !["rust", "node", "python"].contains(&runtime) {
-                    return Err("prepare runtime must be rust, node or python".into());
+                if !["rust", "node", "python", "cuda"].contains(&runtime) {
+                    return Err("prepare runtime must be rust, node, python or cuda".into());
                 }
                 out.extend(["--runtime".into(), runtime.into()]);
                 if v.get("request_id").is_some() {
@@ -354,14 +354,52 @@ mod tests {
                 "stable-id"
             ]
         );
-        assert!(
+        assert_eq!(
             cli_args(
                 "prepare",
                 &json!({"dir":"./project","runtime":"cuda"}),
                 "codex"
             )
-            .is_err()
+            .unwrap(),
+            [
+                "--json",
+                "--client",
+                "codex",
+                "prepare",
+                "./project",
+                "--runtime",
+                "cuda"
+            ]
         );
+        assert_eq!(
+            cli_args(
+                "prepare",
+                &json!({"dir":"./project","runtime":"go"}),
+                "codex"
+            ),
+            Err("prepare runtime must be rust, node, python or cuda".to_string())
+        );
+        for extra in [json!({"argv":["sh"]}), json!({"where":"spark"})] {
+            let mut v = json!({"dir":"./project","runtime":"cuda"});
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(cli_args("prepare", &v, "codex").is_err());
+        }
+        let prepare = tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "prepare")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            prepare["inputSchema"]["properties"]["runtime"]["enum"],
+            json!(["rust", "node", "python", "cuda"])
+        );
+        assert!(prepare["description"].as_str().unwrap().contains(
+            "CUDA (requirements-cuda.lock; packages the CUDA image provides are refused)"
+        ));
         assert!(
             cli_args(
                 "prepare",
@@ -402,5 +440,22 @@ mod tests {
                 .clone();
             assert_eq!(tool["annotations"]["readOnlyHint"], true);
         }
+    }
+    #[test]
+    fn devices_tool_describes_the_link_report_privacy_boundary() {
+        let devices = tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "devices")
+            .unwrap()
+            .clone();
+        assert!(
+            devices["description"]
+                .as_str()
+                .unwrap()
+                .ends_with("Includes the Spark's observed network link; never SSIDs or addresses.")
+        );
+        assert_eq!(devices["annotations"]["readOnlyHint"], true);
     }
 }

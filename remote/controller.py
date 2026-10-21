@@ -9,8 +9,12 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import errno
 import hashlib
+import ipaddress
+import itertools
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -20,14 +24,36 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
 CHUNK = 1024 * 1024
+GIB = 1024**3
 MAX_REQUEST = 32 * CHUNK
 MAX_FILES = 100000
-MAX_TREE = 20 * 1024**3
-MAX_FILE = 4 * 1024**3
+# Synced source limits, mirrored by the CLI. Files over LARGE_FILE are "large";
+# MAX_SMALL_TREE caps the combined size of every other file.
+MAX_FILE = 16 * GIB
+MAX_TREE = 32 * GIB
+MAX_SMALL_TREE = 8 * GIB
+LARGE_FILE = 512 * CHUNK
+# Controller only.
+JOB_FILE_LIMIT = 4 * GIB  # Largest file a job may write (--ulimit fsize).
+DISK_RESERVE = 64 * GIB  # Free state-filesystem space kept back; syncs and uploads into it are refused, admissions wait.
+PUT_MANY_BODY = 12 * CHUNK
+INLINE_BYTES = 512 * CHUNK  # Snapshots needing at most this many new bytes assemble inside the RPC.
+# Seconds a sync RPC waits for a background snapshot, counted from controller process start.
+# The CLI gives a sync 30 s from spawning ssh or the sidecar, and every poll resends the whole
+# manifest. On the paired route the sidecar may take 12 s to connect and the Spark daemon 10 s
+# to read that frame before this process starts, which leaves 8.
+MATERIALIZE_WAIT = 8
+MATERIALIZE_POLL = 0.25
+MAX_PENDING = 4
+SCHEDULER_FRESH = 15  # Seconds since its last heartbeat for the scheduler to count as alive.
+MISSING_BATCH = 10000
+PROGRESS_INTERVAL = 1.0
+PENDING_READ = 2 * MAX_REQUEST
 MAX_JOBS = 4096
 MAX_LOG = 256 * CHUNK
 CPUS = 4
@@ -40,6 +66,8 @@ CLIENTS = ("claude", "codex", "human")
 ACTIVE = ("queued", "starting", "running")
 TERMINAL = ("succeeded", "failed", "cancelled")
 HASH = re.compile(r"^[0-9a-f]{64}$")
+# A queued record is canonical JSON with sorted keys, so its outstanding bytes end it.
+RECORD_TAIL = re.compile(rb'"remaining":(\d{1,20}),"v":1\}$')
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 RUNTIME_NAMES = {"rust", "node", "python", "cuda"}
 DENY_DIRS = {".git", "target", "node_modules", "dist", "build", "__pycache__",
@@ -47,6 +75,40 @@ DENY_DIRS = {".git", "target", "node_modules", "dist", "build", "__pycache__",
 DENY_SUFFIX = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".ppk", ".ovpn", ".tfvars"}
 DENY_NAMES = re.compile(r"^(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:\.pub)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials(?:\..*)?|authorized_keys|known_hosts|nvsync\..*)$", re.I)
 SECRET = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-\d|(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}")
+# Network link report. A leading letter or digit keeps a name from reading as an iw/nmcli option.
+IFNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$")
+# systemd's MAC naming policy (Ubuntu's 73-usb-net-by-mac.rules for USB adapters) embeds the MAC.
+MAC_NAME = re.compile(r"^(en|wl|ww|ib|sl)x[0-9a-f]{12}$", re.I)
+MAC_ALIASES = {"en": "usb-ethernet", "wl": "usb-wifi", "ww": "usb-wwan", "ib": "usb-ib", "sl": "usb-slip"}
+DRIVER = re.compile(r"^[a-z0-9_-]{1,32}$")
+IW_PATHS = ("/usr/sbin/iw", "/sbin/iw")
+NMCLI_PATHS = ("/usr/bin/nmcli",)
+TOOL_ENV = {"LC_ALL": "C", "PATH": "/usr/sbin:/usr/bin:/sbin:/bin"}
+SIOCGIFADDR = 0x8915
+MAX_IFACES = 1024
+MAX_WIRED = 16
+PROBE_DEADLINE = 2.5
+PROBE_LIMIT = PROBE_DEADLINE + 0.5  # Hard bound on the whole probe, sysfs reads included.
+REAP_WAIT = 0.2
+SYS_READ = 4096
+PROC_READ = CHUNK
+TCP_READ = 8 * CHUNK
+TOOL_READ = 64 * 1024
+RTF_UP, RTF_GATEWAY, RTF_REJECT = 0x0001, 0x0002, 0x0200
+LINK_KINDS = ("wired", "wifi", "virtual", "unknown")
+OPERSTATES = ("up", "down", "dormant", "lowerlayerdown", "notpresent", "testing", "unknown")
+WIFI_BANDS = ("2.4", "5", "6", "multi")
+WIFI_WIDTHS = (20, 40, 80, 160, 320)
+WIFI_SOURCES = ("iw", "nmcli", "proc")
+# Line-anchored: iw escapes control characters in SSIDs, so an SSID cannot start a line.
+IW_FREQ = re.compile(r"^[ \t]*freq:[ \t]*(\d{4})(?:\.\d+)?[ \t]*$", re.M)
+IW_SIGNAL = re.compile(r"^[ \t]*signal:[ \t]*(-\d{1,3})(?:\.\d+)?[ \t]*(?:\[[-\d, ]*\][ \t]*)?dBm", re.M)
+IW_RATE = re.compile(r"^[ \t]*(tx|rx) bitrate:[ \t]*(\d{1,5}(?:\.\d+)?)[ \t]*MBit/s", re.M)
+IW_CHANNEL = re.compile(r"^[ \t]*channel[ \t]+(\d{1,3})[ \t]+\((\d{4})(?:\.\d+)?[ \t]*MHz\),[ \t]*width:[ \t]*(\d{2,3})[ \t]*MHz", re.M)
+NMCLI_ARGS = ("-t", "-e", "yes", "-f", "ACTIVE,FREQ,CHAN,BANDWIDTH", "device", "wifi", "list", "ifname")
+# nmcli prints fields in the requested order (FREQ before CHAN); the other order is also accepted.
+NMCLI_FREQ_FIRST = re.compile(r"^yes:(\d{4}) MHz:(\d{1,3}):(\d{2,3}) MHz$", re.M)
+NMCLI_CHAN_FIRST = re.compile(r"^yes:(\d{1,3}):(\d{4}) MHz:(\d{2,3}) MHz$", re.M)
 
 
 class Rejected(Exception):
@@ -131,6 +193,124 @@ def safe_open(path, flags=os.O_RDONLY, mode=0o600):
     return fd
 
 
+def regular_size(path):
+    """Size of a regular file found by lstat, or None; never follows a link or reads content."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    return info.st_size if stat.S_ISREG(info.st_mode) else None
+
+
+def remove_tree(path):
+    """Remove a directory this controller generated below its own state root."""
+    path = Path(path)
+    if not os.path.lexists(path):
+        return
+    if path.is_symlink() or not path.is_dir():
+        os.unlink(path)
+        return
+
+    def onerror(func, name, exc):
+        # Snapshot files are read-only; directory links are never followed by rmtree.
+        os.chmod(name, 0o700)
+        func(name)
+    shutil.rmtree(path, onerror=onerror)
+
+
+def unlink_quietly(path):
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(path)
+
+
+def gib(value):
+    return f"{value / GIB:.1f}"
+
+
+def sync_limits():
+    return {"chunk": CHUNK, "max_file": MAX_FILE, "max_tree": MAX_TREE, "max_small_tree": MAX_SMALL_TREE,
+            "large_file": LARGE_FILE, "max_files": MAX_FILES, "max_request": MAX_REQUEST,
+            "put_many_body": PUT_MANY_BODY, "missing_batch": MISSING_BATCH}
+
+
+def disk_space(path):
+    """(free, total) bytes of the state filesystem. An unreadable filesystem reads as full."""
+    try:
+        if hasattr(os, "statvfs"):
+            info = os.statvfs(path)
+            return info.f_bavail * info.f_frsize, info.f_blocks * info.f_frsize
+        usage = shutil.disk_usage(path)
+        return usage.free, usage.total
+    except OSError:
+        return 0, 0
+
+
+def disk_refusal(free, needed):
+    reject("insufficient_disk", f"Spark has {gib(free)} GiB free; this needs {gib(needed)} GiB and DGXBridge keeps "
+                                f"{DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space, then retry")
+
+
+def validate_manifest(manifest):
+    """Validate one sync manifest; return (sorted entries, canonical bytes, manifest ID, total bytes)."""
+    if not isinstance(manifest, list) or len(manifest) > MAX_FILES:
+        reject("size_limit", "Manifest is too large")
+    total, small, paths, folded = 0, 0, set(), set()
+    for entry in manifest:
+        fields(entry, ("path", "size", "sha256", "mode", "chunks"))
+        name = path_name(entry["path"])
+        if name in paths or name.casefold() in folded:
+            reject("unsafe_path", "Duplicate or case-colliding project paths")
+        paths.add(name)
+        folded.add(name.casefold())
+        digest(entry["sha256"])
+        size = integer(entry["size"], 0, MAX_FILE)
+        integer(entry["mode"], 0, 0o777)
+        if entry["mode"] not in (0o644, 0o755):
+            reject("unsafe_path", "File mode must be 0644 or 0755")
+        chunks = entry["chunks"]
+        if not isinstance(chunks, list) or len(chunks) > MAX_FILE // CHUNK + 1:
+            reject("size_limit", "Too many chunks")
+        count = 0
+        for chunk in chunks:
+            fields(chunk, ("sha256", "size"))
+            digest(chunk["sha256"])
+            count += integer(chunk["size"], 0, CHUNK)
+        if count != size:
+            reject("size_mismatch", "Chunk lengths do not match file size")
+        total += size
+        if size <= LARGE_FILE:
+            small += size
+    if total > MAX_TREE:
+        reject("size_limit", f"Project exceeds {MAX_TREE // GIB} GiB")
+    if small > MAX_SMALL_TREE:
+        reject("size_limit", f"Files of {LARGE_FILE // CHUNK} MiB or less exceed {MAX_SMALL_TREE // GIB} GiB in total")
+    for name in paths:
+        if any(str(parent) in paths for parent in PurePosixPath(name).parents if str(parent) != "."):
+            reject("unsafe_path", "A file conflicts with a parent directory")
+    manifest = sorted(manifest, key=lambda e: e["path"])
+    encoded = canonical(manifest)
+    return manifest, encoded, sha(encoded), total
+
+
+def store_name(entry):
+    return f"{entry['sha256']}-{entry['mode']:o}"
+
+
+def read_only_mode(entry):
+    return 0o555 if entry["mode"] == 0o755 else 0o444
+
+
+def spawn_materializer(root):
+    """Start one detached background materializer; it outlives this RPC and the SSH session.
+
+    A new session is not a new cgroup: the child stays in the unit of whatever process
+    spawned it, so syncs leave spawning to the scheduler while it is alive (see wake()).
+    """
+    subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve()), "materialize", "--state", str(root)],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True, close_fds=True, env=dict(TOOL_ENV), cwd=str(root))
+
+
 def available_gb():
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
@@ -150,6 +330,514 @@ def hardware_capacity():
     except (OSError, ValueError):
         pass
     return {"cpu_count": os.cpu_count() or 0, "memory_gb": memory}
+
+
+def bounded_text(path, limit=SYS_READ):
+    # sysfs reports EINVAL for carrier/speed on a link that is down; that is unknown, not an error.
+    try:
+        with open(path, "rb") as stream:
+            return stream.read(limit).decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return None
+
+
+def uevent_values(path):
+    values = {}
+    for line in (bounded_text(path) or "").splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key] = value
+    return values
+
+
+def sys_positive(path):
+    try:
+        value = int((bounded_text(path) or "").strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def sys_carrier(path):
+    return {"1": True, "0": False}.get((bounded_text(path) or "").strip())
+
+
+def sys_operstate(path):
+    value = (bounded_text(path) or "").strip()
+    return value if value in OPERSTATES else None
+
+
+def link_kind(entry):
+    if not os.path.lexists(entry / "device"):
+        return "virtual"
+    if os.path.lexists(entry / "phy80211") or uevent_values(entry / "uevent").get("DEVTYPE") == "wlan":
+        return "wifi"
+    return "wired" if (bounded_text(entry / "type") or "").strip() in ("1", "32") else "unknown"
+
+
+def native_ipv4(text):
+    # /proc/net/route and /proc/net/tcp print a network-order address as a host-order word.
+    raw = bytes.fromhex(text)
+    if len(raw) != 4:
+        raise ValueError("IPv4 field")
+    return ipaddress.IPv4Address(raw[::-1] if sys.byteorder == "little" else raw)
+
+
+def native_ipv6(text):
+    # /proc/net/tcp6 prints four host-order words.
+    raw = bytes.fromhex(text)
+    if len(raw) != 16:
+        raise ValueError("IPv6 field")
+    if sys.byteorder == "little":
+        raw = b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4))
+    return ipaddress.IPv6Address(raw)
+
+
+def network_ipv6(text):
+    # /proc/net/ipv6_route and /proc/net/if_inet6 print network byte order.
+    raw = bytes.fromhex(text)
+    if len(raw) != 16:
+        raise ValueError("IPv6 field")
+    return ipaddress.IPv6Address(raw)
+
+
+def route_table(proc_root):
+    """Usable main-table routes as (interface, network, metric, flags)."""
+    routes = []
+    for line in (bounded_text(proc_root / "net" / "route", PROC_READ) or "").splitlines()[1:]:
+        parts = line.split()
+        try:
+            network = ipaddress.IPv4Network((native_ipv4(parts[1]), str(native_ipv4(parts[7]))), strict=False)
+            routes.append((parts[0], network, int(parts[6]), int(parts[3], 16)))
+        except (IndexError, ValueError):
+            continue
+    for line in (bounded_text(proc_root / "net" / "ipv6_route", PROC_READ) or "").splitlines():
+        parts = line.split()
+        try:
+            network = ipaddress.IPv6Network((network_ipv6(parts[0]), int(parts[1], 16)), strict=False)
+            routes.append((parts[9], network, int(parts[5], 16), int(parts[8], 16)))
+        except (IndexError, ValueError):
+            continue
+    return [r for r in routes if IFNAME.fullmatch(r[0]) and r[0] != "lo" and r[3] & RTF_UP and not r[3] & RTF_REJECT]
+
+
+def lowest_default(routes, allowed):
+    # IPv4 first: an IPv6 router advertisement must not outrank the LAN default.
+    for version in (4, 6):
+        candidates = [(metric, name) for name, network, metric, _ in routes
+                      if network.version == version and not network.prefixlen and allowed(name)]
+        if candidates:
+            return min(candidates)[1]
+    return None
+
+
+def route_lookup(routes, address, connected=False):
+    best = None
+    for name, network, metric, flags in routes:
+        if network.version != address.version or address not in network:
+            continue
+        if connected and (flags & RTF_GATEWAY or not network.prefixlen):
+            continue
+        key = (-network.prefixlen, metric, name)
+        best = key if best is None or key < best else best
+    return best[2] if best else None
+
+
+def ssh_address(token):
+    address, _, zone = token.partition("%")
+    if zone and not IFNAME.fullmatch(zone):
+        raise ValueError("zone")
+    ip = ipaddress.ip_address(address)
+    if ip.version == 6 and ip.ipv4_mapped:
+        return ip.ipv4_mapped, None
+    if zone and ip.version != 6:
+        raise ValueError("zone")
+    return ip, zone or None
+
+
+def ssh_session(environ):
+    """Parse SSH_CONNECTION; these addresses stay local to the probe and never reach output."""
+    value = environ.get("SSH_CONNECTION")
+    if not isinstance(value, str) or len(value) > 256:
+        return None
+    tokens = value.split()
+    if len(tokens) != 4 or not all(re.fullmatch(r"[0-9]{1,5}", tokens[i]) for i in (1, 3)):
+        return None
+    try:
+        client, _ = ssh_address(tokens[0])
+        server, zone = ssh_address(tokens[2])
+    except ValueError:
+        return None
+    client_port, server_port = int(tokens[1]), int(tokens[3])
+    if client.version != server.version or not (0 < client_port < 65536 and 0 < server_port < 65536):
+        return None
+    return client, client_port, server, server_port, zone
+
+
+def tcp_endpoint(text, decode):
+    address, _, port = text.partition(":")
+    ip = decode(address)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip, int(port, 16)
+
+
+def tcp_established(proc_root, client, client_port, server, server_port):
+    # An inherited SSH_CONNECTION (for example under sparkdev-link) is stale unless
+    # its exact 4-tuple is a live ESTABLISHED socket.
+    local, remote, suffix = (server, server_port), (client, client_port), ":%04X" % server_port
+    for name, decode in (("tcp", native_ipv4), ("tcp6", native_ipv6)):
+        for line in (bounded_text(proc_root / "net" / name, TCP_READ) or "").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 4 or parts[3] != "01" or not parts[1].upper().endswith(suffix):
+                continue
+            try:
+                if tcp_endpoint(parts[1], decode) == local and tcp_endpoint(parts[2], decode) == remote:
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def interface_ipv4(name):
+    """Primary IPv4 address of one interface via SIOCGIFADDR on an unbound socket."""
+    import fcntl
+    import socket
+    import struct
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            reply = fcntl.ioctl(sock.fileno(), SIOCGIFADDR, struct.pack("256s", name.encode("ascii")))
+        except OSError:
+            return None
+    return ipaddress.IPv4Address(reply[20:24])
+
+
+def address_owner(server, zone, names, proc_root, routes, ipv4_addr):
+    if zone:
+        return zone if zone in names else None
+    if server.version == 6:
+        for line in (bounded_text(proc_root / "net" / "if_inet6", PROC_READ) or "").splitlines():
+            parts = line.split()
+            try:
+                if len(parts) >= 6 and parts[5] in names and network_ipv6(parts[0]) == server:
+                    return parts[5]
+            except ValueError:
+                continue
+        return None
+    for name in names:
+        try:
+            found = ipv4_addr(name)
+            if found is not None and ipaddress.ip_address(str(found)) == server:
+                return name
+        except (OSError, ValueError):
+            continue
+    # SIOCGIFADDR reports only the primary address; a secondary one falls back to its connected route.
+    return route_lookup(routes, server, connected=True)
+
+
+def carrier_member(base, name, kinds):
+    """First physical lower_* member with carrier, through at most three stacked layers."""
+    frontier, seen = [name], {name}
+    for _ in range(3):
+        physical, virtual = [], []
+        for current in frontier:
+            try:
+                members = sorted(entry[6:] for entry in os.listdir(base / current) if entry.startswith("lower_"))
+            except OSError:
+                continue
+            for member in members[:MAX_IFACES]:
+                if member in kinds and member not in seen:
+                    seen.add(member)
+                    (virtual if kinds[member] == "virtual" else physical).append(member)
+        for member in physical:
+            if sys_carrier(base / member / "carrier"):
+                return member
+        frontier = virtual
+    return None
+
+
+def upper_masters(base, name):
+    """Bridge, bond and VLAN masters above one port via its upper_* links, through at most three layers."""
+    frontier, seen = [name], {name}
+    for _ in range(3):
+        found = []
+        for current in frontier:
+            try:
+                uppers = sorted(entry[6:] for entry in os.listdir(base / current) if entry.startswith("upper_"))
+            except OSError:
+                continue
+            for upper in uppers[:MAX_IFACES]:
+                if upper not in seen:
+                    seen.add(upper)
+                    found.append(upper)
+        frontier = found
+    return seen - {name}
+
+
+def frequency_band(frequency):
+    if frequency == 2484:
+        return "2.4", 14
+    if frequency == 5935:
+        return "6", 2
+    if 2412 <= frequency <= 2472:
+        band, base = "2.4", 2407
+    elif 5150 <= frequency <= 5895:
+        band, base = "5", 5000
+    elif 5925 <= frequency <= 7125:
+        band, base = "6", 5950
+    else:
+        return None, None
+    channel, remainder = divmod(frequency - base, 5)
+    return band, channel if not remainder and channel >= 1 else None
+
+
+def wireless_level(proc_root, name):
+    for line in (bounded_text(proc_root / "net" / "wireless", PROC_READ) or "").splitlines()[2:]:
+        label, separator, rest = line.partition(":")
+        if separator and label.strip() == name:
+            try:
+                level = float(rest.split()[2])
+            except (IndexError, ValueError):
+                return None
+            return int(level) if math.isfinite(level) else None
+    return None
+
+
+def run_tool(argv, timeout):
+    """Run one fixed-path probe tool: argv only, fixed environment, no stdin or stderr.
+
+    A tool wedged in the kernel (a driver holding rtnl or the wiphy mutex) can ignore
+    SIGKILL, so after its timeout it is killed, given REAP_WAIT to exit, then abandoned.
+    """
+    process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=TOOL_ENV)
+    try:
+        stdout, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=REAP_WAIT)
+        raise
+    return stdout[:TOOL_READ] if process.returncode == 0 else None
+
+
+def bounded_call(function, limit):
+    """function() on a daemon thread; None unless it returns within `limit` seconds.
+
+    A sysfs carrier or speed read can block while a driver holds rtnl, and nothing else
+    bounds it; the abandoned thread dies with this short-lived RPC process.
+    """
+    box = []
+
+    def target():
+        with contextlib.suppress(Exception):
+            box.append(function())
+    thread = threading.Thread(target=target, name="sparkdev-link-probe", daemon=True)
+    thread.start()
+    thread.join(limit)
+    return box[0] if box else None
+
+
+def wifi_detail(name, run, proc_root, deadline):
+    """Radio facts for one Wi-Fi interface. Raw tool text is parsed here and discarded, never logged."""
+    detail = {"interface": name, "band": None, "channel": None, "frequency_mhz": None, "width_mhz": None,
+              "tx_bitrate_mbps": None, "rx_bitrate_mbps": None, "signal_dbm": None, "links": None, "source": None}
+
+    def tool(paths, args):
+        for path in paths:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return ""
+            try:
+                output = run([path, *args], min(1.0, remaining))
+            except OSError:
+                continue  # Absent or not executable at this fixed path.
+            except (subprocess.SubprocessError, ValueError):
+                return ""
+            return output[:TOOL_READ].decode("utf-8", "replace") if isinstance(output, bytes) else ""
+        return ""
+
+    def tune(channels):
+        if len(channels) >= 2:
+            # Multi-link operation: never claim one band unless it is the only link.
+            detail.update(band="multi", links=len(channels))
+        elif channels:
+            channel, frequency, width = channels[0]
+            band, computed = frequency_band(frequency)
+            detail.update(band=band, channel=channel or computed, frequency_mhz=frequency, width_mhz=width, links=1)
+
+    link = tool(IW_PATHS, ["dev", name, "link"])
+    info = tool(IW_PATHS, ["dev", name, "info"])
+    channels = [(int(c), int(f), int(w)) for c, f, w in IW_CHANNEL.findall(info)]
+    frequencies = [int(f) for f in IW_FREQ.findall(link)]
+    if len(frequencies) > max(1, len(channels)):
+        channels = [(None, f, None) for f in frequencies]
+    elif not channels and frequencies:
+        channels = [(None, frequencies[0], None)]
+    tune(channels)
+    rates = {}
+    for direction, value in IW_RATE.findall(link):
+        rates.setdefault(direction, round(float(value), 1))
+    signal = IW_SIGNAL.search(link)
+    detail.update(tx_bitrate_mbps=rates.get("tx"), rx_bitrate_mbps=rates.get("rx"),
+                  signal_dbm=int(signal.group(1)) if signal else None)
+    if any(detail[key] is not None for key in ("band", "tx_bitrate_mbps", "rx_bitrate_mbps", "signal_dbm")):
+        detail["source"] = "iw"
+    if detail["band"] is None:
+        # Requests only these four fields with no rescan, so SSID and BSSID are never read.
+        text = tool(NMCLI_PATHS, [*NMCLI_ARGS, name, "--rescan", "no"])
+        active = [(int(c), int(f), int(w)) for f, c, w in NMCLI_FREQ_FIRST.findall(text)]
+        active += [(int(c), int(f), int(w)) for c, f, w in NMCLI_CHAN_FIRST.findall(text)]
+        tune(active)
+        if active:
+            detail["source"] = detail["source"] or "nmcli"
+    if detail["signal_dbm"] is None:
+        detail["signal_dbm"] = wireless_level(proc_root, name)
+        if detail["signal_dbm"] is not None:
+            detail["source"] = detail["source"] or "proc"
+    return detail
+
+
+def network_link(sys_root=Path("/sys"), proc_root=Path("/proc"), environ=os.environ, run=None, ipv4_addr=None, os_name=None):
+    """Observe which link carries this controller's traffic. The raw result is only for network_view."""
+    if (os_name or os.name) != "posix":
+        return {"observed": False}
+    deadline = time.monotonic() + PROBE_DEADLINE
+    run, ipv4_addr = run or run_tool, ipv4_addr or interface_ipv4
+    base, proc_root = Path(sys_root) / "class" / "net", Path(proc_root)
+    try:
+        with os.scandir(base) as entries:
+            listed = [entry.name for entry in itertools.islice(entries, MAX_IFACES)]
+    except OSError:
+        return {"observed": False}
+    names = sorted(name for name in listed if IFNAME.fullmatch(name))
+    # Classify every entry before any cap: Docker veth*/br-* names sort before wl*.
+    kinds = {name: link_kind(base / name) for name in names}
+    routes = route_table(proc_root)
+    defaults = {name for name, network, _, _ in routes if not network.prefixlen}
+    basis, active, egress = "unknown", None, None
+    session = ssh_session(environ)
+    if session and tcp_established(proc_root, *session[:4]):
+        client, _, server, _, zone = session
+        active = address_owner(server, zone, names, proc_root, routes, ipv4_addr)
+        if active:
+            basis = "ssh_session"
+            # A tunnel's policy routing is invisible in the main table, and a link-local
+            # zone already fixes the egress; only a physical owner gets an egress check.
+            if not zone and kinds.get(active) != "virtual":
+                route = route_lookup(routes, client)
+                egress = route if route and route != active else None
+    if active is None:
+        active = lowest_default(routes, lambda name: name in kinds)
+        basis = "default_route" if active else "unknown"
+    underlay = None
+    if active and kinds.get(active) == "virtual":
+        member = carrier_member(base, active, kinds) or lowest_default(routes, lambda name: kinds.get(name, "virtual") != "virtual")
+        if member:
+            underlay = {"interface": member, "kind": kinds[member]}
+
+    def port(name):
+        # Never read `address`: the report carries no MAC.
+        return {"operstate": sys_operstate(base / name / "operstate"), "speed_mbps": sys_positive(base / name / "speed")}
+
+    active_view = None
+    if active:
+        active_view = {"interface": active, "kind": kinds.get(active, "unknown"), **port(active)}
+        if egress:
+            active_view["egress_interface"] = egress
+    # A port is LAN-routed when it, or a bridge/bond/VLAN master stacked on it, holds a default route.
+    wired = [{"interface": name, "carrier": sys_carrier(base / name / "carrier"), **port(name),
+              "driver": uevent_values(base / name / "device" / "uevent").get("DRIVER"),
+              "default_route": name in defaults or bool(upper_masters(base, name) & defaults)}
+             for name in names if kinds[name] == "wired"]
+    wired.sort(key=lambda p: (p["carrier"] is not True, p["interface"]))
+    radio = next((n for n in (active, underlay and underlay["interface"]) if n and kinds.get(n) == "wifi"), None)
+    return {"observed": True, "basis": basis, "active": active_view, "underlay": underlay, "wired": wired[:MAX_WIRED],
+            "wired_up": sum(p["carrier"] is True for p in wired),
+            "wired_lan_up": sum(p["carrier"] is True and p["default_route"] for p in wired),
+            "wifi": wifi_detail(radio, run, proc_root, deadline) if radio else None}
+
+
+def network_view(raw):
+    """The only path from probe data to RPC output: rebuild from whitelisted, bounded fields.
+
+    Additive fields keep v:1; only a breaking change bumps v.
+    """
+    if not isinstance(raw, dict) or raw.get("observed") is not True:
+        return {"v": 1, "observed": False, "basis": "unknown"}
+
+    def mapping(value):
+        return value if isinstance(value, dict) else {}
+
+    ports = raw.get("wired")
+    ports = ports[:MAX_IFACES] if isinstance(ports, list) else []
+    active_raw, radio = mapping(raw.get("active")), mapping(raw.get("wifi"))
+    # A MAC-derived name (enx<MAC>, wlx<MAC>) becomes a kind-and-index alias, numbered in
+    # sorted name order and identical in every field; probe argv still uses the real name.
+    names = [active_raw.get("interface"), active_raw.get("egress_interface"), mapping(raw.get("underlay")).get("interface"),
+             radio.get("interface"), *(mapping(item).get("interface") for item in ports)]
+    aliases, counts = {}, {}
+    for value in sorted({v for v in names if isinstance(v, str) and IFNAME.fullmatch(v) and MAC_NAME.fullmatch(v)}):
+        prefix = MAC_NAME.fullmatch(value).group(1).lower()
+        counts[prefix] = counts.get(prefix, 0) + 1
+        aliases[value] = f"{MAC_ALIASES[prefix]}-{counts[prefix]}"
+
+    def name(value):
+        if not isinstance(value, str) or not IFNAME.fullmatch(value):
+            return None
+        return aliases.get(value) if MAC_NAME.fullmatch(value) else value
+
+    def bounded(value, low, high, real=False):
+        if type(value) is int or (real and type(value) is float and math.isfinite(value)):
+            return value if low <= value <= high else None
+        return None
+
+    def choice(value, options):
+        return value if isinstance(value, str) and value in options else None
+
+    def link(value, detailed):
+        value = mapping(value)
+        interface = name(value.get("interface"))
+        if interface is None:
+            return None
+        view = {"interface": interface, "kind": choice(value.get("kind"), LINK_KINDS) or "unknown"}
+        if detailed:
+            view.update(operstate=choice(value.get("operstate"), OPERSTATES), speed_mbps=bounded(value.get("speed_mbps"), 1, 1000000))
+            egress = name(value.get("egress_interface"))
+            if egress and egress != interface:
+                view["egress_interface"] = egress
+        return view
+
+    wired = []
+    for item in ports:
+        item = mapping(item)
+        interface = name(item.get("interface"))
+        if interface is None:
+            continue
+        driver = item.get("driver")
+        wired.append({"interface": interface, "carrier": item.get("carrier") if type(item.get("carrier")) is bool else None,
+                      "operstate": choice(item.get("operstate"), OPERSTATES), "speed_mbps": bounded(item.get("speed_mbps"), 1, 1000000),
+                      "driver": driver if isinstance(driver, str) and DRIVER.fullmatch(driver) else None,
+                      "default_route": item.get("default_route") is True})
+        if len(wired) == MAX_WIRED:
+            break
+    wired_up = bounded(raw.get("wired_up"), 0, MAX_IFACES)
+    wired_lan_up = bounded(raw.get("wired_lan_up"), 0, MAX_IFACES)
+    wifi = None
+    if name(radio.get("interface")):
+        wifi = {"interface": name(radio.get("interface")), "band": choice(radio.get("band"), WIFI_BANDS),
+                "channel": bounded(radio.get("channel"), 1, 233), "frequency_mhz": bounded(radio.get("frequency_mhz"), 2400, 7200),
+                "width_mhz": radio.get("width_mhz") if type(radio.get("width_mhz")) is int and radio.get("width_mhz") in WIFI_WIDTHS else None,
+                "tx_bitrate_mbps": bounded(radio.get("tx_bitrate_mbps"), 0, 50000, real=True),
+                "rx_bitrate_mbps": bounded(radio.get("rx_bitrate_mbps"), 0, 50000, real=True),
+                "signal_dbm": bounded(radio.get("signal_dbm"), -120, -1), "links": bounded(radio.get("links"), 1, 3),
+                "source": choice(radio.get("source"), WIFI_SOURCES)}
+    active = link(raw.get("active"), True)
+    basis = choice(raw.get("basis"), ("ssh_session", "default_route")) if active else None
+    return {"v": 1, "observed": True, "basis": basis or "unknown", "active": active,
+            "underlay": link(raw.get("underlay"), False), "wired": wired,
+            "wired_up": sum(p["carrier"] is True for p in wired) if wired_up is None else wired_up,
+            "wired_lan_up": sum(p["carrier"] is True and p["default_route"] for p in wired) if wired_lan_up is None else wired_lan_up,
+            "wifi": wifi}
 
 
 def validate_resources(value, hardware):
@@ -174,6 +862,10 @@ def reserved_cpu(row):
 
 def reserved_memory(row):
     return row["memory"] + (PROXY_MEMORY_GB if row["proxy_image"] else 0)
+
+
+def is_preparation(row):
+    return json.loads(row["request"])["op"] == "prepare"
 
 
 class Docker:
@@ -202,8 +894,31 @@ class Docker:
         return json.loads(result.stdout)[0]
 
 
+class Progress:
+    """Snapshot assembly progress, written at most once per second for sync and status."""
+
+    def __init__(self, controller, manifest_id, total):
+        self.controller, self.path = controller, controller.pending / (manifest_id + ".progress")
+        self.total, self.done, self.written, self.last = total, 0, 0, None
+
+    def add(self, size, written=False):
+        self.done += size
+        if written:
+            self.written += size
+        self.write()
+
+    def write(self, force=False):
+        now = self.controller.clock()
+        if not force and self.last is not None and now - self.last < PROGRESS_INTERVAL:
+            return
+        self.last = now
+        atomic_write(self.path, canonical({"v": 1, "done_bytes": min(self.done, self.total),
+                                           "written_bytes": min(self.written, self.total), "total_bytes": self.total}))
+
+
 class Controller:
-    def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None):
+    def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None, link_probe=None, *,
+                 disk_probe=None, spawn=None, clock=None, sleep=None):
         self.root = Path(root or os.environ.get("SPARKDEV_STATE", Path.home() / "sparkdev/state")).absolute()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.root.is_symlink():
@@ -212,11 +927,20 @@ class Controller:
             if self.root.stat().st_uid != os.getuid():
                 reject("unsafe_state", "State root has a different owner")
             os.chmod(self.root, 0o700)
-        for name in ("objects", "snapshots", "jobs", "caches", "local"):
+        for name in ("objects", "snapshots", "jobs", "caches", "local", "pending", "files"):
             path = self.root / name
             if path.is_symlink():
                 reject("unsafe_state", "State directory is a symlink")
             path.mkdir(exist_ok=True, mode=0o700)
+            if os.name == "posix" and path.lstat().st_uid != os.getuid():
+                reject("unsafe_state", "State directory has a different owner")
+        self.pending, self.files, self.snapshots = self.root / "pending", self.root / "files", self.root / "snapshots"
+        self.disk_probe = disk_probe or (lambda: disk_space(self.root))
+        self.spawn = spawn or (lambda: spawn_materializer(self.root))
+        self.clock = clock or time.monotonic
+        self.sleep = sleep or time.sleep
+        self.started = self.clock()
+        self._shapes = {}
         self.db = sqlite3.connect(self.root / "state.sqlite3", timeout=30, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -250,6 +974,7 @@ class Controller:
         self.docker = docker or Docker()
         self.memory_probe = memory_probe or available_gb
         self.hardware_probe = hardware_probe or hardware_capacity
+        self.link_probe = link_probe or network_link
 
     def resource_policy(self):
         hardware = self.hardware_probe()
@@ -322,130 +1047,517 @@ class Controller:
     def object_path(self, value):
         return self.root / "objects" / digest(value)
 
-    def put(self, request):
-        fields(request, ("v", "op", "sha256", "data"))
-        target = self.object_path(request["sha256"])
-        if not isinstance(request["data"], str) or len(request["data"]) > 4 * ((CHUNK + 2) // 3):
+    def object_present(self, value):
+        """Presence is metadata only: a regular object of at most one chunk. Materialization re-verifies."""
+        size = regular_size(self.object_path(value))
+        return size is not None and size <= CHUNK
+
+    def free_bytes(self):
+        free, _ = self.disk_probe()
+        return max(0, int(free))
+
+    def require_disk(self, incoming, queued=0):
+        free = self.free_bytes()
+        if free - incoming - queued < DISK_RESERVE:
+            disk_refusal(free, incoming + queued)
+
+    def storage_view(self, queued=None):
+        free, total = self.disk_probe()
+        view = {"free_bytes": max(0, int(free)), "total_bytes": max(0, int(total)), "reserve_bytes": DISK_RESERVE,
+                "below_reserve": int(free) < DISK_RESERVE}
+        if queued is not None:
+            view["queued_bytes"] = queued
+        return view
+
+    def chunk_bytes(self, value, data):
+        self.object_path(value)
+        if not isinstance(data, str) or len(data) > 4 * ((CHUNK + 2) // 3):
             reject("size_limit", "Chunk exceeds one MiB")
         try:
-            raw = base64.b64decode(request["data"], validate=True)
+            raw = base64.b64decode(data, validate=True)
         except (ValueError, TypeError):
             reject("invalid_request", "Chunk encoding is invalid")
-        if len(raw) > CHUNK or sha(raw) != request["sha256"]:
+        if len(raw) > CHUNK or sha(raw) != value:
             reject("hash_mismatch", "Chunk hash or length does not match")
         if SECRET.search(raw):
             reject("secret_detected", "Chunk contains credential material")
-        atomic_write(target, raw)
+        return raw
+
+    def put(self, request):
+        fields(request, ("v", "op", "sha256", "data"))
+        raw = self.chunk_bytes(request["sha256"], request["data"])
+        self.require_disk(len(raw), self.queued_bytes())
+        atomic_write(self.object_path(request["sha256"]), raw)
         return {"sha256": request["sha256"], "size": len(raw)}
 
     def put_many(self, request):
         fields(request, ("v", "op", "chunks"))
         chunks = request["chunks"]
-        if not isinstance(chunks, list) or not 1 <= len(chunks) <= 128 or len(canonical(request)) > 3 * CHUNK:
-            reject("size_limit", "Upload batch exceeds its count or three-MiB body limit")
-        accepted = []
+        if not isinstance(chunks, list) or not 1 <= len(chunks) <= 128 or len(canonical(request)) > PUT_MANY_BODY:
+            reject("size_limit", f"Upload batch exceeds its count or {PUT_MANY_BODY // CHUNK}-MiB body limit")
         for chunk in chunks:
             fields(chunk, ("sha256", "data"))
-            accepted.append(self.put({"v": 1, "op": "put", **chunk}))
+        # Every chunk is verified before any is stored, and the disk guard sees the whole batch.
+        raws = [self.chunk_bytes(chunk["sha256"], chunk["data"]) for chunk in chunks]
+        # Space a queued snapshot will still write is already promised; uploads cannot spend it too.
+        self.require_disk(sum(len(raw) for raw in raws), self.queued_bytes())
+        accepted = []
+        for chunk, raw in zip(chunks, raws):
+            atomic_write(self.object_path(chunk["sha256"]), raw)
+            accepted.append({"sha256": chunk["sha256"], "size": len(raw)})
         return {"accepted": accepted, "bytes": sum(c["size"] for c in accepted)}
 
     def missing(self, request):
         fields(request, ("v", "op", "hashes"))
         values = request["hashes"]
-        if not isinstance(values, list) or len(values) > 10000:
+        if not isinstance(values, list) or len(values) > MISSING_BATCH:
             reject("size_limit", "Too many chunk hashes")
-        absent = []
-        for value in values:
-            path = self.object_path(value)
-            if not path.exists():
-                absent.append(value)
-            else:
-                with os.fdopen(safe_open(path), "rb") as stream:
-                    if sha(stream.read(CHUNK + 1)) != value:
-                        absent.append(value)
-        return {"missing": absent}
+        absent = [value for value in values if not self.object_present(value)]
+        # An empty probe tells a new CLI which limits apply; older controllers omit both keys.
+        return {"missing": absent, "limits": sync_limits(), "storage": self.storage_view()}
 
-    def sync(self, request):
-        fields(request, ("v", "op", "project", "manifest"))
-        project = digest(request["project"])
-        manifest = request["manifest"]
-        if not isinstance(manifest, list) or len(manifest) > MAX_FILES:
-            reject("size_limit", "Manifest is too large")
-        total, paths, folded = 0, set(), set()
-        for entry in manifest:
-            fields(entry, ("path", "size", "sha256", "mode", "chunks"))
-            name = path_name(entry["path"])
-            if name in paths or name.casefold() in folded:
-                reject("unsafe_path", "Duplicate or case-colliding project paths")
-            paths.add(name)
-            folded.add(name.casefold())
-            digest(entry["sha256"])
-            size = integer(entry["size"], 0, MAX_FILE)
-            integer(entry["mode"], 0, 0o777)
-            if entry["mode"] not in (0o644, 0o755):
-                reject("unsafe_path", "File mode must be 0644 or 0755")
-            chunks = entry["chunks"]
-            if not isinstance(chunks, list) or len(chunks) > MAX_FILE // CHUNK + 1:
-                reject("size_limit", "Too many chunks")
-            count = 0
-            for chunk in chunks:
-                fields(chunk, ("sha256", "size"))
-                digest(chunk["sha256"])
-                count += integer(chunk["size"], 0, CHUNK)
-            if count != size:
-                reject("size_mismatch", "Chunk lengths do not match file size")
-            total += size
-        if total > MAX_TREE:
-            reject("size_limit", "Project exceeds twenty GiB")
-        for name in paths:
-            if any(str(parent) in paths for parent in PurePosixPath(name).parents if str(parent) != "."):
-                reject("unsafe_path", "A file conflicts with a parent directory")
-        manifest = sorted(manifest, key=lambda e: e["path"])
-        encoded = canonical(manifest)
-        manifest_id = sha(encoded)
-        destination = self.root / "snapshots" / manifest_id
-        if not destination.exists():
-            temporary = Path(tempfile.mkdtemp(prefix=".pending-", dir=destination.parent))
-            try:
-                for entry in manifest:
-                    out = temporary.joinpath(*entry["path"].split("/"))
-                    out.parent.mkdir(parents=True, exist_ok=True)
-                    whole, tail = hashlib.sha256(), b""
-                    with out.open("xb") as stream:
-                        for chunk in entry["chunks"]:
-                            try:
-                                with os.fdopen(safe_open(self.object_path(chunk["sha256"])), "rb") as source:
-                                    raw = source.read(CHUNK + 1)
-                            except FileNotFoundError:
-                                reject("missing_chunks", "Upload missing chunks before committing the snapshot")
-                            if len(raw) != chunk["size"] or sha(raw) != chunk["sha256"]:
-                                reject("hash_mismatch", "Stored chunk failed verification")
-                            if SECRET.search(tail + raw):
-                                reject("secret_detected", "Project contains credential material")
-                            tail = raw[-512:]
-                            whole.update(raw)
-                            stream.write(raw)
-                    if whole.hexdigest() != entry["sha256"]:
-                        reject("hash_mismatch", "Whole-file hash does not match")
-                    out.chmod(0o555 if entry["mode"] == 0o755 else 0o444)
-                try:
-                    os.rename(temporary, destination)
-                except OSError:
-                    if not destination.is_dir():
-                        raise
-            finally:
-                if temporary.exists():
-                    # This directory was generated by this function, below snapshots;
-                    # no untrusted links or archive entries were ever materialized.
-                    def onerror(func, path, exc):
-                        os.chmod(path, 0o700)
-                        func(path)
-                    shutil.rmtree(temporary, onerror=onerror)
+    # Snapshot assembly. A sync validates and queues; one global materializer assembles.
+
+    def snapshot_ready(self, manifest_id):
+        path = self.snapshots / manifest_id
+        return path.is_dir() and not path.is_symlink()
+
+    def commit_snapshot(self, project, manifest_id, encoded, total):
         with self.transaction():
             self.db.execute("INSERT OR IGNORE INTO manifests VALUES(?,?,?)", (manifest_id, encoded.decode(), total))
             self.db.execute("INSERT OR IGNORE INTO projects VALUES(?,?)", (project, manifest_id))
             self.audit("snapshot_committed", project=project, manifest=manifest_id, bytes=total)
-        return {"project": project, "manifest_id": manifest_id, "files": len(manifest), "bytes": total}
+
+    def pending_tree(self, manifest_id):
+        return self.snapshots / (".pending-" + manifest_id)
+
+    def partial_dir(self, manifest_id):
+        return self.snapshots / (".partial-" + manifest_id)
+
+    def take_failure(self, manifest_id):
+        """Return a background failure exactly once, then forget it."""
+        marker = self.pending / (manifest_id + ".failed")
+        if not os.path.lexists(marker):
+            return
+        try:
+            with os.fdopen(safe_open(marker), "rb") as stream:
+                value = json.loads(stream.read(65536))
+            code, message = value["code"], value["message"]
+            if not isinstance(code, str) or not IDENTIFIER.fullmatch(code) or not isinstance(message, str):
+                raise ValueError()
+        except (OSError, ValueError, TypeError, KeyError, Rejected):
+            code, message = "materialize_failed", "Spark could not assemble the snapshot; run the same command again"
+        unlink_quietly(marker)
+        reject(code, message[:512])
+
+    def store_ready(self, entry):
+        return regular_size(self.files / store_name(entry)) == entry["size"]
+
+    def snapshot_needs(self, manifest_id, manifest):
+        """(new bytes assembly writes, bytes of chunks still to upload, kept small bytes it re-verifies).
+
+        Absent chunks are counted, each hash once, instead of refusing at the first, so the
+        disk guard can run before the CLI uploads anything.
+        """
+        tree, remaining, absent, reverify, seen = self.pending_tree(manifest_id), 0, 0, 0, set()
+        for entry in manifest:
+            large = entry["size"] > LARGE_FILE
+            if large and self.store_ready(entry):
+                continue
+            if os.path.lexists(tree.joinpath(*entry["path"].split("/"))):
+                if not large:
+                    reverify += entry["size"]  # Kept from an interrupted pass; never fsynced, so re-hashed.
+                continue
+            for chunk in entry["chunks"]:
+                if chunk["sha256"] not in seen:
+                    seen.add(chunk["sha256"])
+                    if not self.object_present(chunk["sha256"]):
+                        absent += chunk["size"]
+            remaining += entry["size"]
+        return remaining, absent, reverify
+
+    def read_pending(self, manifest_id):
+        with os.fdopen(safe_open(self.pending / (manifest_id + ".json")), "rb") as stream:
+            raw = stream.read(PENDING_READ + 1)
+        if len(raw) > PENDING_READ:
+            reject("size_limit", "Pending manifest is too large")
+        record = json.loads(raw)
+        fields(record, ("v", "project", "manifest", "remaining"))
+        if record["v"] != 1:
+            reject("invalid_request", "Unsupported pending manifest version")
+        integer(record["remaining"], 0, MAX_TREE)
+        digest(record["project"])
+        return record
+
+    def progress(self, manifest_id):
+        try:
+            with os.fdopen(safe_open(self.pending / (manifest_id + ".progress")), "rb") as stream:
+                value = json.loads(stream.read(65536))
+            return {key: integer(value[key], 0, MAX_TREE) for key in ("done_bytes", "written_bytes", "total_bytes")}
+        except (OSError, ValueError, TypeError, KeyError, Rejected):
+            return None
+
+    def pending_ids(self):
+        """Queued manifest IDs, oldest first (a queued record is written once and never rewritten)."""
+        entries = []
+        try:
+            with os.scandir(self.pending) as found:
+                for item in found:
+                    name = item.name
+                    if name.endswith(".json") and HASH.fullmatch(name[:-5]) and item.is_file(follow_symlinks=False):
+                        entries.append((item.stat(follow_symlinks=False).st_mtime_ns, name[:-5]))
+        except FileNotFoundError:
+            return []
+        return [manifest_id for _, manifest_id in sorted(entries)]
+
+    def record_remaining(self, manifest_id):
+        """One queued record's outstanding bytes, read from its tail without parsing its manifest."""
+        try:
+            with os.fdopen(safe_open(self.pending / (manifest_id + ".json")), "rb") as stream:
+                size = os.fstat(stream.fileno()).st_size
+                stream.seek(max(0, size - 128))
+                match = RECORD_TAIL.search(stream.read(128))
+        except (OSError, Rejected):
+            return 0
+        progress = self.progress(manifest_id)
+        remaining = min(int(match.group(1)), MAX_TREE) if match else 0
+        return max(0, remaining - (progress["written_bytes"] if progress else 0))
+
+    def queued_bytes(self):
+        """Bytes queued snapshots will still write: cheap enough for every upload batch and admission."""
+        return sum(self.record_remaining(manifest_id) for manifest_id in self.pending_ids())
+
+    def queue_view(self):
+        """Pending snapshots in FIFO order with their outstanding new bytes."""
+        view = []
+        for position, manifest_id in enumerate(self.pending_ids()):
+            try:
+                record = self.read_pending(manifest_id)
+            except (OSError, ValueError, TypeError, Rejected):
+                record = {"project": None, "remaining": 0, "manifest": []}
+            progress = self.progress(manifest_id)
+            total = sum(entry.get("size", 0) for entry in record["manifest"] if isinstance(entry, dict) and type(entry.get("size")) is int)
+            written = progress["written_bytes"] if progress else 0
+            view.append({"manifest_id": manifest_id, "project": record["project"], "position": position,
+                         "state": "assembling" if progress else "queued",
+                         "done_bytes": progress["done_bytes"] if progress else 0,
+                         "total_bytes": progress["total_bytes"] if progress else total,
+                         "remaining_bytes": max(0, record["remaining"] - written)})
+        return view
+
+    @contextlib.contextmanager
+    def queue_lock(self):
+        """Serialize queue admission: reading the queue, the disk and cap checks, and writing a record.
+
+        Each RPC is its own process, so without it two syncs could pass both checks against the
+        same queue. Never the materialize lock, which a background build holds for minutes.
+        """
+        if os.name != "posix":
+            yield
+            return
+        import fcntl
+        fd = os.open(self.pending / ".queue.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+    @contextlib.contextmanager
+    def record_lock(self, manifest_id):
+        """Yield True while this process exclusively holds one queued record, else False.
+
+        A record is written once and removed by whoever built it, so its inode names one
+        queued assembly: an inline RPC and the background materializer never build the same
+        snapshot at once. Off posix this only checks that the record exists.
+        """
+        path = self.pending / (manifest_id + ".json")
+        if os.name != "posix":
+            yield os.path.lexists(path)
+            return
+        import fcntl
+        try:
+            fd = safe_open(path)
+        except (FileNotFoundError, Rejected):
+            yield False
+            return
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            # Built and removed (or never this inode) before the lock was ours.
+            try:
+                current = os.lstat(path)
+            except FileNotFoundError:
+                yield False
+                return
+            mine = os.fstat(fd)
+            yield (current.st_ino, current.st_dev) == (mine.st_ino, mine.st_dev)
+        finally:
+            os.close(fd)
+
+    def claimable(self):
+        """Whether some queued record is free for a builder; an inline RPC may hold the others."""
+        for manifest_id in self.pending_ids():
+            with self.record_lock(manifest_id) as held:
+                if held:
+                    return True
+        return False
+
+    @contextlib.contextmanager
+    def materialize_lock(self):
+        """Yield True while this process holds the one global materialization lock (a no-op off posix)."""
+        if os.name != "posix":
+            yield True
+            return
+        import fcntl
+        fd = os.open(self.snapshots / ".materialize.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            yield True
+        finally:
+            os.close(fd)
+
+    def kick(self):
+        """Spawn the background materializer when work is queued and none is running."""
+        if not self.claimable():
+            return False
+        with self.materialize_lock() as free:
+            pass
+        if free:
+            self.spawn()
+        return free
+
+    def scheduler_alive(self):
+        last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()
+        try:
+            return bool(last) and time.time() - float(last[0]) < SCHEDULER_FRESH
+        except (TypeError, ValueError):
+            return False
+
+    def wake(self):
+        """Get queued work built without tying the builder to this RPC's service.
+
+        The scheduler's tick, at most about a second away, spawns the materializer inside
+        sparkdev-controller.service, whose KillMode=process keeps it alive. A child of this
+        RPC would land in the cgroup of whatever served it (sparkdev-link.service on the
+        paired route) and die when that unit restarts. Only a scheduler that has stopped
+        beating makes the RPC spawn the materializer itself.
+        """
+        return False if self.scheduler_alive() else self.kick()
+
+    def sync(self, request):
+        fields(request, ("v", "op", "project", "manifest"))
+        project = digest(request["project"])
+        manifest, encoded, manifest_id, total = validate_manifest(request["manifest"])
+        result = {"project": project, "manifest_id": manifest_id, "files": len(manifest), "bytes": total}
+        if self.snapshot_ready(manifest_id):
+            self.commit_snapshot(project, manifest_id, encoded, total)
+            return result
+        self.take_failure(manifest_id)
+        remaining, absent, reverify = self.snapshot_needs(manifest_id, manifest)
+        # Small snapshots assemble inside this RPC, never queued behind a large background
+        # build. Kept small files count: each one is re-hashed here.
+        inline = remaining + reverify <= INLINE_BYTES
+        record = self.pending / (manifest_id + ".json")
+        with self.queue_lock():
+            if not os.path.lexists(record):
+                queue = self.queue_view()
+                free = self.free_bytes()
+                # Before any upload: chunks still to send count with what assembly will write.
+                needed = absent + remaining + sum(item["remaining_bytes"] for item in queue)
+                if free - needed < DISK_RESERVE:
+                    disk_refusal(free, needed)
+                if absent:
+                    reject("missing_chunks", "Upload missing chunks before committing the snapshot")
+                if not inline and len(queue) >= MAX_PENDING:
+                    reject("materializing", f"Spark is already assembling {len(queue)} snapshots; run the same command again to continue")
+                atomic_write(record, canonical({"v": 1, "project": project, "manifest": manifest, "remaining": remaining}))
+            elif absent:
+                reject("missing_chunks", "Upload missing chunks before committing the snapshot")
+        if inline:
+            self.materialize_one(manifest_id)
+        self.wake()
+        deadline = self.started + MATERIALIZE_WAIT
+        while True:
+            if self.snapshot_ready(manifest_id):
+                self.commit_snapshot(project, manifest_id, encoded, total)
+                return result
+            self.take_failure(manifest_id)
+            # Another process held the record a moment ago; whoever holds it next builds it.
+            if inline and self.materialize_one(manifest_id) is not None:
+                continue
+            if self.clock() >= deadline:
+                break
+            self.sleep(MATERIALIZE_POLL)
+        progress = self.progress(manifest_id) or {"done_bytes": 0, "total_bytes": total}
+        reject("materializing", f"Spark is assembling this snapshot: {progress['done_bytes'] // CHUNK} of "
+                                f"{-(-progress['total_bytes'] // CHUNK)} MiB; run the same command again to continue")
+
+    def materialize_queue(self):
+        """Assemble queued snapshots oldest first under the global lock; return how many were processed."""
+        processed = 0
+        while True:
+            with self.materialize_lock() as held:
+                if not held:
+                    return processed
+                while self.materialize_next() is not None:
+                    processed += 1
+            # A sync that saw the lock held may have queued work after the last look.
+            if not self.claimable():
+                return processed
+
+    def materialize_next(self):
+        """Build the oldest record no inline RPC holds: True built, False failed, None when none is free."""
+        for manifest_id in self.pending_ids():
+            done = self.materialize_one(manifest_id)
+            if done is not None:
+                return done
+        return None
+
+    def materialize_one(self, manifest_id):
+        """Build one queued snapshot unless another process holds its record (then None)."""
+        with self.record_lock(manifest_id) as held:
+            return self.build_snapshot(manifest_id) if held else None
+
+    def build_snapshot(self, manifest_id):
+        """Build one queued snapshot. Call only while holding its record lock."""
+        record_path = self.pending / (manifest_id + ".json")
+        tree, partial = self.pending_tree(manifest_id), self.partial_dir(manifest_id)
+        try:
+            record = self.read_pending(manifest_id)
+            manifest, encoded, recomputed, total = validate_manifest(record["manifest"])
+            if recomputed != manifest_id:
+                reject("invalid_request", "Pending manifest does not match its identifier")
+            if not self.snapshot_ready(manifest_id):
+                if tree.is_symlink() or partial.is_symlink():
+                    reject("unsafe_state", "Pending snapshot path is a symlink")
+                remove_tree(partial)  # A partial file always restarts from zero.
+                tree.mkdir(mode=0o700, exist_ok=True)
+                partial.mkdir(mode=0o700)
+                meter = Progress(self, manifest_id, total)
+                meter.write(force=True)
+                for index, entry in enumerate(manifest):
+                    self.materialize_entry(tree, partial, index, entry, meter)
+                try:
+                    os.rename(tree, self.snapshots / manifest_id)
+                except OSError:
+                    if not self.snapshot_ready(manifest_id):
+                        raise
+            self.commit_snapshot(record["project"], manifest_id, encoded, total)
+        except Exception as error:
+            if isinstance(error, Rejected):
+                code, message = error.code, error.message
+            elif isinstance(error, OSError) and error.errno == errno.ENOSPC:
+                code, message = "insufficient_disk", f"Spark ran out of disk space while assembling the snapshot; DGXBridge keeps {DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space, then retry"
+            else:
+                code, message = "materialize_failed", "Spark could not assemble the snapshot; run the same command again"
+            remove_tree(tree)
+            remove_tree(partial)
+            # The content store is kept: its files are complete, fsynced and verified.
+            atomic_write(self.pending / (manifest_id + ".failed"), canonical({"code": code, "message": message}))
+            unlink_quietly(record_path)
+            unlink_quietly(self.pending / (manifest_id + ".progress"))
+            return False
+        remove_tree(tree)
+        remove_tree(partial)
+        unlink_quietly(record_path)
+        unlink_quietly(self.pending / (manifest_id + ".progress"))
+        return True
+
+    def read_object(self, chunk):
+        """Today's exact per-chunk check; an object whose content does not match its name is removed."""
+        path = self.object_path(chunk["sha256"])
+        try:
+            with os.fdopen(safe_open(path), "rb") as source:
+                raw = source.read(CHUNK + 1)
+        except FileNotFoundError:
+            reject("missing_chunks", "Upload missing chunks before committing the snapshot")
+        if len(raw) != chunk["size"] or sha(raw) != chunk["sha256"]:
+            if sha(raw) != chunk["sha256"]:
+                unlink_quietly(path)
+            reject("hash_mismatch", "Stored chunk failed verification; it was removed for upload again")
+        return raw
+
+    def assemble(self, entry, target, meter, durable):
+        """Write one file from verified chunks, scanning every chunk with the previous chunk's tail."""
+        whole, tail = hashlib.sha256(), b""
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        with os.fdopen(os.open(target, flags, 0o600), "wb") as stream:
+            for chunk in entry["chunks"]:
+                raw = self.read_object(chunk)
+                if SECRET.search(tail + raw):
+                    reject("secret_detected", "Project contains credential material")
+                tail = raw[-512:]
+                whole.update(raw)
+                stream.write(raw)
+                meter.add(len(raw), written=True)
+            if durable:
+                stream.flush()
+                os.fsync(stream.fileno())
+        if whole.hexdigest() != entry["sha256"]:
+            reject("hash_mismatch", "Whole-file hash does not match")
+        os.chmod(target, read_only_mode(entry))
+
+    def verify_file(self, path, entry):
+        """Re-hash and rescan a small file kept from an interrupted pass; it was never fsynced."""
+        whole, tail, size = hashlib.sha256(), b"", 0
+        try:
+            with os.fdopen(safe_open(path), "rb") as stream:
+                while raw := stream.read(CHUNK):
+                    if SECRET.search(tail + raw):
+                        return False
+                    tail, size = raw[-512:], size + len(raw)
+                    whole.update(raw)
+        except (OSError, Rejected):
+            return False
+        return size == entry["size"] and whole.hexdigest() == entry["sha256"]
+
+    def materialize_entry(self, tree, partial, index, entry, meter):
+        out = tree.joinpath(*entry["path"].split("/"))
+        large = entry["size"] > LARGE_FILE
+        if os.path.lexists(out):
+            # Resume: the whole file is the unit. Large files were fsynced in the store before linking.
+            if regular_size(out) == entry["size"] and (large or self.verify_file(out, entry)):
+                meter.add(entry["size"])
+                return
+            if os.name != "posix" and not out.is_symlink():
+                os.chmod(out, 0o600)  # Windows refuses to unlink a read-only file; posix needs no chmod.
+            os.unlink(out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        temporary = partial / str(index)
+        if not large:
+            # Uploads and jobs may have spent space since this snapshot was admitted:
+            # stop before any file would cut into the reserve.
+            self.require_disk(entry["size"])
+            self.assemble(entry, temporary, meter, durable=False)
+            os.replace(temporary, out)
+            return
+        store = self.files / store_name(entry)
+        if not self.store_ready(entry):
+            self.require_disk(entry["size"])
+            self.assemble(entry, temporary, meter, durable=True)
+            os.replace(temporary, store)
+        else:
+            meter.add(entry["size"])
+        try:
+            os.link(store, out)
+        except OSError as error:
+            if error.errno != errno.EMLINK:
+                raise
+            # The store inode reached its link limit: give this snapshot its own durable copy.
+            self.require_disk(entry["size"])
+            shutil.copyfile(store, temporary, follow_symlinks=False)
+            with open(temporary, "rb+") as stream:
+                os.fsync(stream.fileno())
+            os.chmod(temporary, read_only_mode(entry))
+            os.replace(temporary, out)
 
     def get_job(self, job):
         identifier(job)
@@ -559,7 +1671,7 @@ class Controller:
 
     def prepare(self, request):
         fields(request, ("v", "op", "project", "manifest_id", "runtime", "client", "request_id"))
-        if request["runtime"] not in ("rust", "node", "python"):
+        if request["runtime"] not in ("rust", "node", "python", "cuda"):
             reject("invalid_request", "This runtime has no dependency preparation")
         return self.run({**request, "argv": ["/usr/bin/python3", "/sparkdev-prepare.py", request["runtime"]], "no_cache": True})
 
@@ -702,18 +1814,37 @@ class Controller:
         if "all" in request and type(request["all"]) is not bool:
             reject("invalid_request", "all must be boolean")
         policy = self.resource_policy()
+        registry = self.registry()
         jobs = [self.job_status(r) for r in self.db.execute("SELECT * FROM jobs ORDER BY created DESC LIMIT 200")]
+        queue = self.queue_view()
+        storage = self.storage_view(queued=sum(item["remaining_bytes"] for item in queue))
         for job in jobs:
             if job["state"] == "queued" and policy["policy_saved"] and (job["reserved_cpu"] > policy["limits"]["cpu_per_job"] or job["reserved_memory_gb"] > policy["limits"]["memory_gb_per_job"]):
                 job["admission_blocked"] = "Saved per-job caps are below this existing job's immutable allocation; raise caps or cancel and resubmit"
+            elif job["state"] == "queued":
+                small = self.work_bytes(job["manifest_id"])
+                if small is not None and storage["free_bytes"] - small - storage["queued_bytes"] < DISK_RESERVE:
+                    job["admission_blocked"] = (f"Spark has {gib(storage['free_bytes'])} GiB free; this job's work copy needs {gib(small)} GiB, "
+                                                f"snapshots being assembled {gib(storage['queued_bytes'])} GiB, and DGXBridge keeps "
+                                                f"{DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space; the job stays queued")
         for row in self.db.execute("SELECT * FROM leases ORDER BY created DESC LIMIT 200"):
             jobs.append({"job": row["job"] or row["id"], "project": row["project"], "client": row["client"], "where": "laptop",
                          "state": "lease_lost" if row["state"] == "running" and row["expires"] < time.time() else row["state"],
                          "exit_code": row["exit_code"], "created_at": row["created"], "expires_at": row["expires"], "next_offset": row["log_offset"]})
         last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()
-        return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(self.registry()),
-                "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": bool(last and time.time() - float(last[0]) < 15)},
-                **policy, "dependency_preparation": "isolated_allowlist_proxy"}
+        # The link report is observation only: a probe failure never fails status.
+        network = {"v": 1, "observed": False, "basis": "unknown"}
+        try:
+            network = network_view(bounded_call(self.link_probe, PROBE_LIMIT))
+        except Exception:
+            pass
+        # Every preparation, whatever its runtime, needs the Python image for its proxy.
+        return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(registry),
+                "preparable_runtimes": list(registry) if "python" in registry else [],
+                "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": self.scheduler_alive()},
+                **policy, "dependency_preparation": "isolated_allowlist_proxy", "network": network,
+                # `limits` above is the resource policy; transfer limits use their own key.
+                "storage": storage, "sync_limits": sync_limits(), "materializing": queue}
 
     def doctor(self, request):
         fields(request, ("v", "op"))
@@ -727,7 +1858,9 @@ class Controller:
             pass
         return result
 
-    def rpc(self, request):
+    def rpc(self, request, started=None):
+        # A sync's background wait is bounded from process start when main() passes it.
+        self.started = self.clock() if started is None else started
         try:
             if not isinstance(request, dict) or type(request.get("v")) is not int or request["v"] != 1:
                 reject("version_unsupported", "Protocol version 1 is required")
@@ -753,16 +1886,72 @@ class Controller:
             self.db.execute("UPDATE jobs SET state=?,exit_code=?,finished=?,error=? WHERE id=?", (state, code, time.time(), error, row["id"]))
             self.audit("job_finished", row["id"], row["client"], state=state, exit_code=code, error=error)
 
+    def manifest_entries(self, manifest_id):
+        row = self.db.execute("SELECT manifest FROM manifests WHERE id=?", (digest(manifest_id),)).fetchone()
+        if row is None:
+            reject("manifest_not_found", "Snapshot manifest is not recorded")
+        return json.loads(row[0])
+
+    def manifest_shape(self, manifest_id):
+        """(bytes of files a job copies, number of large files a job reads through the source mount)."""
+        key = (manifest_id, LARGE_FILE)
+        if key not in self._shapes:
+            entries = self.manifest_entries(manifest_id)
+            if len(self._shapes) >= 256:
+                self._shapes.clear()
+            self._shapes[key] = (sum(e["size"] for e in entries if e["size"] <= LARGE_FILE),
+                                 sum(e["size"] > LARGE_FILE for e in entries))
+        return self._shapes[key]
+
+    def work_bytes(self, manifest_id):
+        """Bytes a job's work copy needs, or None when its manifest is unreadable (prepare_work then fails the job)."""
+        try:
+            return self.manifest_shape(manifest_id)[0]
+        except (Rejected, ValueError, TypeError, KeyError):
+            return None
+
+    def disk_admits(self, row):
+        needed = self.work_bytes(row["manifest"])
+        return needed is None or self.free_bytes() - needed - self.queued_bytes() >= DISK_RESERVE
+
+    def prepare_work(self, row):
+        """Build the writable /work copy from the manifest alone; it never stats through a link.
+
+        Small files are copied. A large file becomes a symlink into the read-only
+        /sparkdev-source mount, so its store inode is never writable by the job.
+        """
+        root = self.root / "jobs" / identifier(row["id"])
+        root.mkdir(mode=0o700, exist_ok=True)
+        work, staging = root / "work", root / "work.pending"
+        if os.path.lexists(work):
+            return
+        remove_tree(staging)
+        entries = self.manifest_entries(row["manifest"])
+        small = sum(entry["size"] for entry in entries if entry["size"] <= LARGE_FILE)
+        self.require_disk(small, self.queued_bytes())
+        source = self.snapshots / digest(row["manifest"])
+        staging.mkdir(mode=0o700)
+        try:
+            for entry in entries:
+                name = path_name(entry["path"])
+                parts = name.split("/")
+                target = staging.joinpath(*parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if entry["size"] > LARGE_FILE:
+                    os.symlink("/sparkdev-source/" + name, target)
+                else:
+                    shutil.copy2(source.joinpath(*parts), target, follow_symlinks=False)
+                    os.chmod(target, 0o755 if entry["mode"] == 0o755 else 0o644)
+            os.rename(staging, work)
+        except BaseException:
+            remove_tree(staging)
+            raise
+
     def create_args(self, row):
         root = self.root / "jobs" / row["id"]
         root.mkdir(mode=0o700, exist_ok=True)
         work = root / "work"
-        if not work.exists():
-            shutil.copytree(self.root / "snapshots" / row["manifest"], work)
-            for directory, _, filenames in os.walk(work):
-                for filename in filenames:
-                    path = Path(directory) / filename
-                    path.chmod(0o755 if path.stat().st_mode & 0o111 else 0o644)
+        self.prepare_work(row)
         output = root / "output"
         output.mkdir(mode=0o700, exist_ok=True)
         request = json.loads(row["request"])
@@ -775,16 +1964,19 @@ class Controller:
         cache.mkdir(parents=True, exist_ok=True, mode=0o700)
         uid = os.getuid() if hasattr(os, "getuid") else 1000
         gid = os.getgid() if hasattr(os, "getgid") else 1000
-        preparing = json.loads(row["request"])["op"] == "prepare"
+        preparing = is_preparation(row)
         args = ["create", "--name", self.container_name(row["id"]), "--pull", "never", "--network", "sparkdev-fetch-" + row["id"] if preparing else "none", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}",
                 "--cpus", str(row["cpu"]), "--cpu-shares", "256", "--memory", f"{row['memory']}g", "--memory-swap", f"{row['memory']}g",
-                "--pids-limit", "1024", "--init", "--restart", "no", "--log-driver", "none", "--ulimit", f"fsize={MAX_FILE}:{MAX_FILE}",
+                "--pids-limit", "1024", "--init", "--restart", "no", "--log-driver", "none", "--ulimit", f"fsize={JOB_FILE_LIMIT}:{JOB_FILE_LIMIT}",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=" + str(row["scratch_mb"] * 1024 * 1024), "--workdir", "/work",
                 "--label", "com.delores.sparkdev.job=" + row["id"], "--label", "com.delores.sparkdev.client=" + row["client"],
                 "--mount", f"type=bind,src={work},dst=/work", "--mount", f"type=bind,src={output},dst=/sparkdev-output",
                 "--mount", f"type=bind,src={root / 'argv.json'},dst=/sparkdev-argv.json,readonly",
                 "--mount", f"type=bind,src={root / 'worker.py'},dst=/sparkdev-worker.py,readonly"]
+        if self.manifest_shape(row["manifest"])[1]:
+            # One fixed read-only mount of the whole snapshot; no user path reaches Docker arguments.
+            args += ["--mount", f"type=bind,src={self.snapshots / digest(row['manifest'])},dst=/sparkdev-source,readonly"]
         for name, destination in (("target", "/target"), ("cargo", "/cargo-home"), ("npm", "/npm-cache"), ("pip", "/pip-cache")):
             path = cache / name
             if path.is_symlink():
@@ -797,7 +1989,12 @@ class Controller:
             args += ["--env", value]
         for name in ("RAYON_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "CARGO_BUILD_JOBS"):
             args += ["--env", name + "=" + str(max(1, int(row["cpu"])))]
-        if row["runtime"] == "cuda":
+        if row["runtime"] == "cuda" and preparing:
+            # A network-attached preparation never gets a GPU. "void" also overrides an image
+            # NVIDIA_VISIBLE_DEVICES under a default NVIDIA runtime; prepare.py re-checks /dev.
+            # No "--runtime runc": a failing create would raise out of reconcile() and stall tick().
+            args += ["--env", "NVIDIA_VISIBLE_DEVICES=void"]
+        elif row["runtime"] == "cuda":
             args += ["--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics"]
         if preparing:
             args += ["--mount", f"type=bind,src={root / 'prepare.py'},dst=/sparkdev-prepare.py,readonly"]
@@ -869,6 +2066,14 @@ class Controller:
                 if row["cancel"]:
                     self.finish(row, "cancelled", 130)
                     continue
+                try:
+                    self.prepare_work(row)
+                except (Rejected, OSError, ValueError) as error:
+                    # A job whose work copy cannot be built fails; it never stays stuck in 'starting'.
+                    short = (isinstance(error, Rejected) and error.code == "insufficient_disk") or \
+                        (isinstance(error, OSError) and error.errno == errno.ENOSPC)
+                    self.finish(row, "failed", 125, "insufficient_disk" if short else "work_copy_failed")
+                    continue
                 self.ensure_proxy(row)
                 self.docker.call(self.create_args(row))
                 info = self.docker.inspect(name)
@@ -876,7 +2081,8 @@ class Controller:
                     reject("docker_unavailable", "Created container cannot be inspected")
             self.container_matches(info, row)
             state = info["State"]["Status"]
-            if row["cancel"] or (row["runtime"] == "cuda" and self.memory_probe() < row["headroom_gb"]):
+            # Preparation has no GPU, so only CUDA runs need the unified-memory watchdog.
+            if row["cancel"] or (row["runtime"] == "cuda" and not is_preparation(row) and self.memory_probe() < row["headroom_gb"]):
                 if state in ("running", "restarting", "paused"):
                     self.docker.call(["stop", "--time", "5", name], timeout=15)
                 self.finish(row, "cancelled" if row["cancel"] else "failed", 130 if row["cancel"] else 137,
@@ -899,6 +2105,12 @@ class Controller:
                 reject("container_state_unknown", "Container state is not safe for reconciliation")
 
     def tick(self):
+        # Backstop: a materializer that died, or one never spawned, restarts from the queue.
+        try:
+            self.kick()
+        except (Rejected, OSError, subprocess.SubprocessError) as error:
+            # Never blocks scheduling; like serve(), report only the error kind.
+            print("sparkdev materializer: " + (error.code if isinstance(error, Rejected) else type(error).__name__), file=sys.stderr, flush=True)
         self.reconcile()
         for row in self.db.execute("SELECT * FROM jobs WHERE state IN ('succeeded','failed','cancelled') AND proxy_image IS NOT NULL AND proxy_cleaned=0").fetchall():
             self.cleanup_proxy(row)
@@ -922,6 +2134,8 @@ class Controller:
                     continue
                 if used_cpu + cpu(row) > limits["cpu_total"] or used_mem + memory(row) > limits["memory_gb_total"] or self.memory_probe() - used_mem - memory(row) < limits["headroom_gb"]:
                     continue
+                if not self.disk_admits(row):
+                    continue  # The work copy would cut into the disk reserve; status reports admission_blocked.
                 self.db.execute("UPDATE jobs SET state='starting' WHERE id=?", (row["id"],))
                 self.db.execute("INSERT OR REPLACE INTO settings VALUES('last_client',?)", (client,))
                 # One admission per tick avoids long uninterruptible Docker bursts.
@@ -947,19 +2161,24 @@ class Controller:
 
 
 def main():
+    started = time.monotonic()  # Before argument parsing, state setup and reading the request.
     os.umask(0o077)
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("rpc", "serve", "tick"))
+    # `materialize` is the detached snapshot builder; it is not an RPC operation.
+    parser.add_argument("mode", choices=("rpc", "serve", "tick", "materialize"))
     parser.add_argument("--state", type=Path)
     args = parser.parse_args()
     controller = Controller(args.state)
+    if args.mode == "materialize":
+        controller.materialize_queue()
+        return 0
     if args.mode == "rpc":
         try:
             raw = sys.stdin.buffer.read(MAX_REQUEST + 1)
             if len(raw) > MAX_REQUEST:
                 reject("size_limit", "Request exceeds the protocol body limit")
             request = json.loads(raw)
-            response = controller.rpc(request)
+            response = controller.rpc(request, started=started)
         except (ValueError, Rejected) as error:
             response = {"ok": False, "error": {"code": error.code if isinstance(error, Rejected) else "invalid_json", "message": "Request could not be read"}}
         sys.stdout.buffer.write(canonical(response) + b"\n")
