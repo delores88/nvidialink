@@ -288,3 +288,24 @@ export function otherLanAddresses(text, first = '') {
     return true;
   });
 }
+
+// The Spark's own report of the link it is using (controller status.network, v1). Plain words only;
+// the report is observation, never a routing decision. Null when the Spark bridge predates the report.
+export function sparkLink(observation) {
+  const network = observation?.devices?.find(device => device.id === 'spark')?.network;
+  if (!network || network.v !== 1) return null;
+  if (!network.observed || !network.active) return {label: 'Not reported by the Spark', slow: false, warning: ''};
+  const active = network.active, wifi = network.wifi;
+  if (active.kind === 'wired') return {label: `Wired${active.speed_mbps ? ` · ${active.speed_mbps >= 1000 ? active.speed_mbps / 1000 + ' Gbps' : active.speed_mbps + ' Mbps'}` : ''}`, slow: false, warning: ''};
+  if (active.kind === 'wifi') {
+    const rates = [wifi?.rx_bitrate_mbps, wifi?.tx_bitrate_mbps].filter(Number.isFinite);
+    const rate = rates.length ? Math.min(...rates) : null;
+    const band = wifi?.band && wifi.band !== 'multi' ? `${wifi.band} GHz ` : '';
+    const slow = wifi?.band === '2.4' || (rate !== null && rate < 200);
+    const noCable = !(network.wired_lan_up > 0);
+    return {label: `Wi-Fi ${band}${rate !== null ? `· ${Math.round(rate)} Mbps` : ''}`.trim(), slow,
+      warning: slow ? `Your Spark is on slow ${band}Wi-Fi${noCable ? '. Plug it into your router with a network cable' : ''} for much faster uploads.` : ''};
+  }
+  return {label: 'Connected', slow: false, warning: ''};
+}
+export const ROUTE_WORDS = Object.freeze({'Pinned SSH · LAN': 'Your home network', 'Paired connection · path unknown': 'Remote connection'});

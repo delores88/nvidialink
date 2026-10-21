@@ -147,3 +147,4 @@ dialog{border:1px solid var(--line-strong);border-radius:16px;padding:0;backgrou
 @media(max-width:960px){.pill-detail{display:none}.two-up,.segmented-cards,.steps{grid-template-columns:minmax(0,1fr)}.resource-presets{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:900px){.views>.jobs-view{height:auto}.jobs-split{grid-template-columns:minmax(0,1fr)}.job-list{max-height:360px}#job-view{min-height:420px}.machine-strip{grid-template-columns:minmax(0,1fr);gap:10px}.machine-link{display:none}#activity-pill{display:none}.page{padding:18px 18px 32px}.form-grid,.resource-grid,.resource-capacity{grid-template-columns:minmax(0,1fr)}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}.connection-particles{display:none}}
+.machine-foot[data-warn=true]{color:var(--warn);font-weight:600;white-space:normal}

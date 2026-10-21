@@ -240,3 +240,14 @@ test('a saved address names what was removed and the Other LAN addresses field k
 test('copied agent prompts forbid Find my Spark',()=>{
   for(const agent of ['claude','codex'])assert.match(agentPrompt({agent,config:{hosts:['192.0.2.10']}}),/Never run sparkdev discover; Find my Spark is an owner-only action\./);
 });
+
+test('Spark link: slow 2.4 GHz Wi-Fi warns, wired and missing reports do not', async () => {
+  const {sparkLink} = await import('../ui/model.mjs');
+  const obs = network => ({devices: [{id: 'spark', network}]});
+  const wifi = sparkLink(obs({v: 1, observed: true, basis: 'ssh_session', active: {interface: 'wlP9s9', kind: 'wifi'}, wired_lan_up: 0, wifi: {band: '2.4', rx_bitrate_mbps: 72.2, tx_bitrate_mbps: 65}}));
+  assert.equal(wifi.slow, true); assert.match(wifi.label, /Wi-Fi 2\.4 GHz · 65 Mbps/); assert.match(wifi.warning, /network cable/);
+  const wired = sparkLink(obs({v: 1, observed: true, active: {interface: 'enP7s7', kind: 'wired', speed_mbps: 10000}, wired_lan_up: 1, wifi: null}));
+  assert.equal(wired.slow, false); assert.equal(wired.label, 'Wired · 10 Gbps'); assert.equal(wired.warning, '');
+  assert.equal(sparkLink(obs(null)), null); assert.equal(sparkLink(obs({v: 2})), null);
+  assert.equal(sparkLink(obs({v: 1, observed: false, basis: 'unknown'})).warning, '');
+});

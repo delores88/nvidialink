@@ -2,7 +2,7 @@ import {qrArt,eyeRing,eyePupil,alignRing,alignDot,sparkPath,checkPoints} from '.
 import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vendor/sparkParticles.mjs';
 import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
   isActiveJob,jobId,jobRunner,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
-  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses} from './model.mjs';
+  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,ROUTE_WORDS} from './model.mjs';
 import {createConnectionVisual} from './connection-visual.mjs';
 const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__.core.invoke(name,args);
@@ -45,10 +45,12 @@ function renderConnection(){
   const routeText=state.connected?(used?`${state.route} · ${used.address}`:state.route):unconfigured?'Save an SSH connection to start':label;
   document.querySelectorAll('[data-connection-route]').forEach(el=>el.textContent=routeText);
   const note=!state.enabled?'New requests are paused. Running jobs and the saved pairing are unchanged.':state.connected?(state.schedulerHealthy?'Authenticated, and the shared scheduler is responding.':'Authenticated, but the scheduler did not report healthy. New jobs may not be admitted.'):(state.reason||'Save your SSH connection, then connect.');
-  document.querySelectorAll('[data-connection-note]').forEach(el=>el.textContent=note);
+  const linkNow=sparkLink(observation),fullNote=linkNow?.warning?`${note} ${linkNow.warning}`:note;
+  document.querySelectorAll('[data-connection-note]').forEach(el=>el.textContent=fullNote);
   $('connection-toggle').textContent=state.enabled?'Disconnect':'Connect';$('connection-toggle').className=`button ${state.enabled?'secondary':'primary'}`;$('connection-toggle').disabled=connecting||!savedConfig;
   const transport=spark?.transport||{},heartbeat=Number(spark?.scheduler?.last_heartbeat),hardware=spark?.hardware;
-  const facts=[['Route',state.connected?state.route:'None authenticated'],['Address used',routeAddressLabel(used)],['Scheduler',spark?.scheduler?(spark.scheduler.healthy?'Healthy':'Not healthy'):'Not observed'],['Heartbeat',Number.isFinite(heartbeat)&&heartbeat>0?relativeTime(heartbeat,observation?.observed_at):'—'],['Spark hardware',hardware?.cpu_count?`${hardware.cpu_count} CPU cores · ${hardware.memory_gb} GiB`:'Not observed'],['Last check',observation?.observed_at?relativeTime(observation.observed_at):'Not checked']];
+  const link=sparkLink(observation);
+  const facts=[['Connected through',state.connected?(ROUTE_WORDS[state.route]||state.route):'Not connected'],['Spark network',link?link.label:'Update the Spark bridge to see this'],['Address used',routeAddressLabel(used)],['Job service',spark?.scheduler?(spark.scheduler.healthy?'Running':'Not responding'):'Not checked'],['Last heard from',Number.isFinite(heartbeat)&&heartbeat>0?relativeTime(heartbeat,observation?.observed_at):'—'],['Spark hardware',hardware?.cpu_count?`${hardware.cpu_count} CPU cores · ${hardware.memory_gb} GiB`:'Not observed'],['Last check',observation?.observed_at?relativeTime(observation.observed_at):'Not checked']];
   if(transport.reason&&!state.connected)facts.push(['Reason',transport.reason]);
   renderFacts($('route-facts'),facts);
   visuals.forEach(visual=>visual.render(state,reduced));renderAgents();renderFindControls();
@@ -67,7 +69,9 @@ function renderBoard(){
   $('laptop-foot').textContent=slots?`${summary.laptopActive} of ${slots} job slots in use${summary.laptopThreads?` · ${summary.laptopThreads} logical CPUs`:''} · no enforced caps`:'Native jobs run as you, without enforced CPU or memory caps.';
   $('spark-jobs').textContent=summary.sparkQueued?`${summary.sparkRunning} running · ${summary.sparkQueued} queued`:`${summary.sparkRunning} active`;
   const budget=summary.cpuBudget;$('spark-meter-fill').style.width=`${budget?Math.min(100,summary.reservedCpu/budget*100):0}%`;$('spark-meter').setAttribute('aria-label',budget?`${summary.reservedCpu} of ${budget} budgeted CPU cores reserved by running jobs`:'Spark CPU budget not observed');
-  $('spark-foot').textContent=!state.connected?'Linux builds, tests and compute. Connect to see the scheduler.':budget?`Reserved ${summary.reservedCpu}/${budget} cores · ${summary.reservedMemory}/${summary.memoryBudget??'—'} GiB by running jobs${summary.heartbeatAge!=null?` · scheduler seen ${relativeTime(Number(observation.observed_at)-summary.heartbeatAge,observation.observed_at)}`:''}`:'Scheduler responding. Budgets not reported.';
+  const slowLink=sparkLink(observation);
+  if(state.connected&&slowLink?.warning){$('spark-foot').textContent=slowLink.warning;$('spark-foot').dataset.warn='true';}else{delete $('spark-foot').dataset.warn;
+  $('spark-foot').textContent=!state.connected?'Linux builds, tests and compute. Connect to see the scheduler.':budget?`Reserved ${summary.reservedCpu}/${budget} cores · ${summary.reservedMemory}/${summary.memoryBudget??'—'} GiB by running jobs${summary.heartbeatAge!=null?` · scheduler seen ${relativeTime(Number(observation.observed_at)-summary.heartbeatAge,observation.observed_at)}`:''}`:'Scheduler responding. Budgets not reported.';}
   renderJobs();
 }
 function stateLabel(state){return state?state[0].toUpperCase()+state.slice(1):'Unknown';}
