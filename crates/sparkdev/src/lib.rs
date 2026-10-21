@@ -1023,8 +1023,16 @@ fn preflight(body: u64, limits: &SparkLimits, route: &str) -> Result<()> {
                 "The project manifest needs a {:.1} MiB sync request, above the {:.1} MiB {} limit; reduce the file count{}",
                 body as f64 / inventory::MIB as f64,
                 limit as f64 / inventory::MIB as f64,
-                if route == "iroh" { "paired remote route" } else { "controller request" },
-                if route == "iroh" { " or sync over LAN SSH" } else { "" }
+                if route == "iroh" {
+                    "paired remote route"
+                } else {
+                    "controller request"
+                },
+                if route == "iroh" {
+                    " or sync over LAN SSH"
+                } else {
+                    ""
+                }
             ),
         ));
     }
@@ -1072,7 +1080,8 @@ pub fn sync_with(
         preflight(body, &limits, &session.rpc.route())?;
         session.call(&request, false)?
     } else {
-        let (mut stall_mark, mut stall_slept, mut last_done) = (Instant::now(), Duration::ZERO, None);
+        let (mut stall_mark, mut stall_slept, mut last_done) =
+            (Instant::now(), Duration::ZERO, None);
         loop {
             preflight(body, &limits, &session.rpc.route())?;
             let error = match session.call(&request, true) {
@@ -1083,7 +1092,8 @@ pub fn sync_with(
                 Some("materializing") => {
                     let done = assembled_mib(&error);
                     if done.is_some() && done > last_done {
-                        (stall_mark, stall_slept, last_done) = (Instant::now(), Duration::ZERO, done);
+                        (stall_mark, stall_slept, last_done) =
+                            (Instant::now(), Duration::ZERO, done);
                     } else if stall_mark.elapsed().max(stall_slept) >= STALL_LIMIT {
                         return Err(AppError::new(
                             6,
@@ -1402,7 +1412,10 @@ mod sync_tests {
             self
         }
         fn ops(&self) -> Vec<&str> {
-            self.calls.iter().map(|c| c["op"].as_str().unwrap()).collect()
+            self.calls
+                .iter()
+                .map(|c| c["op"].as_str().unwrap())
+                .collect()
         }
         fn batches(&self) -> Vec<(usize, usize)> {
             self.calls
@@ -1457,7 +1470,8 @@ mod sync_tests {
                         let data = STANDARD.decode(chunk["data"].as_str().unwrap()).unwrap();
                         assert_eq!(inventory::hash(&data), chunk["sha256"]);
                         assert!(data.len() <= CHUNK);
-                        self.objects.insert(chunk["sha256"].as_str().unwrap().into());
+                        self.objects
+                            .insert(chunk["sha256"].as_str().unwrap().into());
                         accepted.push(json!({"sha256":chunk["sha256"],"size":data.len()}));
                     }
                     if let Some(route) = self.route_after_put.take() {
@@ -1622,7 +1636,10 @@ mod sync_tests {
     }
     #[test]
     fn an_unchanged_project_takes_two_rpcs() {
-        let t = tree(&[("main.rs", b"fn main() {}\n".to_vec())], inventory::LARGE_FILE);
+        let t = tree(
+            &[("main.rs", b"fn main() {}\n".to_vec())],
+            inventory::LARGE_FILE,
+        );
         let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
         let out = run(&t.inv, &mut fake).0.unwrap();
         assert_eq!(fake.ops(), ["missing", "sync"]);
@@ -1675,7 +1692,10 @@ mod sync_tests {
     }
     #[test]
     fn a_snapshot_being_assembled_is_polled_until_done_or_stalled() {
-        let t = tree(&[("main.rs", b"fn main() {}\n".to_vec())], inventory::LARGE_FILE);
+        let t = tree(
+            &[("main.rs", b"fn main() {}\n".to_vec())],
+            inventory::LARGE_FILE,
+        );
         let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
         fake.assembling = VecDeque::from([0, 10, 10, 30]);
         let (out, sleeps) = run(&t.inv, &mut fake);
@@ -1694,7 +1714,10 @@ mod sync_tests {
     }
     #[test]
     fn retries_are_bounded_and_never_override_owner_intent() {
-        let t = tree(&[("main.rs", b"fn main() {}\n".to_vec())], inventory::LARGE_FILE);
+        let t = tree(
+            &[("main.rs", b"fn main() {}\n".to_vec())],
+            inventory::LARGE_FILE,
+        );
         // Nothing has succeeded yet: the probe is never retried.
         let mut fake = Fake::new(Some(advertised())).holding(&t.inv);
         fake.inject.push_back(("missing", transient(TIMEOUT)));
@@ -1827,7 +1850,8 @@ mod sync_tests {
         fs::write(t.cas.path().join(&first), b"damaged").unwrap();
         let mut fake = Fake::new(Some(advertised()));
         fake.objects.insert(second.clone());
-        fake.objects.extend([inventory::hash(&large[..CHUNK]), unstaged]);
+        fake.objects
+            .extend([inventory::hash(&large[..CHUNK]), unstaged]);
         run(&t.inv, &mut fake).0.unwrap();
         assert_eq!(fake.uploaded(), [first]);
     }
