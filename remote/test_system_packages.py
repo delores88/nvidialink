@@ -193,19 +193,55 @@ class BoundaryTests(unittest.TestCase):
         before = {"base": "1"}
         after = {"base": "1", "fonts-example": "1:2.3-4ubuntu1"}
         with mock.patch.object(sp.os, "geteuid", return_value=0, create=True), mock.patch.object(sp, "check_platform"), \
-                mock.patch.object(sp, "verify_debs"), mock.patch.object(sp, "installed", side_effect=[before, after]), mock.patch.object(sp, "run") as command:
+                mock.patch.object(sp, "verify_debs", return_value={"fonts-example": "all"}), mock.patch.object(Path, "symlink_to"), \
+                mock.patch.object(sp, "installed", side_effect=[before, after]), mock.patch.object(sp, "run") as command:
             sp.install(result, self.root, marker)
             args = command.call_args.args[0]
             self.assertIn("--no-download", args)
             self.assertIn("--no-remove", args)
             self.assertNotIn("update", args)
+            self.assertTrue(Path(args[-1]).is_absolute())
+            self.assertEqual(Path(args[-1]).name, "fonts-example_1%3a2.3-4ubuntu1_all.deb")
             self.assertEqual(json.loads(marker.read_bytes())["lock_sha256"], sp.sha(sp.canonical(result)))
         marker.unlink()
         for after in ({"base": "2", "fonts-example": "1:2.3-4ubuntu1"}, {"base": "1", "fonts-example": "1:2.3-4ubuntu1", "unlocked": "1"}, {"base": "1"}):
             with mock.patch.object(sp.os, "geteuid", return_value=0, create=True), mock.patch.object(sp, "check_platform"), \
-                    mock.patch.object(sp, "verify_debs"), mock.patch.object(sp, "installed", side_effect=[before, after]), mock.patch.object(sp, "run"), self.assertRaises(sp.Invalid):
+                    mock.patch.object(sp, "verify_debs", return_value={"fonts-example": "all"}), mock.patch.object(Path, "symlink_to"), \
+                    mock.patch.object(sp, "installed", side_effect=[before, after]), mock.patch.object(sp, "run"), self.assertRaises(sp.Invalid):
                 sp.install(result, self.root, marker)
             self.assertFalse(marker.exists())
+
+    def test_offline_archives_use_apt_cache_names_for_epoch_and_actual_architecture(self):
+        value = lock()
+        value["packages"].append({"name": "libfftw3-double3", "version": "3.3.10-2+b1", "sha256": "f" * 64})
+        archives = self.root / "archives"
+        with mock.patch.object(Path, "symlink_to", autospec=True) as link:
+            paths = sp.stage_archives(value, self.root, archives, {"fonts-example": "all", "libfftw3-double3": "arm64"})
+        self.assertEqual([Path(path).name for path in paths], ["fonts-example_1%3a2.3-4ubuntu1_all.deb",
+                                                             "libfftw3-double3_3.3.10-2+b1_arm64.deb"])
+        self.assertEqual(link.call_args_list, [mock.call(Path(paths[0]), self.root / (sp.sha(DEB) + ".deb")),
+                                               mock.call(Path(paths[1]), self.root / ("f" * 64 + ".deb"))])
+        self.assertTrue(all(Path(path).is_absolute() for path in paths))
+
+    @unittest.skipUnless(hasattr(os, "geteuid"), "Production archive links require Linux")
+    def test_staged_cache_links_retain_verified_bytes_without_copying(self):
+        value = lock(); source = self.root / (sp.sha(DEB) + ".deb"); source.write_bytes(DEB)
+        archives = self.root / "archives"; archives.mkdir()
+        with mock.patch.object(sp, "deb_metadata", return_value=["fonts-example", "1:2.3-4ubuntu1", "all"]):
+            architectures = sp.verify_debs(value, self.root)
+        path = Path(sp.stage_archives(value, self.root, archives, architectures)[0])
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(path.resolve(), source)
+        self.assertEqual(sp.sha(path.read_bytes()), value["packages"][0]["sha256"])
+        path.unlink()
+        self.assertEqual(source.read_bytes(), DEB)
+
+    def test_offline_install_rejects_corrupt_archive_before_staging_or_apt(self):
+        (self.root / (sp.sha(DEB) + ".deb")).write_bytes(b"X" * len(DEB))
+        with mock.patch.object(sp.os, "geteuid", return_value=0, create=True), mock.patch.object(sp, "check_platform"), \
+                mock.patch.object(sp, "stage_archives") as stage, mock.patch.object(sp, "run") as command, self.assertRaises(sp.Invalid):
+            sp.install(lock(), self.root, self.root / "marker")
+        stage.assert_not_called(); command.assert_not_called()
 
     def test_system_only_prepare_needs_verified_marker(self):
         (self.root / sp.LOCK).write_bytes(sp.canonical(lock()))
@@ -226,6 +262,8 @@ class Docker:
     def inspect(self, name): return self.containers.get(name)
 
     def invoke(self, args, timeout):
+        if args[0] == "logs":
+            return SimpleNamespace(returncode=0, stdout=b"fixture package output\n", stderr=b"fixture apt diagnostic\n")
         image = self.images.get(args[-1])
         return SimpleNamespace(returncode=0 if image else 1, stdout=json.dumps([image]).encode() if image else b"", stderr=b"" if image else b"No such image")
 
@@ -469,7 +507,30 @@ class SchedulerTests(unittest.TestCase):
         self.manager.reconcile(self.row()); self.exited("build", 65); self.manager.reconcile(self.row())
         self.assertEqual(self.finished[-1], ("failed", 65, "system_packages_build_failed"))
         self.assertFalse(any(c[0] == "commit" for c in self.docker.calls))
-        self.assertIn(b"system_packages_build_failed", (self.root / "jobs" / "j1" / "output" / "stdout.log").read_bytes())
+        raw = (self.root / "jobs" / "j1" / "output" / "stdout.log").read_bytes()
+        self.assertIn(b"system_packages_build_failed", raw)
+        self.assertIn(b"fixture package output", raw)
+        self.assertIn(b"fixture apt diagnostic", raw)
+
+    def test_failed_builder_keeps_bounded_stderr_and_cleanup_survives_log_timeout(self):
+        self.plan(); self.manager.reconcile(self.row()); self.exited("fetch"); self.manager.reconcile(self.row())
+        self.manager.reconcile(self.row()); self.exited("build", 65)
+        result = SimpleNamespace(returncode=0, stdout=b"s" * (5 * sp.LIMIT), stderr=b"e" * (5 * sp.LIMIT) + b"APT failure\n")
+        with mock.patch.object(self.docker, "invoke", return_value=result):
+            self.manager.reconcile(self.row())
+        raw = (self.root / "jobs" / "j1" / "output" / "stdout.log").read_bytes()
+        self.assertLessEqual(len(raw), 8 * sp.LIMIT + 100)
+        self.assertIn(b"s" * 100, raw)
+        self.assertTrue(raw.endswith(b"APT failure\n"))
+        self.assertNotIn("sparkdev-system-build-j1", self.docker.containers)
+
+    def test_log_timeout_does_not_retain_failed_builder(self):
+        self.plan(); self.manager.reconcile(self.row()); self.exited("fetch"); self.manager.reconcile(self.row())
+        self.manager.reconcile(self.row()); self.exited("build", 65)
+        with mock.patch.object(self.docker, "invoke", side_effect=subprocess.TimeoutExpired("docker", 15)):
+            self.manager.reconcile(self.row())
+        self.assertEqual(self.finished[-1], ("failed", 65, "system_packages_build_failed"))
+        self.assertNotIn("sparkdev-system-build-j1", self.docker.containers)
 
     def test_guard_failure_finishes_fetch_instead_of_stalling_admission(self):
         self.plan()

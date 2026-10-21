@@ -205,6 +205,7 @@ def digest_file(path, expected_size):
 
 
 def verify_debs(lock, directory):
+    architectures = {}
     for item in lock["packages"]:
         file = Path(directory) / (item["sha256"] + ".deb")
         if digest_file(file, item["bytes"]) != item["sha256"]:
@@ -212,6 +213,23 @@ def verify_debs(lock, directory):
         name, version, arch = deb_metadata(file)
         if name != item["name"] or version != item["version"] or arch not in (lock["architecture"], "all"):
             raise Invalid("Downloaded package identity differs from lock")
+        architectures[item["name"]] = arch
+    return architectures
+
+
+def stage_archives(lock, directory, archives, architectures):
+    # --no-download expects APT's final cache name even for local .deb inputs.
+    # These private links point only to the already verified, read-only job mount;
+    # do not duplicate up to 16 GiB of archives in the bounded /tmp tmpfs.
+    paths = []
+    for item in lock["packages"]:
+        version = item["version"].replace(":", "%3a")
+        name = f"{item['name']}_{version}_{architectures[item['name']]}.deb"
+        source = Path(directory).absolute() / (item["sha256"] + ".deb")
+        target = archives / name
+        target.symlink_to(source)
+        paths.append(str(target))
+    return paths
 
 
 def download(item, destination, connection=http.client.HTTPSConnection):
@@ -379,7 +397,7 @@ def install(lock, directory, marker=MARKER):
     if not hasattr(os, "geteuid") or os.geteuid() != 0:
         raise Invalid("Image assembly requires container root; normal jobs must remain nonroot")
     check_platform(lock)
-    verify_debs(lock, directory)
+    architectures = verify_debs(lock, directory)
     before = installed()
     with tempfile.TemporaryDirectory(prefix="sparkdev-system-install-") as folder:
         temp = Path(folder)
@@ -387,7 +405,7 @@ def install(lock, directory, marker=MARKER):
         (temp / "sources.list").write_text("")
         env = apt_environment(temp)
         # No repositories, network or downloads; missing closure fails rather than floating.
-        paths = [str(Path(directory) / (item["sha256"] + ".deb")) for item in lock["packages"]]
+        paths = stage_archives(lock, directory, temp / "archives", architectures)
         command = ["apt-get", *apt_options(temp, False), "--no-download", "--no-install-recommends", "--no-remove", "--yes",
                    "-o", "Dpkg::Options::=--force-confold", "install", *paths]
         if paths:
@@ -539,11 +557,16 @@ class SystemPackages:
             # A failed apt/fetch phase must have ordinary `logs JOB` diagnostics.
             # The container uses a bounded local log driver and a fixed program.
             try:
-                raw = self.c.docker.call(["logs", "--tail", "1000", name], timeout=15)
+                result = self.c.docker.invoke(["logs", "--tail", "1000", name], 15)
+                if result.returncode:
+                    raise ValueError("Container diagnostics are unavailable")
+                # Docker sends the container's stderr on its own stderr stream.
+                # Retain both bounded streams before removing a failed builder.
+                raw = result.stdout[-4 * LIMIT:] + b"\n[sparkdev container stderr]\n" + result.stderr[-4 * LIMIT:]
                 output = self.c.root / "jobs" / row["id"] / "output"
                 output.mkdir(mode=0o700, exist_ok=True)
                 self.a.atomic_write(output / "stdout.log", b"sparkdev: " + reason.encode() + b"\n" + raw[-8 * LIMIT:], 0o600)
-            except (self.a.Rejected, OSError, ValueError):
+            except (self.a.Rejected, OSError, ValueError, subprocess.SubprocessError):
                 pass  # Failure to read logs cannot retain a failed root builder.
         self.c.docker.call(["rm", "--force", name])
         self.db.execute("UPDATE system_preparations SET phase='failed' WHERE job=?", (row["id"],))
