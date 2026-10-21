@@ -19,7 +19,7 @@ def plain(path):
 
 def sources(root, controller_only=False):
     files = {name: root / 'remote' / name for name in [
-        'controller.py', 'worker.py', 'prepare.py', 'proxy.py', 'install-runtime.py',
+        'controller.py', 'worker.py', 'prepare.py', 'proxy.py', 'model_cache.py', 'model_server.py', 'install-runtime.py',
         'bootstrap.py', 'sparkdev-controller.service', 'install-cuda.py']}
     files.update({'runtime/' + name: root / 'runtimes' / name for name in [
         'Dockerfile', 'requirements.txt', 'Dockerfile.cuda']})
@@ -48,7 +48,7 @@ def prepare(root, output, controller_only=False):
         total += len(raw)
         payloads[name] = raw
         entries.append({'path': name, 'size': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
-    if len(entries) > 13 or total > MAX_TOTAL:
+    if len(entries) > 15 or total > MAX_TOTAL:
         raise ValueError('Bundle exceeds aggregate limits')
     manifest = {'v': 2, 'build_runtime': True, 'files': entries}
     raw_manifest = (json.dumps(manifest, indent=2) + '\n').encode('utf-8')
