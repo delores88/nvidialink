@@ -147,14 +147,14 @@ pub fn repeat_for(request: &Value) -> Repeat {
     match request["op"].as_str() {
         Some(
             "missing" | "put" | "put_many" | "sync" | "status" | "logs" | "wait" | "doctor"
-            | "cancel" | "heartbeat" | "release" | "lan_routes",
+            | "cancel" | "heartbeat" | "release" | "lan_routes" | "reply",
         ) => Repeat::Idempotent,
         Some("resources")
             if request.get("limits").is_none() && request.get("internet").is_none() =>
         {
             Repeat::Idempotent
         }
-        Some("run" | "prepare" | "claim") if request_id => Repeat::Idempotent,
+        Some("run" | "prepare" | "claim" | "serve" | "call") if request_id => Repeat::Idempotent,
         _ => Repeat::HandshakeOnly,
     }
 }
@@ -4265,6 +4265,8 @@ mod tests {
             "cancel",
             "heartbeat",
             "release",
+            "reply",
+            "lan_routes",
         ] {
             assert_eq!(
                 repeat_for(&json!({"v":1,"op":op})),
@@ -4272,7 +4274,7 @@ mod tests {
                 "{op}"
             );
         }
-        for op in ["run", "prepare", "claim"] {
+        for op in ["run", "prepare", "claim", "serve", "call"] {
             assert_eq!(
                 repeat_for(&json!({"v":1,"op":op,"request_id":"build-001"})),
                 Repeat::Idempotent,
@@ -4322,6 +4324,10 @@ mod tests {
             "heartbeat",
             "release",
             "resources",
+            "serve",
+            "call",
+            "reply",
+            "lan_routes",
         ];
         for op in controller {
             assert_eq!(
@@ -4388,6 +4394,62 @@ mod tests {
         assert_eq!(attempts[1]["host"], "192.0.2.1");
         assert_eq!(tr.host.as_deref(), Some("192.0.2.1"));
         assert_eq!(state::remembered_hosts(&tr.config), ["192.0.2.1"]);
+    }
+    #[test]
+    fn model_operations_repeat_session_drops_only_when_the_request_is_durable() {
+        let _home = state::TestHome::new();
+        for op in ["serve", "call", "reply"] {
+            let mut tr = fixture(&["192.0.2.1"], "both");
+            let plan = plan_candidates(None, &[], &tr.config.hosts, None);
+            let request = json!({"v":1,"op":op,"request_id":"retained-model-request"});
+            let mut retry = Retry::rpc(&request, TIMEOUT);
+            retry.backoff = Duration::ZERO;
+            let mut calls = 0;
+            let out = tr
+                .dial_with(
+                    &plan,
+                    [Open],
+                    "python3 ~/sparkdev/controller.py rpc",
+                    TIMEOUT,
+                    retry,
+                    |_, _| {
+                        calls += 1;
+                        if calls == 1 {
+                            session_drop("192.0.2.1")
+                        } else {
+                            ok(b"retained reply")
+                        }
+                    },
+                    |_| {},
+                )
+                .unwrap();
+            assert_eq!(calls, 2, "{op}");
+            assert_eq!(out, b"retained reply");
+        }
+        for op in ["serve", "call"] {
+            for id in [Value::Null, json!(""), json!(42)] {
+                let mut tr = fixture(&["192.0.2.1"], "both");
+                let plan = plan_candidates(None, &[], &tr.config.hosts, None);
+                let retry = Retry::rpc(&json!({"v":1,"op":op,"request_id":id}), TIMEOUT);
+                let mut calls = 0;
+                let error = tr
+                    .dial_with(
+                        &plan,
+                        [Open],
+                        "python3 ~/sparkdev/controller.py rpc",
+                        TIMEOUT,
+                        retry,
+                        |_, _| {
+                            calls += 1;
+                            session_drop("192.0.2.1")
+                        },
+                        |_| panic!("unkeyed mutation cannot repeat"),
+                    )
+                    .unwrap_err();
+                assert_eq!(calls, 1);
+                assert_eq!(error.message, SESSION_UNSAFE);
+            }
+        }
     }
     #[test]
     fn a_session_drop_of_a_request_unsafe_to_repeat_stops_at_once() {
