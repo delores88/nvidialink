@@ -49,6 +49,7 @@ INLINE_BYTES = 512 * CHUNK  # Snapshots needing at most this many new bytes asse
 MATERIALIZE_WAIT = 10
 MATERIALIZE_POLL = 0.25
 MAX_PENDING = 4
+SCHEDULER_FRESH = 15  # Seconds since its last heartbeat for the scheduler to count as alive.
 MISSING_BATCH = 10000
 PROGRESS_INTERVAL = 1.0
 PENDING_READ = 2 * MAX_REQUEST
@@ -299,7 +300,11 @@ def read_only_mode(entry):
 
 
 def spawn_materializer(root):
-    """Start one detached background materializer; it outlives this RPC and the SSH session."""
+    """Start one detached background materializer; it outlives this RPC and the SSH session.
+
+    A new session is not a new cgroup: the child stays in the unit of whatever process
+    spawned it, so syncs leave spawning to the scheduler while it is alive (see wake()).
+    """
     subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve()), "materialize", "--state", str(root)],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True, close_fds=True, env=dict(TOOL_ENV), cwd=str(root))
@@ -1328,6 +1333,24 @@ class Controller:
             self.spawn()
         return free
 
+    def scheduler_alive(self):
+        last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()
+        try:
+            return bool(last) and time.time() - float(last[0]) < SCHEDULER_FRESH
+        except (TypeError, ValueError):
+            return False
+
+    def wake(self):
+        """Get queued work built without tying the builder to this RPC's service.
+
+        The scheduler's tick, at most about a second away, spawns the materializer inside
+        sparkdev-controller.service, whose KillMode=process keeps it alive. A child of this
+        RPC would land in the cgroup of whatever served it (sparkdev-link.service on the
+        paired route) and die when that unit restarts. Only a scheduler that has stopped
+        beating makes the RPC spawn the materializer itself.
+        """
+        return False if self.scheduler_alive() else self.kick()
+
     def sync(self, request):
         fields(request, ("v", "op", "project", "manifest"))
         project = digest(request["project"])
@@ -1359,7 +1382,7 @@ class Controller:
                 reject("missing_chunks", "Upload missing chunks before committing the snapshot")
         if inline:
             self.materialize_one(manifest_id)
-        self.kick()
+        self.wake()
         deadline = self.started + MATERIALIZE_WAIT
         while True:
             if self.snapshot_ready(manifest_id):
@@ -1817,7 +1840,7 @@ class Controller:
         # Every preparation, whatever its runtime, needs the Python image for its proxy.
         return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(registry),
                 "preparable_runtimes": list(registry) if "python" in registry else [],
-                "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": bool(last and time.time() - float(last[0]) < 15)},
+                "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": self.scheduler_alive()},
                 **policy, "dependency_preparation": "isolated_allowlist_proxy", "network": network,
                 # `limits` above is the resource policy; transfer limits use their own key.
                 "storage": storage, "sync_limits": sync_limits(), "materializing": queue}

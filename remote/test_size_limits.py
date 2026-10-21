@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -363,13 +364,21 @@ class SizeLimitTests(unittest.TestCase):
         self.assertEqual(self.spawned, 0)
         big = large(2)
         self.upload(big)
-        self.sync(entry("big.bin", big))
-        self.assertEqual(self.spawned, 1)
+        # A live scheduler spawns the builder in its own unit; the RPC never forks one.
+        self.assertEqual(self.sync(entry("big.bin", big))["error"]["code"], "materializing")
+        self.assertEqual(self.spawned, 0)
         self.c.tick()
-        self.assertEqual(self.spawned, 2)
+        self.assertEqual(self.spawned, 1)
         self.c.materialize_queue()
         self.c.tick()
+        self.assertEqual(self.spawned, 1)
+        # A scheduler that stopped beating no longer counts: the RPC spawns the builder itself.
+        self.c.db.execute("UPDATE settings SET value=? WHERE key='scheduler_heartbeat'", (str(time.time() - controller.SCHEDULER_FRESH),))
+        other = large(5)
+        self.upload(other)
+        self.assertEqual(self.sync(entry("other.bin", other))["error"]["code"], "materializing")
         self.assertEqual(self.spawned, 2)
+        self.assertFalse(self.rpc("status")["scheduler"]["healthy"])
 
     def test_default_spawn_is_detached_with_a_minimal_environment(self):
         with mock.patch.object(controller.subprocess, "Popen") as popen:

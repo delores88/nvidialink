@@ -120,9 +120,15 @@ twice at once. A sync waits until 10 seconds after its controller process starte
 (reading the resent manifest counts), then answers `materializing` with progress
 ("X of Y MiB"), so connection setup and a 4 MiB manifest upload fit the CLI's fixed
 30-second sync timeout on a slow link; running the same command again
-continues where it left off. The scheduler restarts the materializer whenever work is
-queued and none holds the lock; its unit's `KillMode=process` keeps a running
-materializer alive across scheduler restarts.
+continues where it left off. A sync never forks the materializer while the scheduler
+is alive: the scheduler's next tick, about a second later, starts it whenever work is
+queued and none holds the lock, so it runs inside `sparkdev-controller.service`, whose
+`KillMode=process` keeps it alive across scheduler restarts. A new session is not a
+new cgroup, so a materializer forked by an RPC would belong to whatever served that
+RPC (`sparkdev-link.service` on the paired route) and die when that unit restarts.
+Only when the scheduler's heartbeat is 15 seconds old does a sync start the
+materializer itself; if that serving unit then restarts, the partial file restarts
+from zero when the scheduler resumes the queue.
 
 Assembly applies the same checks as before to every chunk: length, SHA-256 and the
 credential scan with the previous chunk's 512-byte tail, then the whole-file hash. A
