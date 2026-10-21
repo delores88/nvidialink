@@ -1,0 +1,112 @@
+{
+  "version": "0.4.2",
+  "observed_at": "2026-10-21T18:05:48.130983+00:00",
+  "marketplace_release_id": "-cQoMrBHGJFBSxg7bs7lLF9Q",
+  "marketplace_attempt_id": "KCQYcmBoEkznGodEHG5fhItU",
+  "native_decision": {
+    "status": "accepted",
+    "accepted_at": "2026-10-21T18:02:18.017Z",
+    "checks_passed": 5,
+    "checks_failed": 0,
+    "checks_incomplete": 0
+  },
+  "artifact": {
+    "id": "CxBu2rSsgm6W6Rae5BNgmrEj",
+    "appId": "dgxbridge",
+    "version": "0.4.2",
+    "releaseId": 419861349,
+    "assetId": 663298023,
+    "sourceCommit": "442d5873d56d03daac52a697deeb589a487f5009",
+    "size": 12766442,
+    "sha256": "a5440c36627152dc5658d7ad375282456a68bdee2e88cac3e01856c9495ef62d",
+    "manifestSha256": "8159eff469679e39c6ba10e89f723067bf3bd9447182de34de2c959dff1c6b05",
+    "status": "accepted",
+    "revoked": false,
+    "acceptancePolicy": "immutable-release",
+    "acceptedAt": "2026-10-21T18:02:18.017Z",
+    "expiresAt": "2026-10-28T18:02:18.017Z"
+  },
+  "published_manifest_asset_id": 663321520,
+  "published_manifest_raw_sha256": "37f563cd90d7f3b597e8ff4bf478ca2736a4b65894b7765b46cbbac652b5b883",
+  "marketplace_download": {
+    "bytes": 12766442,
+    "sha256": "a5440c36627152dc5658d7ad375282456a68bdee2e88cac3e01856c9495ef62d",
+    "verified_at": "2026-10-21T18:04:54.2547892+00:00",
+    "method": "Signed-in native Marketplace Download for Windows, Verified Download, Save installer as",
+    "installed_again": false
+  },
+  "dependency_findings": {
+    "critical": 0,
+    "high": 0,
+    "medium": 1,
+    "remaining_advisory": "GHSA-wrw7-89jp-8q8g: glib 0.18.5 in source src-tauri/Cargo.lock"
+  },
+  "verification_checks": [
+    {
+      "id": "file.identity",
+      "label": "Installer file identity",
+      "status": "passed"
+    },
+    {
+      "id": "package.identity",
+      "label": "Package and architecture",
+      "status": "passed"
+    },
+    {
+      "id": "publisher.authorization",
+      "label": "Publisher authorization",
+      "status": "passed"
+    },
+    {
+      "id": "release.source-binding",
+      "label": "Source and release identity",
+      "status": "passed"
+    },
+    {
+      "id": "malware.scan",
+      "label": "Malware scan",
+      "status": "passed"
+    },
+    {
+      "id": "artifact.sbom",
+      "label": "Dependency inventory",
+      "status": "passed"
+    },
+    {
+      "id": "source.dependencies",
+      "label": "Dependency vulnerability assessment",
+      "status": "passed"
+    },
+    {
+      "id": "source.secrets",
+      "label": "Secret patterns in supported files",
+      "status": "passed"
+    },
+    {
+      "id": "artifact.os-signature",
+      "label": "Publisher signing",
+      "status": "not-required"
+    },
+    {
+      "id": "runtime.lifecycle",
+      "label": "Installation and application behavior",
+      "status": "not-run"
+    },
+    {
+      "id": "source.static-analysis",
+      "label": "Comprehensive source analysis",
+      "status": "not-run"
+    },
+    {
+      "id": "artifact.provenance",
+      "label": "Reproducible build provenance",
+      "status": "not-run"
+    }
+  ],
+  "installation_receipt": "dgxbridge-042-windows.json",
+  "spark_runtime_receipt": "dgxbridge-042-pillow.json",
+  "scope": "Native publisher decision and exact public catalog identity, plus normal signed-in native Marketplace download and independent saved-file hash. Installation and physical Spark behavior are recorded separately.",
+  "limits": "Static Marketplace admission is not comprehensive application security or lifecycle testing. No fresh app updater download/install cycle, hotspot execution, model inference/TTS, GPU watchdog pressure kill or actual Claude Code invocation was established for this release.",
+  "immutable_prior_releases_preserved": true,
+  "automations_restarted": false
+}
