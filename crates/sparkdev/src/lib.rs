@@ -1,3 +1,4 @@
+pub mod discover;
 pub mod inventory;
 pub mod local;
 pub mod mcp;
@@ -43,6 +44,9 @@ impl From<serde_json::Error> for AppError {
     }
 }
 pub type Result<T> = std::result::Result<T, AppError>;
+/// Setup's refusal for a redirected state folder, shared with Find my Spark's
+/// save, which writes the same configuration.
+pub(crate) const REDIRECTED_STATE: &str = "Windows redirected this process's state folder. Configure SSH in the normally installed DGXBridge app, or set SPARKDEV_HOME to the verified owner state location; no configuration was copied or saved.";
 #[derive(Parser)]
 #[command(
     name = "sparkdev",
@@ -206,10 +210,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             local_build_gate,
         } => {
             if state::diagnostics()["redirected"] == true {
-                return Err(AppError::new(
-                    3,
-                    "Windows redirected this process's state folder. Configure SSH in the normally installed DGXBridge app, or set SPARKDEV_HOME to the verified owner state location; no configuration was copied or saved.",
-                ));
+                return Err(AppError::new(3, REDIRECTED_STATE));
             }
             let previous = state::config().ok();
             let config = state::Config {
