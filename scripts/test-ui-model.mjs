@@ -139,9 +139,23 @@ test('Find my Spark is offered only when an owner search can run, and suggested 
   }
   assert.equal(findSparkControl({config,connecting:true}).disabled,true);
   assert.equal(findSparkControl({config,busy:true}).disabled,true);
-  const unreachable={ok:true,devices:[{id:'spark',reachable:false,error:{message:LAN_UNREACHABLE},transport:{route:'none',authenticated:false}}]};
-  assert.equal(findSparkControl({config,connection:connectionView(unreachable,config)}).suggested,true);
-  assert.equal(findSparkControl({config:{...config,connection_mode:'remote-only'},connection:connectionView(unreachable,config)}).suggested,false);
+  const lanTry=(status,host='192.0.2.20')=>({route:'lan_ssh',attempted:true,status,reason:'fixture',target_index:0,source:'configured',host});
+  const spark=(fields,attempts)=>({ok:true,devices:[{id:'spark',reachable:false,...fields,transport:{selected:'unselected',route:'none',authenticated:false,reason:'No authenticated request yet',attempted_routes:attempts,...fields.transport}}]});
+  const lanOnly={...config,connection_mode:'lan-only'};
+  const lanOnlyDown=spark({error:{code:4,message:LAN_UNREACHABLE,kind:'transport_unavailable'}},[lanTry('host_unreachable'),{route:'paired_iroh',attempted:false,status:'disabled',reason:'Remote transport is disabled in local configuration',target_index:null}]);
+  assert.equal(findSparkControl({config:lanOnly,connection:connectionView(lanOnlyDown,lanOnly)}).suggested,true);
+  for(const [name,observation,suggested] of [
+    ['no sidecar',spark({error:{code:3,message:'sparkdev-link sidecar is not installed beside sparkdev',kind:'remote_adapter_unconfigured'}},[lanTry('host_unreachable'),lanTry('host_unreachable','192.0.2.21'),{route:'paired_iroh',attempted:false,status:'unconfigured',reason:'Remote adapter is not installed',target_index:null}]),true],
+    ['paired failure',spark({error:{code:4,message:'Authenticated remote sidecar unavailable, busy or not paired; retry the same request ID',kind:'transport_unavailable'}},[lanTry('host_unreachable'),{route:'paired_iroh',attempted:true,status:'remote_unavailable',reason:'Remote adapter reported failure; physical network path is unknown',target_index:null}]),true],
+    ['paired success',spark({reachable:true,scheduler:{healthy:true},transport:{selected:'iroh',route:'paired_iroh',authenticated:true,reason:'LAN unreachable; paired endpoint transport explicitly enabled'}},[lanTry('host_unreachable'),{route:'paired_iroh',attempted:true,status:'authenticated',reason:'Paired endpoint authenticated',target_index:null}]),true],
+    ['LAN answered',lan,false],
+    ['LAN dropped',spark({error:{code:3,message:'sparkdev-link sidecar is not installed beside sparkdev'}},[{...lanTry('connection_dropped'),phase:'handshake',try:1,retry:'exhausted'},{route:'paired_iroh',attempted:false,status:'unconfigured',target_index:null}]),false],
+    ['LAN rejected',spark({error:{code:7,message:'SSH authentication or pinned host-key verification failed; fallback refused'}},[lanTry('authentication_failed')]),false],
+  ]){
+    assert.equal(findSparkControl({config,connection:connectionView(observation,config)}).suggested,suggested,name);
+    assert.doesNotMatch(JSON.stringify(observation),new RegExp(LAN_UNREACHABLE),name);
+  }
+  assert.equal(findSparkControl({config:{...config,connection_mode:'remote-only'},connection:connectionView(lanOnlyDown,config)}).suggested,false);
   assert.match(FIND_INTRO,/Nothing is saved until you choose an address/);
 });
 test('Find my Spark results show only sanitized found addresses, plain notes and honest empty copy',()=>{
@@ -166,8 +180,51 @@ test('Find my Spark results show only sanitized found addresses, plain notes and
   assert.match(empty.summary,/did not find your Spark/);
   for(const cause of [/guest network or client isolation/,/VPN/,/\/24/,/Hyper-V virtual switch/])assert.match(empty.emptyReason,cause);
   assert.match(discoveryView({found:[],reason:'no_physical_adapter'}).emptyReason,/no wired or Wi-Fi connection/);
+  assert.match(discoveryView({found:[],reason:'no_physical_adapter',unverified:1}).emptyReason,/no wired or Wi-Fi connection/);
   assert.match(discoveryView({found:[],reason:'no_routed_targets'}).emptyReason,/Pause the VPN/);
   assert.deepEqual(discoveryView(null).rows,[]);
+});
+test('an empty search says when addresses answered but could not be confirmed',()=>{
+  const config={hosts:['192.0.2.20']};
+  const base={ok:true,saved:false,open:1,unchecked:0,found:[],login_rejected:0,local_key_error:0,configured:[{index:0,host:'192.0.2.20',status:'closed'}],other_ssh_hosts:0,unknown_key_hosts:0,unverified:0,not_checked:0,pin_hint:false};
+  const empty=discoveryView({...base,open:0},config);
+  assert.match(empty.emptyReason,/did not answer/);assert.deepEqual(empty.notes,[]);
+  // The configured address answered on the SSH port, but its pinned check reset or timed out.
+  const broke=discoveryView({...base,unverified:1,configured:[{index:0,host:'192.0.2.20',status:'unverified'}]},config);
+  assert.match(broke.summary,/did not find your Spark/);assert.equal(broke.unverified,1);
+  assert.doesNotMatch(broke.emptyReason,/did not answer|client isolation|VPN/);assert.match(broke.emptyReason,/answered on the SSH port/);
+  assert.match(broke.notes.join(' '),/1 address answered on the SSH port, but the pinned check broke off or did not finish in time\. Search again\./);
+  // A refused login no longer sits under copy that says nothing answered.
+  const refused=discoveryView({...base,login_rejected:1},config);
+  assert.match(refused.emptyReason,/none could be confirmed/);assert.match(refused.notes.join(' '),/1 address refused the SSH login/);
+  assert.match(discoveryView({...base,local_key_error:2},config).emptyReason,/none could be confirmed/);
+  // An unknown key at an address that is not saved, with no pin hint, is still shown.
+  const unknown=discoveryView({...base,unknown_key_hosts:2},config);
+  assert.equal(unknown.unknownKey,2);assert.match(unknown.emptyReason,/none could be confirmed/);
+  assert.match(unknown.notes.join(' '),/2 SSH devices answered with a host key that does not match the one this laptop has saved for your Spark\. If you reinstalled the Spark, update its known_hosts entry yourself/);
+  // With the pin hint the unknown key is said once, not twice.
+  const hinted=discoveryView({...base,unknown_key_hosts:1,pin_hint:true,configured:[{index:0,host:'192.0.2.20',status:'unknown_key'}]},config);
+  assert.equal(hinted.notes.filter(note=>/known_hosts/.test(note)).length,1);
+  // Beside a found Spark, other unknown keys are only other devices.
+  const beside=discoveryView({...base,found:[{host:'192.0.2.40',adapter:'Ethernet',medium:'wired',configured_index:null}],unknown_key_hosts:1},config);
+  assert.match(beside.notes.join(' '),/1 SSH device answered with a host key that does not match the one this laptop has saved for your Spark and was left alone\./);assert.doesNotMatch(beside.notes.join(' '),/reinstalled/);
+});
+test('a conflicting saved address names a removal the page can actually do',()=>{
+  const config={hosts:['192.0.2.41','192.0.2.20']};
+  const conflict=[{index:0,host:'192.0.2.41',status:'verified'},{index:1,host:'192.0.2.20',status:'other_host'}];
+  // The only verified address is already first: it has no Use this address button.
+  const first=discoveryView({found:[{host:'192.0.2.41',adapter:'Ethernet',medium:'wired',configured_index:0}],configured:conflict,other_ssh_hosts:1},config);
+  assert.equal(first.rows.length,1);assert.equal(first.rows[0].alreadyFirst,true);
+  const firstNotes=first.notes.join(' ');
+  assert.match(firstNotes,/192\.0\.2\.20 now answers as a different SSH device\. Remove it under Saved SSH connection, Other LAN addresses\./);assert.doesNotMatch(firstNotes,/address below/);
+  // A refused login proved the pin, but nothing was verified: no rows at all.
+  const none=discoveryView({found:[],configured:[{index:0,host:'192.0.2.41',status:'login_rejected'},{index:1,host:'192.0.2.20',status:'other_host'}],login_rejected:1,other_ssh_hosts:1},config);
+  assert.equal(none.rows.length,0);assert.match(none.notes.join(' '),/Remove it under Saved SSH connection, Other LAN addresses\./);assert.doesNotMatch(none.notes.join(' '),/address below/);
+  // Two conflicts and a row with a button keep the original wording.
+  const usable=discoveryView({found:[{host:'192.0.2.40',adapter:'Wi-Fi',medium:'wifi',configured_index:null}],configured:[{index:0,host:'192.0.2.41',status:'other_host'},{index:1,host:'192.0.2.20',status:'other_host'}],other_ssh_hosts:2},config);
+  assert.match(usable.notes.join(' '),/Using an address below checks again and removes them from your list\./);
+  const removeBoth=discoveryView({found:[],configured:[{index:0,host:'192.0.2.41',status:'other_host'},{index:1,host:'192.0.2.20',status:'other_host'}],login_rejected:1,other_ssh_hosts:2},config);
+  assert.match(removeBoth.notes.join(' '),/Remove them under Saved SSH connection/);
 });
 test('a saved address names what was removed and the Other LAN addresses field keeps every address',()=>{
   assert.equal(discoverySaved({host:'192.0.2.40',removed:[]},'192.0.2.40'),'Saved 192.0.2.40 as the first LAN address DGXBridge tries.');

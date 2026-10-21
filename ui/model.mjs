@@ -20,7 +20,16 @@ export function connectionView(observation, config = null, connecting = false) {
   const connected = enabled && reachable && authenticated && !mismatch && ['lan_ssh','paired_iroh'].includes(transport.route);
   const state = !enabled ? 'disconnected' : connecting ? 'connecting' : connected ? 'connected' : mismatch || spark?.error || observation?.error ? 'error' : 'unavailable';
   const route = connected && transport.route === 'lan_ssh' ? 'Pinned SSH · LAN' : connected && transport.route === 'paired_iroh' ? 'Paired connection · path unknown' : state === 'disconnected' ? 'Connection paused' : state === 'connecting' ? 'Checking your saved connection' : 'No authenticated connection';
-  return {state, connected, enabled, route, mode, reason: mismatch?'The last observed route differs from your saved mode. A fresh connection check is needed.':spark?.error?.message || observation?.error?.message || transport.reason || '', schedulerHealthy:spark?.scheduler?.healthy === true || observation?.scheduler?.healthy === true};
+  const message = spark?.error?.message || observation?.error?.message || transport.reason || '';
+  return {state, connected, enabled, route, mode, reason: mismatch?'The last observed route differs from your saved mode. A fresh connection check is needed.':message, lanUnreachable: lanUnreachable(transport, message), schedulerHealthy:spark?.scheduler?.healthy === true || observation?.scheduler?.healthy === true};
+}
+// Whether no LAN address answered in the last observation. In Both mode the CLI
+// goes on to the paired route and reports that route's result, so the LAN
+// attempts decide: every dial and precheck found nothing answering, and none
+// authenticated, dropped or failed otherwise.
+function lanUnreachable(transport, message) {
+  const lan = (Array.isArray(transport?.attempted_routes) ? transport.attempted_routes : []).filter(attempt => attempt?.route === 'lan_ssh' && attempt.attempted === true);
+  return lan.length ? lan.every(attempt => attempt.status === 'host_unreachable') : String(message).includes(LAN_UNREACHABLE);
 }
 export function jobsFrom(observation) {
   const local = observation?.devices?.find(device => device.id === 'laptop')?.jobs;
@@ -210,11 +219,12 @@ export function findSparkControl({config = null, connection = null, connecting =
     : config.connection_enabled === false ? 'Connect first. Find my Spark does not run while new requests are paused.'
     : configMode(config) === 'remote-only' ? 'Find my Spark uses SSH on your own network. Choose LAN only or Both to use it.'
     : '';
-  return {disabled: busy || connecting || !!reason, reason, suggested: !reason && String(connection?.reason || '').includes(LAN_UNREACHABLE)};
+  return {disabled: busy || connecting || !!reason, reason, suggested: !reason && (connection?.lanUnreachable === true || String(connection?.reason || '').includes(LAN_UNREACHABLE))};
 }
 const EMPTY = Object.freeze({
   no_physical_adapter: "This laptop has no wired or Wi-Fi connection to a private home or office network that Find my Spark can search. A network reached only through a Hyper-V virtual switch or a VPN does not count. Connect this laptop to your Spark's network and search again.",
   no_routed_targets: "A VPN or another network route is carrying this laptop's local traffic, so Find my Spark checked no address. Pause the VPN and search again.",
+  unconfirmed: "Addresses answered on the SSH port, but none could be confirmed as your Spark with its pinned host key and SSH login. The notes below say what happened.",
   other: "Your Spark did not answer on this laptop's network. Common causes: a Wi-Fi network that keeps devices apart (a guest network or client isolation), a VPN carrying local traffic, a Spark outside this laptop's own address range (its /24 network), or a laptop connected through a Hyper-V virtual switch.",
 });
 export function discoveryView(result, config = null) {
@@ -236,19 +246,26 @@ export function discoveryView(result, config = null) {
   const conflicts = (Array.isArray(result?.configured) ? result.configured : []).filter(entry => entry?.status === 'other_host').map(entry => cleanReference(entry.host)).filter(Boolean);
   const loginRejected = positive(result?.login_rejected), localKeyError = positive(result?.local_key_error), pinHint = result?.pin_hint === true;
   const others = positive(result?.other_ssh_hosts), unchecked = positive(result?.unchecked), notChecked = positive(result?.not_checked);
-  const emptyReason = rows.length ? '' : EMPTY[result?.reason] || EMPTY.other;
+  const unverified = positive(result?.unverified), unknownKey = positive(result?.unknown_key_hosts);
+  // Answers that reached the SSH port but were not confirmed: the Spark may be among them.
+  const answered = loginRejected + localKeyError + unknownKey + unverified + others;
+  const emptyReason = rows.length ? '' : EMPTY[result?.reason] || (answered ? EMPTY.unconfirmed : EMPTY.other);
+  // Only an address that is not already first has a Use this address button.
+  const usable = rows.some(row => !row.alreadyFirst);
   const summary = rows.length === 1 ? `Found your Spark at ${rows[0].host}.`
     : rows.length > 1 ? `Found your Spark at ${rows.length} addresses. DGXBridge cannot yet tell which one is the Spark's wired connection, so choose the address you want tried first.`
     : 'Find my Spark did not find your Spark.';
   const notes = [];
-  if (conflicts.length) notes.push(`Saved ${conflicts.length === 1 ? 'address' : 'addresses'} ${conflicts.join(', ')} now ${conflicts.length === 1 ? 'answers' : 'answer'} as a different SSH device. Using an address below checks again and removes ${conflicts.length === 1 ? 'it' : 'them'} from your list.`);
+  if (conflicts.length) notes.push(`Saved ${conflicts.length === 1 ? 'address' : 'addresses'} ${conflicts.join(', ')} now ${conflicts.length === 1 ? 'answers' : 'answer'} as a different SSH device. ${usable ? `Using an address below checks again and removes ${conflicts.length === 1 ? 'it' : 'them'} from your list.` : `Remove ${conflicts.length === 1 ? 'it' : 'them'} under Saved SSH connection, Other LAN addresses.`}`);
   if (loginRejected) notes.push(`${counted(loginRejected, 'address', 'addresses')} refused the SSH login. Check the SSH username and key file under Saved SSH connection.`);
   if (localKeyError) notes.push(`This laptop's SSH key or SSH settings could not be used for ${counted(localKeyError, 'address', 'addresses')}, often because of file permissions. Fix that, then search again.`);
   if (pinHint) notes.push("The answers did not match the host key this laptop has saved for your Spark, or none is saved. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. DGXBridge never changes it for you.");
+  else if (unknownKey) notes.push(`${counted(unknownKey, 'SSH device', 'SSH devices')} answered with a host key that does not match the one this laptop has saved for your Spark${rows.length ? ` and ${unknownKey === 1 ? 'was' : 'were'} left alone.` : '. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. DGXBridge never changes it for you.'}`);
+  if (unverified) notes.push(`${counted(unverified, 'address', 'addresses')} answered on the SSH port, but the pinned check broke off or did not finish in time. Search again.`);
   if (others) notes.push(`${counted(others, 'other SSH device', 'other SSH devices')} answered and ${others === 1 ? 'was' : 'were'} left alone.`);
   if (unchecked) notes.push(`${counted(unchecked, 'address', 'addresses')} could not be checked in time, so this result may be incomplete.`);
   if (notChecked) notes.push(`${counted(notChecked, 'more address', 'more addresses')} answered but ${notChecked === 1 ? 'was' : 'were'} not checked; Find my Spark checks up to 32.`);
-  return {rows, loginRejected, localKeyError, conflicts, pinHint, emptyReason, summary, notes};
+  return {rows, loginRejected, localKeyError, unverified, unknownKey, conflicts, pinHint, emptyReason, summary, notes};
 }
 export function discoverySaved(result, host = '') {
   const saved = cleanReference(result?.host) || cleanReference(host);
