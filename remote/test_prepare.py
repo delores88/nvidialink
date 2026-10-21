@@ -156,14 +156,23 @@ class PrecheckTests(unittest.TestCase):
 
     def test_cuda_stack_names_are_reserved(self):
         raw = "\n".join(n + "==1.0" + HASH for n in ("torch", "Torch_Vision", "nvidia-cublas-cu12", "TorchAudio",
-                                                  "pytorch_triton", "nvidia-cudnn-cu13", "nvidia-ml-py")).encode()
+                                                  "pytorch_triton", "nvidia-cudnn-cu13", "nvidia-ml-py", "nvidia-cublas",
+                                                  "nvidia_cuda_runtime", "Nvidia.NvJitLink", "nvidia-cufft", "cuda-toolkit",
+                                                  "NVIDIA_ML_PY", "cuda-python")).encode()
         self.assertEqual(prepare.precheck(raw, set()), [
             "sparkdev: refused: torch is reserved for the CUDA image",
             "sparkdev: refused: torch-vision is reserved for the CUDA image",
             "sparkdev: refused: nvidia-cublas-cu12 is reserved for the CUDA image",
             "sparkdev: refused: torchaudio is reserved for the CUDA image",
             "sparkdev: refused: pytorch-triton is reserved for the CUDA image",
-            "sparkdev: refused: nvidia-cudnn-cu13 is reserved for the CUDA image"])
+            "sparkdev: refused: nvidia-cudnn-cu13 is reserved for the CUDA image",
+            # CUDA 13 wheels have no -cuNN suffix.
+            "sparkdev: refused: nvidia-cublas is reserved for the CUDA image",
+            "sparkdev: refused: nvidia-cuda-runtime is reserved for the CUDA image",
+            "sparkdev: refused: nvidia-nvjitlink is reserved for the CUDA image",
+            "sparkdev: refused: nvidia-cufft is reserved for the CUDA image",
+            "sparkdev: refused: cuda-toolkit is reserved for the CUDA image"])
+        self.assertFalse(prepare.reserved("nvidia-ml-py") or prepare.reserved("cuda-python"))
 
     def test_options_urls_and_image_names_are_refused(self):
         lines = ["-r other.txt", "--index-url https://mirror.invalid/simple", "--extra-index-url https://x.invalid",
@@ -295,6 +304,15 @@ class OverlapTests(Sandbox):
     def test_reserved_staged_distribution_is_refused(self):
         dist(self.staging, "pytorch-triton", "3.0.0")
         self.assertEqual(self.overlap(), ["sparkdev: refused: pytorch-triton is reserved for the CUDA image"])
+
+    def test_staged_nvidia_namespace_is_refused_whatever_ships_it(self):
+        dist(self.staging, "nvidia-cublas", "13.0.0.19")
+        dist(self.staging, "repackaged-blas", "1.0")
+        write(self.staging, "nvidia/cu13/lib/libcublas.so.13")
+        dist(self.staging, "nvidia-ml-py", "13.580.82")
+        write(self.staging, "pynvml.py")
+        self.assertEqual(self.overlap(), ["sparkdev: refused: nvidia-cublas is reserved for the CUDA image",
+                                          "sparkdev: refused: nvidia is reserved for the CUDA image"])
 
 
 @unittest.skipUnless(HAVE_PIP, "pip's vendored packaging is not importable")

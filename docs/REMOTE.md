@@ -255,12 +255,14 @@ closure that excludes every package the CUDA image provides. The proxy remains t
 Python image, so `status` lists `preparable_runtimes` only when the Python runtime is
 installed. The preparation gets no GPU (`NVIDIA_VISIBLE_DEVICES=void`, no `--gpus`),
 refuses to continue if any `/dev/nvidia*` device is visible, and is exempt from the
-MemAvailable watchdog, which still stops CUDA runs. Before any download it refuses
-option lines, direct URLs, `torch`, `torchvision`, `torchaudio`, `triton`,
-`pytorch-triton`, `nvidia-*-cuNN` wheels and any distribution already in the image;
-torch and the CUDA stack come only from the pinned image. After the wheel-only install,
-metadata-only checks refuse duplicate image distributions or modules, standard-library
-shadows, `sitecustomize`/`usercustomize`, and requirements that are missing from both
+MemAvailable watchdog, which still stops CUDA runs. Before any download it applies the
+lock-line rules above and refuses `torch`, `torchvision`, `torchaudio`, `triton`,
+`pytorch-triton`, `cuda-toolkit`, every `nvidia-*` distribution except `nvidia-ml-py`
+(CUDA 13 wheels such as `nvidia-cublas` carry no `-cuNN` suffix) and any distribution
+already in the image; torch and the CUDA stack come only from the pinned image. After
+the wheel-only install, metadata-only checks refuse duplicate image distributions or
+modules, a staged top-level `nvidia` namespace, standard-library shadows,
+`sitecustomize`/`usercustomize`, and requirements that are missing from both
 the image and the lock or conflict with the lock. A conflict with the image's own
 version only warns. No staged package code runs while the network is attached.
 

@@ -24,8 +24,10 @@ TMP = Path("/pip-cache/.tmp")
 DEV = Path("/dev")
 LOCKS = {"python": "requirements.lock", "cuda": "requirements-cuda.lock"}
 # torch and the CUDA stack come only from the pinned image, never from PyPI.
-DENY = frozenset({"torch", "torchvision", "torchaudio", "triton", "pytorch-triton"})
-DENY_RE = re.compile(r"^nvidia-[a-z0-9-]+-cu\d+$")
+DENY = frozenset({"torch", "torchvision", "torchaudio", "triton", "pytorch-triton", "cuda-toolkit"})
+# Every nvidia-* distribution is reserved: CUDA 13 wheels (nvidia-cublas, nvidia-cuda-runtime)
+# carry no -cuNN suffix. Only these non-CUDA-library bindings are allowed.
+NVIDIA_ALLOW = frozenset({"nvidia-ml-py"})
 STARTUP = frozenset({"sitecustomize", "usercustomize"})
 SUFFIXES = tuple(importlib.machinery.all_suffixes())
 NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
@@ -59,8 +61,10 @@ def normalize(name):
 
 def reserved(name):
     # Separator-insensitive, so torch-vision or Torch_Vision cannot slip past torchvision.
-    name = normalize(name)
-    return name.replace("-", "") in {d.replace("-", "") for d in DENY} or bool(DENY_RE.fullmatch(name))
+    squashed = normalize(name).replace("-", "")
+    if squashed in {d.replace("-", "") for d in DENY}:
+        return True
+    return squashed.startswith("nvidia") and squashed not in {a.replace("-", "") for a in NVIDIA_ALLOW}
 
 
 def linked(path):
@@ -267,6 +271,10 @@ def shadows(directory, prefix, search):
         fullname = module if prefix is None else prefix + "." + module
         if prefix is None and module in STARTUP:
             hits.append("sparkdev: refused: " + module + " would run at every CUDA interpreter startup")
+            continue
+        if prefix is None and module == "nvidia":
+            # PyPI CUDA libraries live in the nvidia namespace, whatever distribution ships them.
+            hits.append("sparkdev: refused: nvidia is reserved for the CUDA image")
             continue
         if prefix is None and (module in sys.stdlib_module_names or module in sys.builtin_module_names):
             hits.append("sparkdev: refused: " + module + " shadows the Python standard library")
