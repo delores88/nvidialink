@@ -246,9 +246,9 @@ export function discoveryView(result, config = null) {
   const conflicts = (Array.isArray(result?.configured) ? result.configured : []).filter(entry => entry?.status === 'other_host').map(entry => cleanReference(entry.host)).filter(Boolean);
   const loginRejected = positive(result?.login_rejected), localKeyError = positive(result?.local_key_error), pinHint = result?.pin_hint === true;
   const others = positive(result?.other_ssh_hosts), unchecked = positive(result?.unchecked), notChecked = positive(result?.not_checked);
-  const unverified = positive(result?.unverified), unknownKey = positive(result?.unknown_key_hosts);
+  const unverified = positive(result?.unverified), unknownKey = positive(result?.unknown_key_hosts), notDirect = positive(result?.not_direct);
   // Answers that reached the SSH port but were not confirmed: the Spark may be among them.
-  const answered = loginRejected + localKeyError + unknownKey + unverified + others;
+  const answered = loginRejected + localKeyError + unknownKey + unverified + notDirect + others;
   const emptyReason = rows.length ? '' : EMPTY[result?.reason] || (answered ? EMPTY.unconfirmed : EMPTY.other);
   // Only an address that is not already first has a Use this address button.
   const usable = rows.some(row => !row.alreadyFirst);
@@ -262,10 +262,11 @@ export function discoveryView(result, config = null) {
   if (pinHint) notes.push("The answers did not match the host key this laptop has saved for your Spark, or none is saved. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. DGXBridge never changes it for you.");
   else if (unknownKey) notes.push(`${counted(unknownKey, 'SSH device', 'SSH devices')} answered with a host key that does not match the one this laptop has saved for your Spark${rows.length ? ` and ${unknownKey === 1 ? 'was' : 'were'} left alone.` : '. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. DGXBridge never changes it for you.'}`);
   if (unverified) notes.push(`${counted(unverified, 'address', 'addresses')} answered on the SSH port, but the pinned check broke off or did not finish in time. Search again.`);
+  if (notDirect) notes.push(`${counted(notDirect, 'answering address', 'answering addresses')} would be reached through a proxy, jump host or bind option in your SSH settings, so Find my Spark did not check ${notDirect === 1 ? 'it' : 'them'}.`);
   if (others) notes.push(`${counted(others, 'other SSH device', 'other SSH devices')} answered and ${others === 1 ? 'was' : 'were'} left alone.`);
   if (unchecked) notes.push(`${counted(unchecked, 'address', 'addresses')} could not be checked in time, so this result may be incomplete.`);
   if (notChecked) notes.push(`${counted(notChecked, 'more address', 'more addresses')} answered but ${notChecked === 1 ? 'was' : 'were'} not checked; Find my Spark checks up to 32.`);
-  return {rows, loginRejected, localKeyError, unverified, unknownKey, conflicts, pinHint, emptyReason, summary, notes};
+  return {rows, loginRejected, localKeyError, unverified, unknownKey, notDirect, conflicts, pinHint, emptyReason, summary, notes};
 }
 export function discoverySaved(result, host = '') {
   const saved = cleanReference(result?.host) || cleanReference(host);

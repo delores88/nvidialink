@@ -56,6 +56,7 @@ const REMOTE_ONLY: &str =
     "Remote-only mode does not permit SSH; choose LAN-only or Both for initial setup";
 const NOT_DIRECT: &str =
     "Find my Spark needs a direct SSH route; this alias uses a proxy or bind option";
+const ADDRESS_NOT_DIRECT: &str = "Your SSH settings send this address through a proxy, jump host or bind option, so Find my Spark did not check it; nothing was saved";
 const LOOKUP_FAILED: &str =
     "Find my Spark could not read this alias's SSH settings with ssh -G; nothing was checked";
 const ADAPTERS_FAILED: &str = "Windows did not list this laptop's network adapters";
@@ -307,6 +308,11 @@ pub enum Class {
     UnknownKey,
     /// Reset, broken key exchange, timeout or no answer.
     Unverified,
+    /// Not checked: under this laptop's SSH settings the pinned check of this
+    /// address would not connect directly (a `Match host` block can add a
+    /// ProxyJump, ProxyCommand, BindAddress or BindInterface for it alone),
+    /// or its `ssh -G` failed.
+    NotDirect,
 }
 impl Class {
     pub fn status(self) -> &'static str {
@@ -317,6 +323,7 @@ impl Class {
             Self::LoginRejected => "login_rejected",
             Self::UnknownKey => "unknown_key",
             Self::Unverified => "unverified",
+            Self::NotDirect => "not_direct",
         }
     }
 }
@@ -375,6 +382,8 @@ pub fn classify(result: &Result<Finished>) -> Check {
     }
 }
 
+/// One local command about one address, run from the checking threads.
+pub type PerAddress = dyn Fn(&Config, Ipv4Addr) -> Result<Finished> + Send + Sync;
 /// Everything search and save touch outside this module, so tests never
 /// enumerate adapters, scan, run ssh or read the real diagnostics.
 pub struct Deps {
@@ -383,8 +392,11 @@ pub struct Deps {
     /// The alias's local `ssh -G` output; opens no connection.
     pub ssh_g: Box<dyn Fn(&Config) -> Result<Finished>>,
     pub sweep: Box<dyn Fn(&[Ipv4Addr], u16) -> Vec<Reach>>,
+    /// The local `ssh -G` output of one address's pinned check (see
+    /// `route_command`); opens no connection.
+    pub route: Box<PerAddress>,
     /// One pinned check of one address.
-    pub verify: Box<dyn Fn(&Config, Ipv4Addr) -> Result<Finished> + Send + Sync>,
+    pub verify: Box<PerAddress>,
     pub private: fn(Ipv4Addr) -> bool,
     pub diagnostics: Box<dyn Fn() -> Value>,
 }
@@ -393,6 +405,23 @@ pub struct Deps {
 /// write, running `true`.
 pub fn verify_command(config: &Config, ip: Ipv4Addr) -> Command {
     transport::Transport::from_config(config.clone()).command(Some(&ip.to_string()), "true")
+}
+/// `ssh -G` followed by every argument of the pinned check of `ip`: what
+/// OpenSSH would use for that very dial once its configuration, `Match host`
+/// blocks included, is evaluated against the address. The alias's own
+/// `ssh -G` cannot show this, because it never sees the address. Like it,
+/// this only evaluates local configuration and opens no connection.
+pub fn route_command(config: &Config, ip: Ipv4Addr) -> Command {
+    let check = verify_command(config, ip);
+    let mut command = Command::new(check.get_program());
+    command.arg("-G").args(check.get_args());
+    command
+}
+/// Whether OpenSSH would dial `ip` directly from this computer for its
+/// pinned check. A failed lookup is not direct.
+fn routes_directly(config: &Config, ip: Ipv4Addr, route: &PerAddress) -> bool {
+    matches!(route(config, ip), Ok((Some(0), out, _))
+        if transport::parse_ssh_g(&String::from_utf8_lossy(&out), &config.ssh_alias).direct)
 }
 fn sweep_hosts(targets: &[Ipv4Addr], port: u16) -> Vec<Reach> {
     let hosts: Vec<String> = targets.iter().map(ToString::to_string).collect();
@@ -408,6 +437,9 @@ impl Deps {
                 transport::process(transport::alias_lookup_command(config), &[], LOOKUP_TIMEOUT)
             }),
             sweep: Box::new(sweep_hosts),
+            route: Box::new(|config, ip| {
+                transport::process(route_command(config, ip), &[], LOOKUP_TIMEOUT)
+            }),
             verify: Box::new(|config, ip| {
                 transport::process(verify_command(config, ip), &[], VERIFY_TIMEOUT)
             }),
@@ -452,12 +484,16 @@ fn alias_lookup(config: &Config, deps: &Deps) -> Result<Lookup> {
         raw_hostname: raw_hostname(&text),
     })
 }
-/// Run pinned checks of `hosts`, at most PARALLEL at once. None marks an
-/// address no worker reached because its thread could not be started.
+/// Run pinned checks of `hosts`, at most PARALLEL at once. An address whose
+/// check OpenSSH would not dial directly is never checked: it is `NotDirect`,
+/// so no proxy, jump host or other interface ever sees it or a login. None
+/// marks an address no worker reached because its thread could not be
+/// started.
 fn verify_all(
     config: &Config,
     hosts: &[Ipv4Addr],
-    verify: &(dyn Fn(&Config, Ipv4Addr) -> Result<Finished> + Send + Sync),
+    route: &PerAddress,
+    verify: &PerAddress,
 ) -> Vec<Option<Check>> {
     let next = AtomicUsize::new(0);
     let results = Mutex::new(vec![None; hosts.len()]);
@@ -467,7 +503,14 @@ fn verify_all(
                 loop {
                     let index = next.fetch_add(1, Ordering::SeqCst);
                     let Some(ip) = hosts.get(index) else { break };
-                    let check = classify(&verify(config, *ip));
+                    let check = if routes_directly(config, *ip, route) {
+                        classify(&verify(config, *ip))
+                    } else {
+                        Check {
+                            class: Class::NotDirect,
+                            pin_proven: false,
+                        }
+                    };
                     results.lock().unwrap_or_else(|p| p.into_inner())[index] = Some(check);
                 }
             });
@@ -516,7 +559,7 @@ pub fn search(config: &Config, deps: &Deps) -> Result<Value> {
     let networks = sweep_networks(&adapters, deps.private);
     let mut out = json!({"ok":true,"saved":false,"searched":[],"open":0,"unchecked":0,"found":[],
         "login_rejected":0,"local_key_error":0,"configured":[],"other_ssh_hosts":0,
-        "unknown_key_hosts":0,"unverified":0,"not_checked":0,"pin_hint":false});
+        "unknown_key_hosts":0,"unverified":0,"not_checked":0,"not_direct":0,"pin_hint":false});
     let mut seen: BTreeMap<Ipv4Addr, Seen> = BTreeMap::new();
     let report = |out: &mut Value, seen: &BTreeMap<Ipv4Addr, Seen>, started: Instant| {
         out["configured"] = config
@@ -599,7 +642,7 @@ pub fn search(config: &Config, deps: &Deps) -> Result<Value> {
     for ip in skipped {
         seen.insert(*ip, Seen::NotChecked);
     }
-    let checks = verify_all(config, chosen, &*deps.verify);
+    let checks = verify_all(config, chosen, &*deps.route, &*deps.verify);
     let pin_proven = checks.iter().flatten().any(|c| c.pin_proven);
     let mut found = Vec::new();
     for (ip, check) in chosen.iter().zip(&checks) {
@@ -632,6 +675,7 @@ pub fn search(config: &Config, deps: &Deps) -> Result<Value> {
     out["unknown_key_hosts"] = json!(count(Seen::Checked(Class::UnknownKey)));
     out["unverified"] = json!(count(Seen::Checked(Class::Unverified)));
     out["not_checked"] = json!(count(Seen::NotChecked));
+    out["not_direct"] = json!(count(Seen::Checked(Class::NotDirect)));
     out["unchecked"] = json!(count(Seen::Unchecked));
     report(&mut out, &seen, started);
     let unknown = Seen::Checked(Class::UnknownKey);
@@ -711,9 +755,10 @@ pub fn save(config: &Config, host: &str, deps: &Deps) -> Result<Value> {
             wave.push(candidate);
         }
     }
-    let checks = verify_all(config, &wave, &*deps.verify);
+    let checks = verify_all(config, &wave, &*deps.route, &*deps.verify);
     match checks[0].map(|c| c.class) {
         Some(Class::Verified) => {}
+        Some(Class::NotDirect) => return Err(AppError::new(4, ADDRESS_NOT_DIRECT)),
         Some(
             Class::OtherHost | Class::UnknownKey | Class::LoginRejected | Class::LocalKeyError,
         ) => {
@@ -1116,6 +1161,7 @@ pub(crate) mod tests {
     struct Calls {
         ssh_g: usize,
         sweeps: Vec<Vec<Ipv4Addr>>,
+        routes: Vec<Ipv4Addr>,
         verified: Vec<Ipv4Addr>,
     }
     struct Fake {
@@ -1125,6 +1171,9 @@ pub(crate) mod tests {
         ssh_g: Option<String>,
         open: Vec<Ipv4Addr>,
         unchecked: Vec<Ipv4Addr>,
+        /// Addresses a `Match host` block in the fake SSH settings sends
+        /// through a jump host.
+        routed: Vec<Ipv4Addr>,
         replies: HashMap<Ipv4Addr, (i32, &'static str)>,
         redirected: Value,
     }
@@ -1141,6 +1190,7 @@ pub(crate) mod tests {
                 ssh_g: Some("user owner\nhostname 192.0.2.99\nport 22\nproxyjump none\n".into()),
                 open: Vec::new(),
                 unchecked: Vec::new(),
+                routed: Vec::new(),
                 replies: HashMap::new(),
                 redirected: json!(false),
             }
@@ -1153,8 +1203,9 @@ pub(crate) mod tests {
         fn build(self) -> (Deps, Arc<Mutex<Calls>>) {
             let calls = Arc::new(Mutex::new(Calls::default()));
             let routes = self.routes;
-            let (ssh_g_calls, sweep_calls, verify_calls) =
-                (calls.clone(), calls.clone(), calls.clone());
+            let (ssh_g_calls, sweep_calls, route_calls, verify_calls) =
+                (calls.clone(), calls.clone(), calls.clone(), calls.clone());
+            let routed = self.routed;
             let ssh_g = self.ssh_g;
             let (open, unchecked, replies) = (self.open, self.unchecked, self.replies);
             let redirected = self.redirected;
@@ -1186,6 +1237,19 @@ pub(crate) mod tests {
                             }
                         })
                         .collect()
+                }),
+                route: Box::new(move |checked, target| {
+                    route_calls.lock().unwrap().routes.push(target);
+                    let via = if routed.contains(&target) {
+                        "bastion.example"
+                    } else {
+                        "none"
+                    };
+                    let text = format!(
+                        "user owner\nhostname {target}\nport {}\nproxyjump {via}\n",
+                        checked.port
+                    );
+                    Ok((Some(0), text.into_bytes(), Vec::new()))
                 }),
                 verify: Box::new(move |_, target| {
                     verify_calls.lock().unwrap().verified.push(target);
@@ -1489,6 +1553,95 @@ pub(crate) mod tests {
             &args[args.len() - 4..],
             ["-p", "22", "fixture-spark", "true"]
         );
+    }
+    #[test]
+    fn the_route_check_is_ssh_g_over_the_pinned_check_itself() {
+        let mut fixture = config(&["192.0.2.40"]);
+        fixture.identity_file = Some(std::env::temp_dir().join("fixture-key"));
+        let check = verify_command(&fixture, ip("192.0.2.41"));
+        let route = route_command(&fixture, ip("192.0.2.41"));
+        assert_eq!(route.get_program(), "ssh");
+        let args: Vec<_> = route.get_args().collect();
+        assert_eq!(args[0], "-G");
+        assert_eq!(&args[1..], &check.get_args().collect::<Vec<_>>()[..]);
+        // Direct only when the effective options show no route of their own.
+        let lookup = |text: &'static str| -> Box<PerAddress> {
+            Box::new(move |_, _| Ok((Some(0), text.as_bytes().to_vec(), Vec::new())))
+        };
+        for (text, direct) in [
+            ("hostname 192.0.2.41\nproxyjump none\nproxycommand none\n", true),
+            ("hostname 192.0.2.41\nproxyjump bastion.example\n", false),
+            ("hostname 192.0.2.41\nproxycommand nc %h %p\n", false),
+            ("hostname 192.0.2.41\nbindaddress 198.51.100.7\n", false),
+            ("hostname 192.0.2.41\nbindinterface vpn0\n", false),
+            ("", false),
+        ] {
+            assert_eq!(
+                routes_directly(&fixture, ip("192.0.2.41"), &*lookup(text)),
+                direct,
+                "{text}"
+            );
+        }
+        let failed: Box<PerAddress> = Box::new(|_, _| Ok((Some(255), Vec::new(), Vec::new())));
+        assert!(!routes_directly(&fixture, ip("192.0.2.41"), &*failed));
+        let timed_out: Box<PerAddress> = Box::new(|_, _| Err(AppError::new(4, "Transport timeout")));
+        assert!(!routes_directly(&fixture, ip("192.0.2.41"), &*timed_out));
+    }
+    #[test]
+    fn an_address_routed_elsewhere_by_ssh_settings_is_never_checked_or_saved() {
+        let home = state::TestHome::new();
+        // The alias is direct, but a `Match host` block sends 192.0.2.40
+        // through a jump host: its pinned check is never run, so the jump
+        // host sees neither the address nor a login.
+        let mut fake = Fake::new()
+            .reply("192.0.2.40", 0, "")
+            .reply("192.0.2.41", 0, "");
+        fake.routed = vec![ip("192.0.2.40")];
+        let (deps, calls) = fake.build();
+        let out = search(&config(&["192.0.2.40"]), &deps).unwrap();
+        {
+            let calls = calls.lock().unwrap();
+            let mut routes = calls.routes.clone();
+            routes.sort();
+            assert_eq!(routes, ["192.0.2.40", "192.0.2.41"].map(ip));
+            assert_eq!(calls.verified, [ip("192.0.2.41")]);
+        }
+        assert_eq!(out["not_direct"], 1);
+        assert_eq!(out["configured"][0]["status"], "not_direct");
+        assert_eq!(out["found"].as_array().unwrap().len(), 1);
+        assert_eq!(out["found"][0]["host"], "192.0.2.41");
+        // A route lookup that fails checks nothing at all.
+        let (mut deps, calls) = Fake::new().reply("192.0.2.41", 0, "").build();
+        deps.route = Box::new(|_, _| Err(AppError::new(4, "Transport timeout")));
+        let out = search(&config(&[]), &deps).unwrap();
+        assert!(calls.lock().unwrap().verified.is_empty());
+        assert_eq!((out["not_direct"].clone(), out["found"].clone()), (json!(1), json!([])));
+        // A save refuses such an address and writes nothing.
+        let fixture = config(&["192.0.2.20"]);
+        write_config(&home, &fixture);
+        let before = raw_config(&home);
+        let mut fake = Fake::new().reply("192.0.2.40", 0, "");
+        fake.routed = vec![ip("192.0.2.40")];
+        let (deps, calls) = fake.build();
+        let error = save(&fixture, "192.0.2.40", &deps).unwrap_err();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (4, ADDRESS_NOT_DIRECT)
+        );
+        assert!(!calls.lock().unwrap().verified.contains(&ip("192.0.2.40")));
+        assert_eq!(raw_config(&home), before);
+        assert!(!home.path.join("lan-route.json").exists());
+        // A configured address routed elsewhere is not checked, so it can
+        // never be proven another device and removed.
+        let mut fake = Fake::new()
+            .reply("192.0.2.40", 0, "")
+            .reply("192.0.2.20", 255, CHANGED_KEY);
+        fake.routed = vec![ip("192.0.2.20")];
+        let (deps, calls) = fake.build();
+        let out = save(&fixture, "192.0.2.40", &deps).unwrap();
+        assert_eq!(out["removed"], json!([]));
+        assert_eq!(saved(&home).hosts, ["192.0.2.40", "192.0.2.20"]);
+        assert_eq!(calls.lock().unwrap().verified, [ip("192.0.2.40")]);
     }
     #[test]
     fn the_system_sweep_checks_loopback_on_the_configured_port() {

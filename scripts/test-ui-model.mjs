@@ -194,6 +194,10 @@ test('an empty search says when addresses answered but could not be confirmed',(
   assert.match(broke.summary,/did not find your Spark/);assert.equal(broke.unverified,1);
   assert.doesNotMatch(broke.emptyReason,/did not answer|client isolation|VPN/);assert.match(broke.emptyReason,/answered on the SSH port/);
   assert.match(broke.notes.join(' '),/1 address answered on the SSH port, but the pinned check broke off or did not finish in time\. Search again\./);
+  // An address the owner's SSH settings route elsewhere was never checked.
+  const routed=discoveryView({...base,not_direct:2,configured:[{index:0,host:'192.0.2.20',status:'not_direct'}]},config);
+  assert.equal(routed.notDirect,2);assert.match(routed.emptyReason,/none could be confirmed/);
+  assert.match(routed.notes.join(' '),/2 answering addresses would be reached through a proxy, jump host or bind option in your SSH settings, so Find my Spark did not check them\./);
   // A refused login no longer sits under copy that says nothing answered.
   const refused=discoveryView({...base,login_rejected:1},config);
   assert.match(refused.emptyReason,/none could be confirmed/);assert.match(refused.notes.join(' '),/1 address refused the SSH login/);
