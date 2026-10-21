@@ -10,7 +10,7 @@ use std::{
     process::{Command, Stdio},
     sync::mpsc,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub struct Transport {
@@ -115,15 +115,174 @@ fn refused_error() -> AppError {
         "SSH authentication or pinned host-key verification failed; fallback refused",
     )
 }
+/// Whether a request may be sent again after its connection dropped where
+/// the command may already have run. See `repeat_for`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Repeat {
+    /// Only a drop proven to be before authentication, when nothing ran, is
+    /// repeated.
+    HandshakeOnly,
+    /// The Spark controller treats a repeat of this request as the same
+    /// request, so a drop at any phase may be repeated.
+    Idempotent,
+}
+/// Controller requests a repeat cannot duplicate: reads, content-addressed
+/// uploads and syncs, lease updates keyed by their lease, cancellation, and
+/// submissions and claims keyed by a request ID. Anything else, including an
+/// unknown operation, a resource policy write and every raw command, is
+/// `HandshakeOnly`.
+pub fn repeat_for(request: &Value) -> Repeat {
+    let request_id = request["request_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty());
+    match request["op"].as_str() {
+        Some(
+            "missing" | "put" | "put_many" | "sync" | "status" | "logs" | "wait" | "doctor"
+            | "cancel" | "heartbeat" | "release",
+        ) => Repeat::Idempotent,
+        Some("resources") if request.get("limits").is_none() => Repeat::Idempotent,
+        Some("run" | "prepare" | "claim") if request_id => Repeat::Idempotent,
+        _ => Repeat::HandshakeOnly,
+    }
+}
+/// The time a dial is left for its own work on top of any server-side wait:
+/// a repeat, or another candidate's dial after a drop, needs at least this.
+pub const MIN_RETRY_WINDOW: Duration = Duration::from_secs(10);
+/// The one repeat of a dropped dial that a request may spend.
+#[derive(Clone, Debug)]
+pub struct Retry {
+    repeat: Repeat,
+    /// Taken before the plan and the precheck. After a drop no dial runs
+    /// past it.
+    deadline: Instant,
+    /// Time a dial needs: after a drop, no dial starts with less left.
+    min_left: Duration,
+    backoff: Duration,
+    spent: bool,
+}
+/// One second plus up to 499 ms of jitter, so requests that lost the same
+/// link at once do not redial in lockstep.
+fn backoff() -> Duration {
+    let jitter = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|now| now.subsec_millis() % 500)
+        .unwrap_or(0);
+    Duration::from_secs(1) + Duration::from_millis(jitter.into())
+}
+impl Retry {
+    /// For a controller request sent with `timeout` per dial: its deadline
+    /// is one dial's timeout from now, and a dial needs the server-side wait
+    /// the request asks for plus MIN_RETRY_WINDOW.
+    pub fn rpc(request: &Value, timeout: Duration) -> Self {
+        let wait = Duration::from_secs(request["timeout"].as_u64().unwrap_or(0).min(60));
+        Self {
+            repeat: repeat_for(request),
+            deadline: Instant::now() + timeout,
+            min_left: wait + MIN_RETRY_WINDOW,
+            backoff: backoff(),
+            spent: false,
+        }
+    }
+    /// For a raw command, which is never known to be safe to repeat.
+    pub fn raw(timeout: Duration) -> Self {
+        Self {
+            repeat: Repeat::HandshakeOnly,
+            deadline: Instant::now() + timeout,
+            min_left: MIN_RETRY_WINDOW,
+            backoff: backoff(),
+            spent: false,
+        }
+    }
+    /// No repeat at all, and no deadline that could cut a dial short.
+    #[cfg(test)]
+    fn none() -> Self {
+        Self {
+            repeat: Repeat::HandshakeOnly,
+            deadline: Instant::now() + Duration::from_secs(24 * 60 * 60),
+            min_left: Duration::ZERO,
+            backoff: Duration::ZERO,
+            spent: true,
+        }
+    }
+    fn left(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+    fn decide(&self, phase: Phase) -> Decision {
+        if self.spent {
+            Decision::Exhausted
+        } else if phase == Phase::Session && self.repeat == Repeat::HandshakeOnly {
+            Decision::NotSafeToRepeat
+        } else if self.left() < self.backoff + self.min_left {
+            Decision::InsufficientTime
+        } else {
+            Decision::Scheduled
+        }
+    }
+}
+/// What became of a dropped dial's repeat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Decision {
+    Scheduled,
+    Exhausted,
+    NotSafeToRepeat,
+    InsufficientTime,
+}
+impl Decision {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Scheduled => "scheduled",
+            Self::Exhausted => "exhausted",
+            Self::NotSafeToRepeat => "not_safe_to_repeat",
+            Self::InsufficientTime => "insufficient_time",
+        }
+    }
+}
 /// What one exchange's passes over the candidates have learned so far.
-#[derive(Default)]
 struct Dials {
+    retry: Retry,
+    /// Each dial's process timeout, before any drop.
+    timeout: Duration,
+    /// A connection dropped in this exchange: every later dial is bounded
+    /// by the deadline.
+    dropped: bool,
     /// A configured host rejected the pin or login: no fallback.
     refused: bool,
-    /// A connection dropped in the handshake: nothing ran remotely.
+    /// A candidate's last dial dropped in the handshake: nothing ran remotely.
     handshake_dropped: bool,
 }
 impl Dials {
+    fn new(retry: Retry, timeout: Duration) -> Self {
+        Self {
+            retry,
+            timeout,
+            dropped: false,
+            refused: false,
+            handshake_dropped: false,
+        }
+    }
+    /// The process timeout of the next dial.
+    fn window(&self) -> Duration {
+        if self.dropped {
+            self.timeout.min(self.retry.left())
+        } else {
+            self.timeout
+        }
+    }
+    /// After a drop, another candidate is not dialed without the time a
+    /// dial needs.
+    fn out_of_time(&self) -> bool {
+        self.dropped && self.retry.left() < self.retry.min_left
+    }
+    /// The result when a drop that may have run the command ends the request.
+    fn session_dropped(&self) -> AppError {
+        AppError::new(
+            4,
+            match self.retry.repeat {
+                Repeat::Idempotent => SESSION_REPEATABLE,
+                Repeat::HandshakeOnly => SESSION_UNSAFE,
+            },
+        )
+    }
     /// The result when no candidate served the request.
     fn unavailable(&self) -> AppError {
         if self.refused {
@@ -135,7 +294,7 @@ impl Dials {
         }
     }
 }
-/// What one dial means for the request.
+// What one dial means for the request.
 enum Outcome {
     /// Authenticated; the remote command's stdout.
     Done(Vec<u8>),
@@ -795,7 +954,30 @@ impl Transport {
         }
         Ok(value)
     }
+    /// Run `remote` over pinned LAN SSH with `input` on its stdin. A raw
+    /// command is never known to be safe to repeat, so only a drop proven
+    /// to be before authentication is dialed again.
     pub fn ssh_raw(&mut self, remote: &str, input: &[u8], timeout: Duration) -> Result<Vec<u8>> {
+        self.exchange(
+            remote,
+            timeout,
+            Retry::raw(timeout),
+            |command, window| run_process(command, input, window),
+            thread::sleep,
+        )
+    }
+    /// One LAN request: plan, precheck and dial the candidates. Each dial
+    /// runs through `run` with its process timeout; `pause` waits out the
+    /// backoff before the one repeat `retry` may allow. `retry` carries the
+    /// request deadline, taken before planning and the precheck.
+    fn exchange(
+        &mut self,
+        remote: &str,
+        timeout: Duration,
+        retry: Retry,
+        run: impl FnMut(Command, Duration) -> Result<Ran>,
+        pause: impl FnMut(Duration),
+    ) -> Result<Vec<u8>> {
         self.authenticated = false;
         self.check_enabled()?;
         if !self.config.allows_lan() {
@@ -815,9 +997,7 @@ impl Transport {
         let hosts = self.precheck_targets(&plan);
         let port = self.config.port;
         with_precheck(&hosts, port, PRECHECK_CONNECT, PRECHECK_DEADLINE, |reach| {
-            self.dial(&plan, reach, remote, |command| {
-                run_process(command, input, timeout)
-            })
+            self.dial_with(&plan, reach, remote, timeout, retry, run, pause)
         })
     }
     /// The candidate plan for the next LAN request. `alias_lookup` reads the
@@ -859,7 +1039,8 @@ impl Transport {
     }
     /// Dial prechecked candidates in planned order through the pinned
     /// `command()`; `reach` is pulled lazily, one per candidate. See `attempt`
-    /// for what each failure means.
+    /// for what each failure means, and for the one repeat of a dropped dial
+    /// that `retry` allows per request.
     ///
     /// A configured host the precheck held back (`Closed` or `Unresolved`)
     /// keeps its place ahead of later candidates for every failure that can
@@ -869,18 +1050,31 @@ impl Transport {
     /// precheck false negative (a first SYN or ARP over 1.5s, a flaky
     /// resolver) never lets a later host's refusal or broken handshake end a
     /// request the earlier host could have served. A failure after
-    /// authentication, or a timeout, still stops at once, since the command
-    /// may have run.
-    fn dial(
+    /// authentication, a drop that may have run the command, or a timeout
+    /// still stops at once.
+    ///
+    /// Each dial's process timeout is `timeout`. After any drop in this
+    /// exchange it is also bounded by the request deadline, and no further
+    /// candidate is dialed once less than the time a dial needs is left.
+    #[allow(clippy::too_many_arguments)]
+    fn dial_with(
         &mut self,
         plan: &[Candidate],
         reach: impl IntoIterator<Item = Reach>,
         remote: &str,
-        mut run: impl FnMut(Command) -> Result<Ran>,
+        timeout: Duration,
+        retry: Retry,
+        mut run: impl FnMut(Command, Duration) -> Result<Ran>,
+        mut pause: impl FnMut(Duration),
     ) -> Result<Vec<u8>> {
-        let mut dials = Dials::default();
+        let mut dials = Dials::new(retry, timeout);
         let mut held_back = Vec::new();
-        for (candidate, reach) in plan.iter().zip(reach) {
+        let mut reach = reach.into_iter();
+        for candidate in plan {
+            if dials.out_of_time() {
+                break;
+            }
+            let Some(reach) = reach.next() else { break };
             let skipped = match reach {
                 Reach::Closed => Some(CLOSED_REASON),
                 Reach::Unresolved => Some(UNRESOLVED_REASON),
@@ -897,21 +1091,24 @@ impl Transport {
                 candidate,
                 CONNECT_TIMEOUT_SECS,
                 remote,
-                &mut run,
                 &mut dials,
+                &mut run,
+                &mut pause,
             ) {
                 Outcome::Done(out) => return Ok(out),
                 Outcome::Next => {}
                 Outcome::Stop(error) => return Err(error),
                 Outcome::Ends(error) => {
-                    return match self.redial(&held_back, remote, &mut run, &mut dials)? {
+                    return match self
+                        .redial(&held_back, remote, &mut dials, &mut run, &mut pause)?
+                    {
                         Some(out) => Ok(out),
                         None => Err(error),
                     };
                 }
             }
         }
-        if let Some(out) = self.redial(&held_back, remote, &mut run, &mut dials)? {
+        if let Some(out) = self.redial(&held_back, remote, &mut dials, &mut run, &mut pause)? {
             return Ok(out);
         }
         Err(dials.unavailable())
@@ -924,16 +1121,21 @@ impl Transport {
         &mut self,
         held_back: &[&Candidate],
         remote: &str,
-        run: &mut impl FnMut(Command) -> Result<Ran>,
         dials: &mut Dials,
+        run: &mut impl FnMut(Command, Duration) -> Result<Ran>,
+        pause: &mut impl FnMut(Duration),
     ) -> Result<Option<Vec<u8>>> {
         for candidate in held_back {
+            if dials.out_of_time() {
+                break;
+            }
             match self.attempt(
                 candidate,
                 HELD_BACK_CONNECT_TIMEOUT_SECS,
                 remote,
-                &mut *run,
                 dials,
+                &mut *run,
+                &mut *pause,
             ) {
                 Outcome::Done(out) => return Ok(Some(out)),
                 Outcome::Next => {}
@@ -942,26 +1144,51 @@ impl Transport {
         }
         Ok(None)
     }
-    /// Dial one candidate.
+    /// A LAN receipt for one dial; a repeat says which try it was.
+    fn record_try(
+        &mut self,
+        candidate: &Candidate,
+        attempt: u32,
+        status: &str,
+        reason: &str,
+    ) -> &mut Value {
+        let record = self.record_candidate(candidate, status, reason);
+        if attempt > 1 {
+            record["try"] = json!(attempt);
+        }
+        record
+    }
+    /// Dial one candidate, repeating a dropped dial once if `dials.retry`
+    /// allows it.
     ///
     /// Whether anything ran remotely decides what may follow (see
     /// `classify`). A rejection, unreachability or an incompatible server
     /// before authentication ran nothing; so did a drop OpenSSH tagged with
     /// the identification exchange, which moves on and leaves every address
     /// remembered, since a reset is no evidence that an address is stale.
-    /// Any other drop may have run the command: it ends the request at this
-    /// candidate, with no fallback, and the address and the sticky host are
-    /// kept. Any other failure after authentication, including a remote
-    /// command's own exit status, stops the request at once with 4 for every
-    /// source; so does a timeout, except as noted below, and a local process
-    /// error is returned as-is.
+    /// Any other drop may have run the command. Any other failure after
+    /// authentication, including a remote command's own exit status, stops
+    /// the request at once with 4 for every source; so does a timeout, except
+    /// as noted below, and a local process error is returned as-is.
+    ///
+    /// A dropped dial is repeated once per request, at this candidate, with
+    /// the identical pinned command, after the backoff: a handshake drop for
+    /// any request, and a drop that may have run the command only for an
+    /// `Idempotent` request, in both cases only when the backoff plus the time
+    /// a dial needs is left before the deadline. A rejection, timeout or
+    /// process error is never repeated. Once any try here dropped where the
+    /// command may have run, the request ends at this candidate whatever the
+    /// last try showed: 7 for a rejection before authentication, otherwise 4
+    /// saying whether the request is safe to repeat. It never moves to
+    /// another candidate or the fallback, and keeps the address remembered
+    /// and the sticky host unchanged.
     ///
     /// Before authentication, reachability failures always move on. A
     /// configured host, the alias left to OpenSSH, or a sticky configured
     /// host keeps the semantics it had before rediscovery: an authentication
     /// or host-key rejection ends the request with 7 (no fallback), an
     /// incompatible server or other failure with 4, after the held-back hosts
-    /// ahead of it (see `dial`).
+    /// ahead of it (see `dial_with`).
     ///
     /// A remembered address is only a learned hint. When it rejects the pin
     /// or login, or answers with an incompatible SSH server, it is forgotten
@@ -979,73 +1206,124 @@ impl Transport {
         candidate: &Candidate,
         connect_timeout: u64,
         remote: &str,
-        run: &mut impl FnMut(Command) -> Result<Ran>,
         dials: &mut Dials,
+        run: &mut impl FnMut(Command, Duration) -> Result<Ran>,
+        pause: &mut impl FnMut(Duration),
     ) -> Outcome {
         let host = candidate.host.as_deref();
         let configured = self.dialed_before_rediscovery(host);
         let remembered = candidate.source == Source::Remembered;
-        let (code, out, err) = match run(self.dial_command(host, remote, connect_timeout)) {
-            Ok(Ran::Exited(finished)) => finished,
-            Ok(Ran::TimedOut(stderr)) => {
-                let never_authenticated = stderr
-                    .is_some_and(|e| !authenticated(&String::from_utf8_lossy(&e).to_lowercase()));
-                if never_authenticated && !configured {
-                    self.record_candidate(candidate, "host_unreachable", UNLISTED_TIMEOUT_REASON);
-                    return Outcome::Next;
+        // A try here dropped where the command may have run.
+        let mut session = false;
+        let mut attempt = 0;
+        let (failure, before) = loop {
+            attempt += 1;
+            let window = dials.window();
+            let (code, out, err) =
+                match run(self.dial_command(host, remote, connect_timeout), window) {
+                    Ok(Ran::Exited(finished)) => finished,
+                    Ok(Ran::TimedOut(stderr)) => {
+                        let never_authenticated = stderr.is_some_and(|e| {
+                            !authenticated(&String::from_utf8_lossy(&e).to_lowercase())
+                        });
+                        if never_authenticated && !configured && !session {
+                            self.record_try(
+                                candidate,
+                                attempt,
+                                "host_unreachable",
+                                UNLISTED_TIMEOUT_REASON,
+                            );
+                            return Outcome::Next;
+                        }
+                        self.record_try(candidate, attempt, "transport_timeout", TRANSPORT_TIMEOUT);
+                        return Outcome::Stop(AppError::new(4, TRANSPORT_TIMEOUT));
+                    }
+                    Err(e) => {
+                        self.record_try(candidate, attempt, "process_error", &e.message);
+                        return Outcome::Stop(e);
+                    }
+                };
+            if code == Some(0) {
+                self.selected = "ssh".into();
+                self.reason = "LAN SSH authenticated with the configured known-host pin".into();
+                self.host = candidate.host.clone();
+                self.authenticated = true;
+                self.record_try(
+                    candidate,
+                    attempt,
+                    "authenticated",
+                    "Strict SSH host pin and key authentication succeeded",
+                );
+                if let Some(host) = host {
+                    if self.remembered_head.as_deref() != Some(host) {
+                        // Best effort: a failed write never fails the request.
+                        let _ = state::remember_host(&self.config, host);
+                        self.remembered_head = Some(host.into());
+                    }
                 }
-                self.record_candidate(candidate, "transport_timeout", TRANSPORT_TIMEOUT);
-                return Outcome::Stop(AppError::new(4, TRANSPORT_TIMEOUT));
+                return Outcome::Done(out);
             }
-            Err(e) => {
-                self.record_candidate(candidate, "process_error", &e.message);
-                return Outcome::Stop(e);
-            }
-        };
-        if code == Some(0) {
-            self.selected = "ssh".into();
-            self.reason = "LAN SSH authenticated with the configured known-host pin".into();
-            self.host = candidate.host.clone();
-            self.authenticated = true;
-            self.record_candidate(
-                candidate,
-                "authenticated",
-                "Strict SSH host pin and key authentication succeeded",
-            );
-            if let Some(host) = host {
-                if self.remembered_head.as_deref() != Some(host) {
-                    // Best effort: a failed write never fails the request.
-                    let _ = state::remember_host(&self.config, host);
-                    self.remembered_head = Some(host.into());
-                }
-            }
-            return Outcome::Done(out);
-        }
-        let message = String::from_utf8_lossy(&err).to_lowercase();
-        let failure = classify(code, &out, &message);
-        if let Failure::Dropped(phase) = failure {
+            let message = String::from_utf8_lossy(&err).to_lowercase();
+            let failure = classify(code, &out, &message);
+            let before = before_auth(code, &out, &message);
+            let Failure::Dropped(phase) = failure else {
+                break (failure, before);
+            };
+            dials.dropped = true;
+            session |= phase == Phase::Session;
+            let decision = dials.retry.decide(phase);
             let reason = match phase {
                 Phase::Handshake => HANDSHAKE_DROPPED_REASON,
                 Phase::Session => SESSION_DROPPED_REASON,
             };
-            let record = self.record_candidate(candidate, failure.status(), reason);
+            let record = self.record_try(candidate, attempt, failure.status(), reason);
             record["phase"] = json!(phase.name());
-            record["try"] = json!(1);
-            if phase == Phase::Session {
-                return Outcome::Stop(AppError::new(4, SESSION_UNSAFE));
+            record["try"] = json!(attempt);
+            record["retry"] = json!(decision.name());
+            if decision != Decision::Scheduled {
+                break (failure, before);
             }
+            dials.retry.spent = true;
+            pause(dials.retry.backoff);
+        };
+        let rejected = failure == Failure::Rejected;
+        if session {
+            // The last try's own receipt, unless it was the drop itself.
+            if !matches!(failure, Failure::Dropped(_)) {
+                let (status, reason) = match (failure, before) {
+                    (_, false) => ("ssh_command_failed", POST_AUTH_FAILED_REASON),
+                    (Failure::Rejected, true) => (
+                        failure.status(),
+                        "SSH authentication or host pin rejected; no fallback",
+                    ),
+                    (Failure::Unreachable, true) => (failure.status(), UNREACHABLE_REASON),
+                    (_, true) => (failure.status(), PRE_AUTH_FAILED_REASON),
+                };
+                self.record_try(candidate, attempt, status, reason);
+            }
+            return Outcome::Stop(if rejected && before {
+                refused_error()
+            } else {
+                dials.session_dropped()
+            });
+        }
+        if failure == Failure::Dropped(Phase::Handshake) {
             dials.handshake_dropped = true;
             return Outcome::Next;
         }
-        if !before_auth(code, &out, &message) {
-            self.record_candidate(candidate, "ssh_command_failed", POST_AUTH_FAILED_REASON);
+        if !before {
+            self.record_try(
+                candidate,
+                attempt,
+                "ssh_command_failed",
+                POST_AUTH_FAILED_REASON,
+            );
             return Outcome::Stop(AppError::new(4, COMMAND_FAILED));
         }
         if failure == Failure::Unreachable {
-            self.record_candidate(candidate, failure.status(), UNREACHABLE_REASON);
+            self.record_try(candidate, attempt, failure.status(), UNREACHABLE_REASON);
             return Outcome::Next;
         }
-        let rejected = failure == Failure::Rejected;
         // Evidence that something other than the pinned Spark now holds a
         // remembered address; a drop or another failure is not.
         let stale = remembered && (rejected || failure == Failure::Mismatch);
@@ -1057,7 +1335,7 @@ impl Transport {
                 Failure::Mismatch if remembered => REMEMBERED_MISMATCH_REASON,
                 _ => UNLISTED_HANDSHAKE_REASON,
             };
-            self.record_candidate(candidate, failure.status(), reason);
+            self.record_try(candidate, attempt, failure.status(), reason);
             if let (true, Some(host)) = (stale, host) {
                 self.forget_remembered(host);
             }
@@ -1065,14 +1343,15 @@ impl Transport {
             return Outcome::Next;
         }
         if rejected {
-            self.record_candidate(
+            self.record_try(
                 candidate,
+                attempt,
                 failure.status(),
                 "SSH authentication or host pin rejected; no fallback",
             );
             return Outcome::Ends(refused_error());
         }
-        self.record_candidate(candidate, failure.status(), PRE_AUTH_FAILED_REASON);
+        self.record_try(candidate, attempt, failure.status(), PRE_AUTH_FAILED_REASON);
         Outcome::Ends(AppError::new(4, COMMAND_FAILED))
     }
     fn forget_remembered(&mut self, host: &str) {
@@ -1087,8 +1366,17 @@ impl Transport {
         self.check_enabled()?;
         let input = serde_json::to_vec(&request)?;
         let timeout = Duration::from_secs(request["timeout"].as_u64().unwrap_or(0).min(60) + 30);
+        // The deadline starts now, before the plan and the precheck, and the
+        // request bytes are the same on every dial.
+        let retry = Retry::rpc(&request, timeout);
         if self.config.allows_lan() && (self.selected != "iroh" || !self.config.allows_remote()) {
-            match self.ssh_raw("python3 ~/sparkdev/controller.py rpc", &input, timeout) {
+            match self.exchange(
+                "python3 ~/sparkdev/controller.py rpc",
+                timeout,
+                retry,
+                |command, window| run_process(command, &input, window),
+                thread::sleep,
+            ) {
                 Ok(bytes) => return Self::decode(&bytes),
                 Err(e) => {
                     if lan_unavailable(&e) && !self.config.allows_remote() {
@@ -3123,5 +3411,592 @@ mod tests {
             [Unchecked]
         );
         assert!(started.elapsed() < Duration::from_millis(50) + 2 * PRECHECK_GRACE);
+    }
+    impl Transport {
+        /// The dial step with no repeat budget: a drop is never repeated,
+        /// and the pause is never reached.
+        fn dial(
+            &mut self,
+            plan: &[Candidate],
+            reach: impl IntoIterator<Item = Reach>,
+            remote: &str,
+            mut run: impl FnMut(Command) -> Result<Ran>,
+        ) -> Result<Vec<u8>> {
+            self.dial_with(
+                plan,
+                reach,
+                remote,
+                Duration::from_secs(30),
+                Retry::none(),
+                |command, _| run(command),
+                |_| panic!("a request without a repeat budget never pauses"),
+            )
+        }
+    }
+    /// A repeat budget that is not spent, with `left` before its deadline
+    /// and a fixed backoff.
+    fn budget(repeat: Repeat, left: Duration, min_left: Duration) -> Retry {
+        Retry {
+            repeat,
+            deadline: Instant::now() + left,
+            min_left,
+            backoff: Duration::from_millis(1234),
+            spent: false,
+        }
+    }
+    const TIMEOUT: Duration = Duration::from_secs(600);
+    const LEFT: Duration = Duration::from_secs(100);
+    fn session_drop(host: &str) -> Result<Ran> {
+        after_auth(
+            host,
+            &format!("Connection to {host} closed by remote host.\r\n"),
+        )
+    }
+    fn kex_drop() -> Result<Ran> {
+        ssh_error("kex_exchange_identification: read: Connection reset\r\n")
+    }
+    /// Every dial a test runner saw: host, full arguments and window.
+    type Dialed = Vec<(Option<String>, Vec<String>, Duration)>;
+    fn scripted<'a>(
+        dialed: &'a mut Dialed,
+        mut tries: impl Iterator<Item = Result<Ran>> + 'a,
+    ) -> impl FnMut(Command, Duration) -> Result<Ran> + 'a {
+        move |command, window| {
+            assert_pinned(&command, "test-pin");
+            dialed.push((hostname_of(&command), arguments(&command), window));
+            tries.next().expect("no further dial is expected")
+        }
+    }
+    #[test]
+    fn repeat_for_refuses_anything_not_known_to_be_safe() {
+        for op in [
+            "missing",
+            "put",
+            "put_many",
+            "sync",
+            "status",
+            "logs",
+            "wait",
+            "doctor",
+            "cancel",
+            "heartbeat",
+            "release",
+        ] {
+            assert_eq!(
+                repeat_for(&json!({"v":1,"op":op})),
+                Repeat::Idempotent,
+                "{op}"
+            );
+        }
+        for op in ["run", "prepare", "claim"] {
+            assert_eq!(
+                repeat_for(&json!({"v":1,"op":op,"request_id":"build-001"})),
+                Repeat::Idempotent,
+                "{op}"
+            );
+            for request in [
+                json!({"v":1,"op":op}),
+                json!({"v":1,"op":op,"request_id":""}),
+                json!({"v":1,"op":op,"request_id":7}),
+                json!({"v":1,"op":op,"request_id":null}),
+            ] {
+                assert_eq!(repeat_for(&request), Repeat::HandshakeOnly, "{request}");
+            }
+        }
+        assert_eq!(
+            repeat_for(&json!({"v":1,"op":"resources"})),
+            Repeat::Idempotent
+        );
+        for request in [
+            json!({"v":1,"op":"resources","limits":{"cpu_per_job":4}}),
+            json!({"v":1,"op":"resources","limits":null}),
+            json!({"v":1,"op":"unknown"}),
+            json!({"v":1,"op":"Status"}),
+            json!({"v":1,"op":7}),
+            json!({"v":1}),
+            json!(null),
+        ] {
+            assert_eq!(repeat_for(&request), Repeat::HandshakeOnly, "{request}");
+        }
+        // Every controller operation is classified on purpose.
+        let controller = [
+            "put",
+            "put_many",
+            "missing",
+            "sync",
+            "run",
+            "prepare",
+            "logs",
+            "wait",
+            "cancel",
+            "status",
+            "doctor",
+            "claim",
+            "heartbeat",
+            "release",
+            "resources",
+        ];
+        for op in controller {
+            assert_eq!(
+                repeat_for(&json!({"v":1,"op":op,"request_id":"r"})),
+                Repeat::Idempotent,
+                "{op}"
+            );
+        }
+        // The time a dial needs covers the server-side wait it asks for.
+        for (request, min_left) in [
+            (json!({"v":1,"op":"status"}), 10),
+            (json!({"v":1,"op":"wait","job":"j","timeout":20}), 30),
+            (json!({"v":1,"op":"wait","job":"j","timeout":600}), 70),
+        ] {
+            let retry = Retry::rpc(&request, Duration::from_secs(90));
+            assert_eq!(retry.min_left, Duration::from_secs(min_left), "{request}");
+            assert!(!retry.spent);
+            assert!(retry.left() <= Duration::from_secs(90));
+            assert!(retry.backoff >= Duration::from_secs(1));
+            assert!(retry.backoff < Duration::from_millis(1500));
+        }
+        let raw = Retry::raw(Duration::from_secs(20));
+        assert_eq!(
+            (raw.repeat, raw.min_left),
+            (Repeat::HandshakeOnly, MIN_RETRY_WINDOW)
+        );
+    }
+    #[test]
+    fn an_idempotent_request_repeats_one_session_drop_at_the_same_address() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&["192.0.2.1", "192.0.2.2"], "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+        let retry = budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW);
+        let mut dialed = Dialed::new();
+        let mut pauses = Vec::new();
+        let tries = [session_drop("192.0.2.1"), ok(b"ok")].into_iter();
+        let out = tr
+            .dial_with(
+                &plan,
+                [Open, Open],
+                "true",
+                TIMEOUT,
+                retry,
+                scripted(&mut dialed, tries),
+                |backoff| pauses.push(backoff),
+            )
+            .unwrap();
+        assert_eq!(out, b"ok");
+        assert_eq!(pauses, [Duration::from_millis(1234)]);
+        assert_eq!(dialed.len(), 2);
+        assert_eq!(dialed[0].0.as_deref(), Some("192.0.2.1"));
+        // The identical pinned command, with its window bounded by the deadline.
+        assert_eq!(dialed[1].1, dialed[0].1);
+        assert_eq!(dialed[0].2, TIMEOUT);
+        assert!(dialed[1].2 <= LEFT, "{:?}", dialed[1].2);
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts.as_array().unwrap().len(), 2);
+        assert_eq!(attempts[0]["status"], "connection_dropped");
+        assert_eq!(attempts[0]["phase"], "session");
+        assert_eq!(attempts[0]["try"], 1);
+        assert_eq!(attempts[0]["retry"], "scheduled");
+        assert_eq!(attempts[1]["status"], "authenticated");
+        assert_eq!(attempts[1]["try"], 2);
+        assert_eq!(attempts[1]["host"], "192.0.2.1");
+        assert_eq!(tr.host.as_deref(), Some("192.0.2.1"));
+        assert_eq!(state::remembered_hosts(&tr.config), ["192.0.2.1"]);
+    }
+    #[test]
+    fn a_session_drop_of_a_request_unsafe_to_repeat_stops_at_once() {
+        let _home = state::TestHome::new();
+        let mut tr = fixture(&["192.0.2.50", "192.0.2.51"], "both");
+        state::remember_host(&tr.config, "192.0.2.51").unwrap();
+        let plan = tr.lan_plan(|_| AliasRoute::default());
+        assert_eq!(plan[0], candidate(Source::Remembered, Some("192.0.2.51")));
+        let mut dialed = Dialed::new();
+        let error = tr
+            .dial_with(
+                &plan,
+                [Open, Open],
+                "true",
+                TIMEOUT,
+                Retry::raw(TIMEOUT),
+                scripted(&mut dialed, [session_drop("192.0.2.51")].into_iter()),
+                |_| panic!("a raw command is never repeated after a session drop"),
+            )
+            .unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (4, SESSION_UNSAFE));
+        assert!(!tr.can_fallback(&error));
+        assert_eq!(dialed.len(), 1);
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts.as_array().unwrap().len(), 1);
+        assert_eq!(attempts[0]["retry"], "not_safe_to_repeat");
+        assert_eq!(attempts[0]["phase"], "session");
+        assert_eq!(state::remembered_hosts(&tr.config), ["192.0.2.51"]);
+        assert!(tr.host.is_none());
+        // A sticky host stays sticky.
+        let mut tr = fixture(&["192.0.2.50"], "both");
+        tr.host = Some("192.0.2.50".into());
+        let plan = tr.lan_plan(|_| panic!("a sticky host needs no alias lookup"));
+        let mut dialed = Dialed::new();
+        let error = tr
+            .dial_with(
+                &plan,
+                [Unchecked],
+                "true",
+                TIMEOUT,
+                Retry::raw(TIMEOUT),
+                scripted(
+                    &mut dialed,
+                    [ssh_error("Connection reset by 192.0.2.50 port 22\r\n")].into_iter(),
+                ),
+                |_| panic!("not repeated"),
+            )
+            .unwrap_err();
+        assert_eq!(error.message, SESSION_UNSAFE);
+        assert_eq!(tr.host.as_deref(), Some("192.0.2.50"));
+    }
+    #[test]
+    fn after_a_repeated_session_drop_the_request_ends_at_that_address() {
+        let _home = state::TestHome::new();
+        let hosts = ["192.0.2.1", "192.0.2.2"];
+        for (second, code, message, status) in [
+            (
+                session_drop("192.0.2.1"),
+                4,
+                SESSION_REPEATABLE,
+                "connection_dropped",
+            ),
+            (refused(), 4, SESSION_REPEATABLE, "host_unreachable"),
+            (
+                ssh_error("Host key verification failed.\r\n"),
+                7,
+                "SSH authentication or pinned host-key verification failed; fallback refused",
+                "authentication_failed",
+            ),
+            (kex_drop(), 4, SESSION_REPEATABLE, "connection_dropped"),
+            (
+                Ok(Ran::Exited((Some(1), Vec::new(), Vec::new()))),
+                4,
+                SESSION_REPEATABLE,
+                "ssh_command_failed",
+            ),
+            (
+                Ok(Ran::TimedOut(Some(Vec::new()))),
+                4,
+                TRANSPORT_TIMEOUT,
+                "transport_timeout",
+            ),
+        ] {
+            let mut tr = fixture(&hosts, "both");
+            let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+            let mut dialed = Dialed::new();
+            let mut pauses = 0;
+            let error = tr
+                .dial_with(
+                    &plan,
+                    [Open, Open],
+                    "true",
+                    TIMEOUT,
+                    budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW),
+                    scripted(&mut dialed, [session_drop("192.0.2.1"), second].into_iter()),
+                    |_| pauses += 1,
+                )
+                .unwrap_err();
+            assert_eq!((error.code, error.message.as_str()), (code, message));
+            assert!(!tr.can_fallback(&error), "{message}");
+            assert_eq!(pauses, 1);
+            assert_eq!(dialed.len(), 2, "{status}");
+            assert!(dialed.iter().all(|d| d.0.as_deref() == Some("192.0.2.1")));
+            let attempts = tr.info()["attempted_routes"].clone();
+            assert_eq!(attempts.as_array().unwrap().len(), 2);
+            assert_eq!(attempts[1]["status"], status);
+            assert_eq!(attempts[1]["try"], 2);
+            if status == "connection_dropped" {
+                assert_eq!(attempts[1]["retry"], "exhausted");
+            }
+            assert!(tr.host.is_none());
+        }
+        // A handshake drop and then a drop that may have run the command:
+        // the one repeat is spent, and the request still ends here.
+        let mut tr = fixture(&hosts, "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+        let mut dialed = Dialed::new();
+        let error = tr
+            .dial_with(
+                &plan,
+                [Open, Open],
+                "true",
+                TIMEOUT,
+                budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW),
+                scripted(
+                    &mut dialed,
+                    [kex_drop(), session_drop("192.0.2.1")].into_iter(),
+                ),
+                |_| {},
+            )
+            .unwrap_err();
+        assert_eq!(error.message, SESSION_REPEATABLE);
+        assert_eq!(dialed.len(), 2);
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts[0]["phase"], "handshake");
+        assert_eq!(attempts[0]["retry"], "scheduled");
+        assert_eq!(attempts[1]["phase"], "session");
+        assert_eq!(attempts[1]["retry"], "exhausted");
+        // A timeout after a session drop at the alias's HostName also stops:
+        // the held-back configured host is not dialed.
+        let mut tr = fixture(&["192.0.2.1"], "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), Some("192.0.2.9"));
+        let mut dialed = Dialed::new();
+        let error = tr
+            .dial_with(
+                &plan,
+                [Closed, Open],
+                "true",
+                TIMEOUT,
+                budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW),
+                scripted(
+                    &mut dialed,
+                    [
+                        session_drop("192.0.2.9"),
+                        Ok(Ran::TimedOut(Some(Vec::new()))),
+                    ]
+                    .into_iter(),
+                ),
+                |_| {},
+            )
+            .unwrap_err();
+        assert_eq!(error.message, TRANSPORT_TIMEOUT);
+        assert_eq!(dialed.len(), 2);
+    }
+    #[test]
+    fn handshake_drops_get_one_repeat_per_request_and_then_allow_the_fallback() {
+        let _home = state::TestHome::new();
+        for (mode, retry) in [
+            ("both", budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW)),
+            (
+                "lan-only",
+                budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW),
+            ),
+            (
+                "both",
+                budget(Repeat::HandshakeOnly, LEFT, MIN_RETRY_WINDOW),
+            ),
+        ] {
+            let mut tr = fixture(&["192.0.2.1", "192.0.2.2"], mode);
+            let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+            let mut dialed = Dialed::new();
+            let mut pauses = 0;
+            let error = tr
+                .dial_with(
+                    &plan,
+                    [Open, Open],
+                    "true",
+                    TIMEOUT,
+                    retry,
+                    scripted(
+                        &mut dialed,
+                        [kex_drop(), kex_drop(), kex_drop()].into_iter(),
+                    ),
+                    |_| pauses += 1,
+                )
+                .unwrap_err();
+            assert_eq!(
+                (error.code, error.message.as_str()),
+                (4, LAN_HANDSHAKE_DROPPED)
+            );
+            assert_eq!(tr.can_fallback(&error), mode == "both");
+            assert_eq!(pauses, 1);
+            let hosts: Vec<_> = dialed.iter().map(|d| d.0.clone().unwrap()).collect();
+            assert_eq!(hosts, ["192.0.2.1", "192.0.2.1", "192.0.2.2"]);
+            // Only the first dial has the full window; after the drop every
+            // dial is bounded by the deadline.
+            assert_eq!(dialed[0].2, TIMEOUT);
+            assert!(dialed[1..].iter().all(|d| d.2 <= LEFT));
+            let attempts = tr.info()["attempted_routes"].clone();
+            let retries: Vec<_> = attempts
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| (a["phase"].clone(), a["try"].clone(), a["retry"].clone()))
+                .collect();
+            assert_eq!(
+                retries,
+                [
+                    (json!("handshake"), json!(1), json!("scheduled")),
+                    (json!("handshake"), json!(2), json!("exhausted")),
+                    (json!("handshake"), json!(1), json!("exhausted")),
+                ]
+            );
+        }
+        // Two handshake drops at a remembered address keep it remembered
+        // when a configured address then authenticates.
+        let mut tr = fixture(&["192.0.2.50", "192.0.2.51"], "both");
+        state::remember_host(&tr.config, "192.0.2.51").unwrap();
+        let plan = tr.lan_plan(|_| AliasRoute::default());
+        assert_eq!(plan[0], candidate(Source::Remembered, Some("192.0.2.51")));
+        let mut dialed = Dialed::new();
+        tr.dial_with(
+            &plan,
+            [Open, Open],
+            "true",
+            TIMEOUT,
+            budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW),
+            scripted(&mut dialed, [kex_drop(), kex_drop(), ok(b"")].into_iter()),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(dialed.len(), 3);
+        assert_eq!(tr.info()["lan_host"], "192.0.2.50");
+        assert_eq!(
+            state::remembered_hosts(&tr.config),
+            ["192.0.2.50", "192.0.2.51"]
+        );
+    }
+    #[test]
+    fn a_drop_is_repeated_and_another_address_dialed_only_with_time_left() {
+        let _home = state::TestHome::new();
+        let hosts = ["192.0.2.1", "192.0.2.2"];
+        // Less than the backoff plus the time a dial needs: no repeat.
+        let mut tr = fixture(&hosts, "both");
+        let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+        let mut dialed = Dialed::new();
+        let error = tr
+            .dial_with(
+                &plan,
+                [Open, Open],
+                "true",
+                TIMEOUT,
+                budget(Repeat::Idempotent, Duration::from_secs(5), MIN_RETRY_WINDOW),
+                scripted(&mut dialed, [session_drop("192.0.2.1")].into_iter()),
+                |_| panic!("no time for a repeat"),
+            )
+            .unwrap_err();
+        assert_eq!(error.message, SESSION_REPEATABLE);
+        assert_eq!(dialed.len(), 1);
+        assert_eq!(
+            tr.info()["attempted_routes"][0]["retry"],
+            "insufficient_time"
+        );
+        // After a drop, no other candidate is dialed without that time, not
+        // even a held-back configured host.
+        for reach in [[Open, Open], [Closed, Open]] {
+            let mut tr = fixture(&hosts, "both");
+            let mut dialed = Dialed::new();
+            let error = tr
+                .dial_with(
+                    &plan,
+                    reach,
+                    "true",
+                    TIMEOUT,
+                    budget(Repeat::Idempotent, Duration::from_secs(5), MIN_RETRY_WINDOW),
+                    scripted(&mut dialed, [kex_drop()].into_iter()),
+                    |_| panic!("no time for a repeat"),
+                )
+                .unwrap_err();
+            assert_eq!(error.message, LAN_HANDSHAKE_DROPPED);
+            assert!(tr.can_fallback(&error));
+            assert_eq!(dialed.len(), 1, "{reach:?}");
+        }
+        // Without a drop, time left plays no part: every address is dialed
+        // with the full window, as before.
+        let mut tr = fixture(&hosts, "both");
+        let mut dialed = Dialed::new();
+        let error = tr
+            .dial_with(
+                &plan,
+                [Open, Open],
+                "true",
+                TIMEOUT,
+                budget(Repeat::Idempotent, Duration::ZERO, MIN_RETRY_WINDOW),
+                scripted(&mut dialed, [refused(), refused()].into_iter()),
+                |_| panic!("nothing dropped"),
+            )
+            .unwrap_err();
+        assert_eq!(error.message, LAN_UNREACHABLE);
+        assert_eq!(dialed.len(), 2);
+        assert!(dialed.iter().all(|d| d.2 == TIMEOUT));
+    }
+    #[test]
+    fn rejections_timeouts_and_process_errors_are_never_repeated() {
+        let _home = state::TestHome::new();
+        for (first, status) in [
+            (
+                Err(AppError::new(4, "Transport process could not be started")),
+                "process_error",
+            ),
+            (Ok(Ran::TimedOut(None)), "transport_timeout"),
+            (
+                ssh_error("Host key verification failed.\r\n"),
+                "authentication_failed",
+            ),
+            (
+                ssh_error("owner@192.0.2.1: Permission denied (publickey).\r\n"),
+                "authentication_failed",
+            ),
+        ] {
+            let mut tr = fixture(&["192.0.2.1"], "both");
+            let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
+            let mut dialed = Dialed::new();
+            let error = tr
+                .dial_with(
+                    &plan,
+                    [Unchecked],
+                    "true",
+                    TIMEOUT,
+                    budget(Repeat::Idempotent, LEFT, MIN_RETRY_WINDOW),
+                    scripted(&mut dialed, [first].into_iter()),
+                    |_| panic!("never repeated"),
+                )
+                .unwrap_err();
+            assert!(!tr.can_fallback(&error));
+            assert_eq!(dialed.len(), 1);
+            let attempts = tr.info()["attempted_routes"].clone();
+            assert_eq!(attempts[0]["status"], status);
+            assert!(attempts[0].get("try").is_none());
+        }
+    }
+    #[test]
+    fn an_exchange_without_configured_hosts_never_repeats_a_raw_session_drop() {
+        let _home = state::TestHome::new();
+        // No configured hosts: no `ssh -G` and no precheck, only the alias.
+        let mut tr = configured("both", true);
+        let mut dials = 0;
+        let error = tr
+            .exchange(
+                "true",
+                TIMEOUT,
+                Retry::raw(TIMEOUT),
+                |command, window| {
+                    assert_pinned(&command, "test-pin");
+                    assert_eq!(hostname_of(&command), None);
+                    assert_eq!(window, TIMEOUT);
+                    dials += 1;
+                    ssh_error("Connection closed by 192.0.2.1 port 22\r\n")
+                },
+                |_| panic!("a raw command is never repeated after a session drop"),
+            )
+            .unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (4, SESSION_UNSAFE));
+        assert_eq!(dials, 1);
+        assert!(!tr.can_fallback(&error));
+        // The same drop of a status request is repeated once.
+        let mut tr = configured("both", true);
+        let request = json!({"v":1,"op":"status"});
+        let mut tries = [
+            ssh_error("Connection closed by 192.0.2.1 port 22\r\n"),
+            ok(br#"{"ok":true}"#),
+        ]
+        .into_iter();
+        let mut pauses = Vec::new();
+        let out = tr
+            .exchange(
+                "true",
+                TIMEOUT,
+                Retry::rpc(&request, TIMEOUT),
+                |_, _| tries.next().unwrap(),
+                |backoff| pauses.push(backoff),
+            )
+            .unwrap();
+        assert_eq!(out, br#"{"ok":true}"#);
+        assert_eq!(pauses.len(), 1);
+        assert!(pauses[0] >= Duration::from_secs(1) && pauses[0] < Duration::from_millis(1500));
+        assert_eq!(tr.info()["attempted_routes"][1]["try"], 2);
     }
 }
