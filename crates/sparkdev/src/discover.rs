@@ -1578,7 +1578,10 @@ pub(crate) mod tests {
             Box::new(move |_, _| Ok((Some(0), text.as_bytes().to_vec(), Vec::new())))
         };
         for (text, direct) in [
-            ("hostname 192.0.2.41\nproxyjump none\nproxycommand none\n", true),
+            (
+                "hostname 192.0.2.41\nproxyjump none\nproxycommand none\n",
+                true,
+            ),
             ("hostname 192.0.2.41\nproxyjump bastion.example\n", false),
             ("hostname 192.0.2.41\nproxycommand nc %h %p\n", false),
             ("hostname 192.0.2.41\nbindaddress 198.51.100.7\n", false),
@@ -1593,7 +1596,8 @@ pub(crate) mod tests {
         }
         let failed: Box<PerAddress> = Box::new(|_, _| Ok((Some(255), Vec::new(), Vec::new())));
         assert!(!routes_directly(&fixture, ip("192.0.2.41"), &*failed));
-        let timed_out: Box<PerAddress> = Box::new(|_, _| Err(AppError::new(4, "Transport timeout")));
+        let timed_out: Box<PerAddress> =
+            Box::new(|_, _| Err(AppError::new(4, "Transport timeout")));
         assert!(!routes_directly(&fixture, ip("192.0.2.41"), &*timed_out));
     }
     #[test]
@@ -1624,7 +1628,10 @@ pub(crate) mod tests {
         deps.route = Box::new(|_, _| Err(AppError::new(4, "Transport timeout")));
         let out = search(&config(&[]), &deps).unwrap();
         assert!(calls.lock().unwrap().verified.is_empty());
-        assert_eq!((out["not_direct"].clone(), out["found"].clone()), (json!(1), json!([])));
+        assert_eq!(
+            (out["not_direct"].clone(), out["found"].clone()),
+            (json!(1), json!([]))
+        );
         // A save refuses such an address and writes nothing.
         let fixture = config(&["192.0.2.20"]);
         write_config(&home, &fixture);

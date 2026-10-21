@@ -2454,15 +2454,33 @@ mod tests {
             "ssh_dispatch_run_fatal: Connection to 192.0.2.5 port 22: Bad packet length 1349676916.\r\n",
             "Write failed: Software caused connection abort\r\n",
         ];
-        let auth_lines = [auth.clone(), "Authenticated to 192.0.2.5 (via proxy) using \"publickey\".\r\n".to_owned()];
+        let auth_lines = [
+            auth.clone(),
+            "Authenticated to 192.0.2.5 (via proxy) using \"publickey\".\r\n".to_owned(),
+        ];
         for stderr in broken {
-            assert_eq!(classified(Some(255), b"", stderr), Dropped(Handshake), "{stderr}");
-            assert!(before_auth(Some(255), b"", &stderr.to_lowercase()), "{stderr}");
+            assert_eq!(
+                classified(Some(255), b"", stderr),
+                Dropped(Handshake),
+                "{stderr}"
+            );
+            assert!(
+                before_auth(Some(255), b"", &stderr.to_lowercase()),
+                "{stderr}"
+            );
             for prefix in &auth_lines {
                 let message = format!("{prefix}{stderr}");
-                assert_eq!(classified(Some(255), b"", &message), Dropped(Session), "{message}");
+                assert_eq!(
+                    classified(Some(255), b"", &message),
+                    Dropped(Session),
+                    "{message}"
+                );
             }
-            assert_eq!(classified(Some(255), b"{", stderr), Dropped(Session), "stdout {stderr}");
+            assert_eq!(
+                classified(Some(255), b"{", stderr),
+                Dropped(Session),
+                "stdout {stderr}"
+            );
         }
         // OpenSSH's own failure (exit 255) without the authentication line.
         for (stderr, expected) in [
@@ -2640,7 +2658,9 @@ mod tests {
             "kex_exchange_identification: x authenticated to 192.0.2.5\r\n"
         ));
         assert_eq!(
-            openssh_own("a\r\nbad remote protocol version identification: 'x'\r\nb\r\nreceived disconnect from x\r\nc\r\n"),
+            openssh_own(
+                "a\r\nbad remote protocol version identification: 'x'\r\nb\r\nreceived disconnect from x\r\nc\r\n"
+            ),
             "a\nb\n"
         );
         assert_eq!(Rejected.status(), "authentication_failed");
@@ -4169,14 +4189,16 @@ mod tests {
                 |_| pauses += 1,
             )
             .unwrap_err();
-        assert_eq!((error.code, error.message.as_str()), (4, LAN_HANDSHAKE_DROPPED));
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (4, LAN_HANDSHAKE_DROPPED)
+        );
         assert_eq!((dials, pauses), (2, 1));
         assert!(tr.can_fallback(&error));
         // The same drop of a status request is repeated once.
         let mut tr = configured("both", true);
         let request = json!({"v":1,"op":"status"});
-        let mut tries = [session_drop("192.0.2.1"), ok(br#"{"ok":true}"#)]
-        .into_iter();
+        let mut tries = [session_drop("192.0.2.1"), ok(br#"{"ok":true}"#)].into_iter();
         let mut pauses = Vec::new();
         let out = tr
             .exchange(

@@ -223,10 +223,7 @@ mod receipt_tests {
         assert!(starts[2] <= Duration::from_secs(50), "{starts:?}");
         // Quick beats keep their 15 s spacing.
         let (starts, _) = schedule(&[], 50);
-        assert_eq!(
-            starts,
-            [15, 30, 45].map(Duration::from_secs)
-        );
+        assert_eq!(starts, [15, 30, 45].map(Duration::from_secs));
     }
     #[test]
     fn a_lease_without_a_successful_heartbeat_for_45_seconds_is_lost() {
@@ -336,7 +333,11 @@ impl Heartbeats {
     /// One pass of the worker loop: send a heartbeat through `beat` when one
     /// is due, then say whether the lease is lost. `beat` says whether the
     /// heartbeat succeeded; `now` reads the clock.
-    fn tick(&mut self, now: impl Fn() -> Instant, beat: impl FnOnce() -> Result<bool>) -> Result<bool> {
+    fn tick(
+        &mut self,
+        now: impl Fn() -> Instant,
+        beat: impl FnOnce() -> Result<bool>,
+    ) -> Result<bool> {
         let start = now();
         if start.saturating_duration_since(self.started) >= HEARTBEAT_EVERY {
             self.started = start;
