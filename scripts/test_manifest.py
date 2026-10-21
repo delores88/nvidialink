@@ -1,10 +1,12 @@
 """Release identity must remain usable by the strict in-app updater."""
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('prepare_manifest', Path(__file__).with_name('prepare-manifest.py'))
 manifest = importlib.util.module_from_spec(spec)
@@ -102,6 +104,69 @@ class DraftValidation(unittest.TestCase):
         self.assertFalse(self.verify(False, canonical, True)['draft'])
         with self.assertRaises(ValueError):
             self.verify(True, 'https://example.com/DGXBridge_0.3.1_x64-setup.exe', False)
+
+
+class RuntimeDownloads(unittest.TestCase):
+    filename = 'pillow-13.0.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl'
+    url = 'https://files.pythonhosted.org/packages/aa/bb/' + filename
+    digest = 'e' * 64
+
+    def recipe(self):
+        return (f'ADD {self.url} /opt/sparkdev/wheels/\n'
+                "RUN printf '%s\\n' 'pillow==13.0.0 --hash=sha256:" + self.digest + "' > /opt/sparkdev/pillow-requirements.txt \\\n"
+                ' && /usr/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check --no-index --find-links=/opt/sparkdev/wheels --require-hashes --only-binary=:all: --no-deps --force-reinstall --break-system-packages -r /opt/sparkdev/pillow-requirements.txt\n')
+
+    def metadata(self, **changes):
+        item = {'url': self.url, 'filename': self.filename, 'digests': {'sha256': self.digest},
+                'packagetype': 'bdist_wheel', 'yanked': False}
+        item.update(changes)
+        return io.BytesIO(json.dumps({'urls': [item]}).encode())
+
+    def downloads(self, recipe):
+        sources = {'runtimes/Dockerfile': 'FROM rust:1.98.1@sha256:' + 'a' * 64,
+                   'runtimes/Dockerfile.cuda': 'FROM nvcr.io/nvidia/pytorch@sha256:' + 'b' * 64 + '\n' + recipe,
+                   'runtimes/requirements.txt': 'numpy==2.4.0 --hash=sha256:' + 'c' * 64 + '\npillow==13.0.0 --hash=sha256:' + 'd' * 64}
+
+        def metadata(url, timeout):
+            if url.endswith('/numpy/2.4.0/json'):
+                return io.BytesIO(json.dumps({'urls': [{'url': 'https://files.pythonhosted.org/cpu-numpy.whl', 'digests': {'sha256': 'c' * 64}}]}).encode())
+            return io.BytesIO(json.dumps({'urls': [
+                {'url': 'https://files.pythonhosted.org/cpu-pillow.whl', 'digests': {'sha256': 'd' * 64}},
+                json.load(self.metadata())['urls'][0]]}).encode())
+
+        with patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path].encode()) as source, \
+                patch.object(manifest.urllib.request, 'urlopen', side_effect=metadata):
+            result = manifest.runtime_downloads('selected-immutable-commit')
+        self.assertEqual([call.args[0] for call in source.call_args_list], ['selected-immutable-commit'] * 3)
+        return result
+
+    def test_historical_no_add_retains_four_downloads(self):
+        self.assertEqual(len(self.downloads('# No additional wheel in this release.\n')), 4)
+
+    def test_cuda_wheel_adds_exact_fifth_download_from_selected_source(self):
+        downloads = self.downloads(self.recipe())
+        self.assertEqual(len(downloads), 5)
+        self.assertEqual((downloads[-1]['url'], downloads[-1]['sha256']), (self.url, self.digest))
+        self.assertIn('optional owner-requested Spark CUDA', downloads[-1]['purpose'])
+
+    def test_unsupported_or_unpinned_add_fails_closed(self):
+        for recipe in (f'ADD {self.url} /opt/sparkdev/wheels/\n',
+                       self.recipe().replace('--require-hashes ', ''),
+                       self.recipe().replace(self.digest, 'unpinned'),
+                       self.recipe().replace('ADD ', 'ADD --keep-git-dir '),
+                       self.recipe().replace('https://files.pythonhosted.org', 'http://files.pythonhosted.org'),
+                       self.recipe() + 'add local-file /tmp/\n'):
+            with self.subTest(recipe=recipe), self.assertRaises(ValueError), \
+                    patch.object(manifest.urllib.request, 'urlopen') as fetch:
+                manifest.cuda_wheel_downloads(recipe)
+            fetch.assert_not_called()
+
+    def test_cuda_metadata_requires_matching_url_hash_and_wheel(self):
+        for changes in ({'url': self.url + '?changed'}, {'digests': {'sha256': 'f' * 64}},
+                        {'filename': 'different.whl'}, {'yanked': True}, {'packagetype': 'sdist'}):
+            with self.subTest(changes=changes), patch.object(manifest.urllib.request, 'urlopen', return_value=self.metadata(**changes)), \
+                    self.assertRaises(ValueError):
+                manifest.cuda_wheel_downloads(self.recipe())
 
 
 if __name__ == '__main__':

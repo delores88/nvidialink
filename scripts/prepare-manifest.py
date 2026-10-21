@@ -180,6 +180,38 @@ def verify_release(value, input_directory, require_published):
             'sourceCommit': ref['sha'], 'assetId': asset['id'], 'filename': asset['name'], 'bytes': asset['size'], 'sha256': digest}
 
 
+def cuda_wheel_downloads(cuda):
+    # Only the explicitly supported, hash-enforced recipe is understood here.
+    # Reject new ADD forms instead of silently omitting executable downloads.
+    instructions = re.sub(r'\\\n[ \t]*', ' ', cuda).splitlines()
+    additions = [line.strip() for line in instructions if re.match(r'^\s*ADD(?:\s|$)', line, re.I)]
+    if not additions:
+        return []  # Historical releases used only the immutable CUDA base.
+    require(len(additions) == 1, 'Unsupported CUDA ADD recipe: expected one hash-locked Pillow wheel')
+    match = re.fullmatch(r'ADD (https://files\.pythonhosted\.org/packages/[A-Za-z0-9/._-]+\.whl) /opt/sparkdev/wheels/', additions[0])
+    require(match is not None, 'Unsupported CUDA ADD recipe')
+    url = match[1]
+    filename = urlsplit(url).path.rsplit('/', 1)[-1]
+    wheel = re.fullmatch(r'pillow-([0-9]+\.[0-9]+\.[0-9]+)-cp312-cp312-(manylinux_[a-z0-9_.]+)\.whl', filename)
+    require(wheel is not None and all(re.fullmatch(r'manylinux_[0-9]+_[0-9]+_aarch64', tag)
+                                    for tag in wheel[2].split('.')), 'Unsupported CUDA Pillow wheel')
+    recipes = [re.fullmatch(r"RUN printf '%s\\n' 'pillow==([^\s']+) --hash=sha256:([0-9a-f]{64})' > /opt/sparkdev/pillow-requirements\.txt\s+&& /usr/bin/python3 -m pip install (.+)", line.strip())
+               for line in instructions]
+    recipes = [recipe for recipe in recipes if recipe is not None]
+    expected_flags = '--no-cache-dir --disable-pip-version-check --no-index --find-links=/opt/sparkdev/wheels --require-hashes --only-binary=:all: --no-deps --force-reinstall --break-system-packages -r /opt/sparkdev/pillow-requirements.txt'
+    require(len(recipes) == 1 and recipes[0][1] == wheel[1] and recipes[0][3].split() == expected_flags.split(),
+            'CUDA ADD wheel lacks the supported hash-enforced installation recipe')
+    digest = recipes[0][2]
+    with urllib.request.urlopen(f'https://pypi.org/pypi/pillow/{wheel[1]}/json', timeout=30) as response:
+        metadata = json.load(response)
+    files = [item for item in metadata['urls'] if item.get('url') == url and item.get('filename') == filename
+             and item.get('digests', {}).get('sha256') == digest and item.get('packagetype') == 'bdist_wheel'
+             and not item.get('yanked', False)]
+    require(len(files) == 1, 'Pinned CUDA wheel URL and SHA-256 cannot be verified against PyPI')
+    return [{'url': url, 'sha256': digest,
+             'purpose': f'Hash-locked Pillow {wheel[1]} ARM64 CPython 3.12 wheel installed only inside the optional owner-requested Spark CUDA runtime during setup.'}]
+
+
 def runtime_downloads(commit):
     downloads = []
     cpu = source(commit, 'runtimes/Dockerfile').decode().replace('\r\n', '\n')
@@ -199,7 +231,8 @@ def runtime_downloads(commit):
         files = [item for item in metadata['urls'] if item['digests']['sha256'] == digest]
         require(len(files) == 1 and urlsplit(files[0]['url']).hostname == 'files.pythonhosted.org', 'Pinned runtime wheel cannot be resolved')
         downloads.append({'url': files[0]['url'], 'sha256': digest, 'purpose': f'Hash-locked {name} {version} wheel installed only inside the Spark CPU runtime during setup.'})
-    require(len(downloads) == 4, 'Expected two OCI manifests and two hash-locked runtime wheels')
+    require(len(downloads) == 4, 'Expected two OCI manifests and two hash-locked CPU runtime wheels')
+    downloads.extend(cuda_wheel_downloads(cuda))
     return downloads
 
 
