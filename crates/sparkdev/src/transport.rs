@@ -84,7 +84,8 @@ const UNLISTED_TIMEOUT_REASON: &str =
 const PRE_AUTH_FAILED_REASON: &str =
     "SSH failed before authentication without evidence that the LAN host is unreachable";
 const POST_AUTH_FAILED_REASON: &str = "SSH failed after authentication or the remote command failed; it may have run, so no other address is tried";
-const HANDSHAKE_DROPPED_REASON: &str = "SSH connection dropped in the identification exchange, before authentication; nothing ran remotely";
+const HANDSHAKE_DROPPED_REASON: &str =
+    "SSH connection dropped before authentication; nothing ran remotely";
 const SESSION_DROPPED_REASON: &str = "SSH connection dropped without evidence that it was still before authentication; the command may have run remotely";
 const COMMAND_FAILED: &str =
     "SSH command failed; inspect the configured service and key (stderr withheld)";
@@ -576,7 +577,8 @@ pub fn precheck(
 /// When a connection dropped, as far as stderr can prove it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
-    /// In the identification exchange, before authentication: nothing ran.
+    /// Before authentication (the identification or key exchange, or user
+    /// authentication itself): nothing ran.
     Handshake,
     /// Nothing proves the drop came before authentication, so the command
     /// may have run remotely.
@@ -703,11 +705,13 @@ fn lost(message: &str) -> bool {
 /// a drop; a remote command's exit status is `CommandFailed`, whatever it
 /// printed. The authentication line (see `authenticated`) or any stdout
 /// proves the session phase, so text a remote command writes can never look
-/// like a handshake drop. Without that proof, a drop still counts as a
-/// handshake drop only when OpenSSH tagged it with the identification
-/// exchange: OpenSSH prints the untagged "Connection reset by <ip> port <n>"
-/// and "Connection closed by <ip> port <n>" from one template in every
-/// phase, so those count as session drops.
+/// like a handshake drop. Without that proof the dial ended before
+/// authentication (see `before_auth`), so a broken link there ran nothing
+/// and is a handshake drop. That includes the untagged "Connection reset by
+/// <ip> port <n>" and "Connection closed by <ip> port <n>", which OpenSSH
+/// prints from one template in every phase: after authentication they
+/// follow the authentication line, and before it (in key exchange, or a
+/// reset before or after the banner on OpenSSH 9.5) they do not.
 pub fn classify(code: Option<i32>, stdout: &[u8], message: &str) -> Failure {
     let message = &openssh_own(message);
     if has_any(message, AUTH_MARKERS) {
@@ -726,7 +730,7 @@ pub fn classify(code: Option<i32>, stdout: &[u8], message: &str) -> Failure {
         };
     }
     if lost(message) && !tag {
-        return Failure::Dropped(Phase::Session);
+        return Failure::Dropped(Phase::Handshake);
     }
     if unreachable {
         return Failure::Unreachable;
@@ -1201,10 +1205,10 @@ impl Transport {
     ///
     /// Whether anything ran remotely decides what may follow (see
     /// `classify`). A rejection, unreachability or an incompatible server
-    /// before authentication ran nothing; so did a drop OpenSSH tagged with
-    /// the identification exchange, which moves on and leaves every address
-    /// remembered, since a reset is no evidence that an address is stale.
-    /// Any other drop may have run the command. Any other failure after
+    /// before authentication ran nothing; so did a drop without the
+    /// authentication line or any stdout, which moves on and leaves every
+    /// address remembered, since a reset is no evidence that an address is
+    /// stale. Any other drop may have run the command. Any other failure after
     /// authentication, including a remote command's own exit status, stops
     /// the request at once with 4 for every source; so does a timeout, except
     /// as noted below, and a local process error is returned as-is.
@@ -2429,67 +2433,39 @@ mod tests {
                 );
             }
         }
+        // Unix and Windows wordings of a broken link, untagged. OpenSSH prints
+        // "Connection reset by" and "Connection closed by" from one template
+        // in every phase, so only the authentication line or stdout tells
+        // the phases apart: without either the dial ended before
+        // authentication and ran nothing, after either it may have run.
+        let broken = [
+            "Read from remote host 192.0.2.5: Connection timed out\r\n",
+            "Read from remote host 192.0.2.5: Connection reset by peer\r\n",
+            "Connection reset by 192.0.2.5 port 22\r\n",
+            "Connection closed by 192.0.2.5 port 22\r\n",
+            "Connection closed by UNKNOWN port 65535\r\n",
+            "client_loop: send disconnect: Connection reset\r\n",
+            "client_loop: send disconnect: Broken pipe\r\n",
+            "Connection to 192.0.2.5 closed by remote host.\r\n",
+            "Timeout, server 192.0.2.5 not responding.\r\n",
+            "Connection to 192.0.2.5 port 22 timed out\r\n",
+            "ssh_dispatch_run_fatal: Connection to 192.0.2.5 port 22 timed out\r\n",
+            "Corrupted MAC on input.\r\nssh_dispatch_run_fatal: Connection to 192.0.2.5 port 22: message authentication code incorrect\r\n",
+            "ssh_dispatch_run_fatal: Connection to 192.0.2.5 port 22: Bad packet length 1349676916.\r\n",
+            "Write failed: Software caused connection abort\r\n",
+        ];
+        let auth_lines = [auth.clone(), "Authenticated to 192.0.2.5 (via proxy) using \"publickey\".\r\n".to_owned()];
+        for stderr in broken {
+            assert_eq!(classified(Some(255), b"", stderr), Dropped(Handshake), "{stderr}");
+            assert!(before_auth(Some(255), b"", &stderr.to_lowercase()), "{stderr}");
+            for prefix in &auth_lines {
+                let message = format!("{prefix}{stderr}");
+                assert_eq!(classified(Some(255), b"", &message), Dropped(Session), "{message}");
+            }
+            assert_eq!(classified(Some(255), b"{", stderr), Dropped(Session), "stdout {stderr}");
+        }
         // OpenSSH's own failure (exit 255) without the authentication line.
         for (stderr, expected) in [
-            // Unix and Windows wordings of a link lost in the session, or
-            // untagged: OpenSSH prints "Connection reset by" and "Connection
-            // closed by" from one template in every phase.
-            (
-                "Read from remote host 192.0.2.5: Connection timed out\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Read from remote host 192.0.2.5: Connection reset by peer\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Connection reset by 192.0.2.5 port 22\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Connection closed by 192.0.2.5 port 22\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Connection closed by UNKNOWN port 65535\r\n",
-                Dropped(Session),
-            ),
-            (
-                "client_loop: send disconnect: Connection reset\r\n",
-                Dropped(Session),
-            ),
-            (
-                "client_loop: send disconnect: Broken pipe\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Connection to 192.0.2.5 closed by remote host.\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Timeout, server 192.0.2.5 not responding.\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Connection to 192.0.2.5 port 22 timed out\r\n",
-                Dropped(Session),
-            ),
-            (
-                "ssh_dispatch_run_fatal: Connection to 192.0.2.5 port 22 timed out\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Corrupted MAC on input.\r\nssh_dispatch_run_fatal: Connection to 192.0.2.5 port 22: message authentication code incorrect\r\n",
-                Dropped(Session),
-            ),
-            (
-                "ssh_dispatch_run_fatal: Connection to 192.0.2.5 port 22: Bad packet length 1349676916.\r\n",
-                Dropped(Session),
-            ),
-            (
-                "Write failed: Software caused connection abort\r\n",
-                Dropped(Session),
-            ),
             // Tagged with the identification exchange: before authentication.
             (
                 "kex_exchange_identification: read: Connection reset by peer\r\nConnection reset by 192.0.2.5 port 22\r\n",
@@ -2834,10 +2810,9 @@ mod tests {
             tr.info()["attempted_routes"][0]["status"],
             "ssh_command_failed"
         );
-        // Any other drop may have run the command: the request stops at the
-        // remembered address, which is kept, with no fallback. That includes
-        // the untagged reset and close without the authentication line,
-        // which OpenSSH prints from one template in every phase.
+        // A drop after the authentication line may have run the command:
+        // the request stops at the remembered address, which is kept, with
+        // no fallback.
         for ran in [
             after_auth(
                 "192.0.2.51",
@@ -2853,9 +2828,6 @@ mod tests {
                 "192.0.2.51",
                 "kex_exchange_identification: read: Connection reset\r\n",
             ),
-            ssh_error("Connection reset by 192.0.2.51 port 22\r\n"),
-            ssh_error("Connection closed by 192.0.2.51 port 22\r\n"),
-            ssh_error("Connection to 192.0.2.51 closed by remote host.\r\n"),
         ] {
             let mut tr = fixture(&hosts, "both");
             let plan = stale(&mut tr);
@@ -2876,7 +2848,38 @@ mod tests {
             assert_eq!(attempts[0]["phase"], "session");
             assert_eq!(attempts[0]["reason"], SESSION_DROPPED_REASON);
         }
-        // So does an untagged drop at a configured address.
+        // The same untagged reset or close without the authentication line
+        // ended before authentication (OpenSSH prints it from one template
+        // in every phase): nothing ran, the remembered address is kept, and
+        // the working configured address is dialed.
+        for dropped in [
+            "Connection reset by 192.0.2.51 port 22\r\n",
+            "Connection closed by 192.0.2.51 port 22\r\n",
+            "Connection to 192.0.2.51 closed by remote host.\r\n",
+            "Connection to 192.0.2.51 port 22 timed out\r\n",
+        ] {
+            let mut tr = fixture(&hosts, "both");
+            let plan = stale(&mut tr);
+            let mut dialed = Vec::new();
+            tr.dial(&plan, [Open, Open], "true", |command| {
+                let host = hostname_of(&command);
+                dialed.push(host.clone());
+                match host.as_deref() {
+                    Some("192.0.2.51") => ssh_error(dropped),
+                    _ => ok(b""),
+                }
+            })
+            .unwrap();
+            assert_eq!(dialed.len(), 2, "{dropped}");
+            assert_eq!(tr.info()["lan_host"], "192.0.2.50");
+            assert!(kept(&tr));
+            let attempts = tr.info()["attempted_routes"].clone();
+            assert_eq!(attempts[0]["status"], "connection_dropped");
+            assert_eq!(attempts[0]["phase"], "handshake");
+            assert_eq!(attempts[0]["reason"], HANDSHAKE_DROPPED_REASON);
+        }
+        // At configured addresses too: each is dialed, and with nothing
+        // else answering the result is fallback-eligible.
         for dropped in [
             "Connection reset by 192.0.2.50 port 22\r\n",
             "Connection to 192.0.2.50 closed by remote host.\r\n",
@@ -2890,12 +2893,9 @@ mod tests {
                     ssh_error(dropped)
                 })
                 .unwrap_err();
-            assert_eq!((error.code, dialed), (4, 1), "{dropped}");
-            assert_eq!(error.message, SESSION_UNSAFE);
-            assert_eq!(
-                tr.info()["attempted_routes"][0]["status"],
-                "connection_dropped"
-            );
+            assert_eq!((error.code, dialed), (4, 2), "{dropped}");
+            assert_eq!(error.message, LAN_HANDSHAKE_DROPPED);
+            assert!(tr.can_fallback(&error));
         }
     }
     #[test]
@@ -2973,6 +2973,8 @@ mod tests {
             "owner@192.0.2.2: Permission denied (publickey).\r\n",
             "Unable to negotiate with 192.0.2.2 port 22: no matching key exchange method found.\r\n",
             "kex_exchange_identification: read: Connection reset by peer\r\n",
+            "Connection reset by 192.0.2.2 port 22\r\n",
+            "Connection to 192.0.2.2 port 22 timed out\r\n",
         ] {
             let mut tr = fixture(&hosts, "both");
             let plan = plan_candidates(None, &[], &tr.config.hosts.clone(), None);
@@ -3051,12 +3053,10 @@ mod tests {
             dialed,
             [Some("192.0.2.3".to_owned()), Some("192.0.2.1".to_owned())]
         );
-        // After authentication at the later host, a drop there without
-        // proof that it came before authentication, or a timeout or remote
-        // exit status there, nothing else is dialed: the command may have run.
+        // After authentication at the later host, a drop there, or a
+        // timeout or remote exit status there, nothing else is dialed: the
+        // command may have run.
         for ran in [
-            ssh_error("Connection reset by 192.0.2.2 port 22\r\n"),
-            ssh_error("Connection to 192.0.2.2 port 22 timed out\r\n"),
             after_auth(
                 "192.0.2.2",
                 "Connection to 192.0.2.2 closed by remote host.\r\n",
@@ -3248,6 +3248,32 @@ mod tests {
                 HANDSHAKE_DROPPED_REASON,
                 LAN_HANDSHAKE_DROPPED,
             ),
+            // Untagged, but without the authentication line: a stalled or
+            // broken key exchange or authentication, before anything ran.
+            (
+                "Connection closed by UNKNOWN port 65535\r\n",
+                "connection_dropped",
+                HANDSHAKE_DROPPED_REASON,
+                LAN_HANDSHAKE_DROPPED,
+            ),
+            (
+                "ssh_dispatch_run_fatal: Connection to 192.0.2.9 port 22 timed out\r\n",
+                "connection_dropped",
+                HANDSHAKE_DROPPED_REASON,
+                LAN_HANDSHAKE_DROPPED,
+            ),
+            (
+                "Connection to 192.0.2.9 port 22 timed out\r\n",
+                "connection_dropped",
+                HANDSHAKE_DROPPED_REASON,
+                LAN_HANDSHAKE_DROPPED,
+            ),
+            (
+                "Corrupted MAC on input.\r\nssh_dispatch_run_fatal: Connection to 192.0.2.9 port 22: message authentication code incorrect\r\n",
+                "connection_dropped",
+                HANDSHAKE_DROPPED_REASON,
+                LAN_HANDSHAKE_DROPPED,
+            ),
         ] {
             let mut tr = fixture(&hosts, "both");
             let plan = alias_plan(&tr);
@@ -3328,21 +3354,22 @@ mod tests {
         }
         // A drop that may have run the command stops without fallback, as
         // for any source, and the held-back configured host is not dialed:
-        // after the authentication line, or untagged (OpenSSH prints these
-        // from one template in every phase, and a stalled exchange can end
-        // the same way as a dead session).
+        // after the authentication line or any output.
         for ran in [
             after_auth(
                 "192.0.2.9",
                 "Connection to 192.0.2.9 closed by remote host.\r\n",
             ),
             after_auth("192.0.2.9", "Connection reset by 192.0.2.9 port 22\r\n"),
-            ssh_error("Connection closed by UNKNOWN port 65535\r\n"),
-            ssh_error("ssh_dispatch_run_fatal: Connection to 192.0.2.9 port 22 timed out\r\n"),
-            ssh_error("Connection to 192.0.2.9 port 22 timed out\r\n"),
-            ssh_error(
+            after_auth(
+                "192.0.2.9",
                 "Corrupted MAC on input.\r\nssh_dispatch_run_fatal: Connection to 192.0.2.9 port 22: message authentication code incorrect\r\n",
             ),
+            Ok(Ran::Exited((
+                Some(255),
+                b"{".to_vec(),
+                b"Connection to 192.0.2.9 port 22 timed out\r\n".to_vec(),
+            ))),
         ] {
             let mut tr = fixture(&hosts, "both");
             let plan = alias_plan(&tr);
@@ -3793,10 +3820,7 @@ mod tests {
                 "true",
                 TIMEOUT,
                 Retry::raw(TIMEOUT),
-                scripted(
-                    &mut dialed,
-                    [ssh_error("Connection reset by 192.0.2.50 port 22\r\n")].into_iter(),
-                ),
+                scripted(&mut dialed, [session_drop("192.0.2.50")].into_iter()),
                 |_| panic!("not repeated"),
             )
             .unwrap_err();
@@ -4119,7 +4143,7 @@ mod tests {
                     assert_eq!(hostname_of(&command), None);
                     assert_eq!(window, TIMEOUT);
                     dials += 1;
-                    ssh_error("Connection closed by 192.0.2.1 port 22\r\n")
+                    session_drop("192.0.2.1")
                 },
                 |_| panic!("a raw command is never repeated after a session drop"),
             )
@@ -4127,13 +4151,31 @@ mod tests {
         assert_eq!((error.code, error.message.as_str()), (4, SESSION_UNSAFE));
         assert_eq!(dials, 1);
         assert!(!tr.can_fallback(&error));
+        // The untagged close without the authentication line came before
+        // authentication: even a raw command is repeated once, and two such
+        // drops leave the fallback open.
+        let mut tr = configured("both", true);
+        let mut dials = 0;
+        let mut pauses = 0;
+        let error = tr
+            .exchange(
+                "true",
+                TIMEOUT,
+                Retry::raw(TIMEOUT),
+                |_, _| {
+                    dials += 1;
+                    ssh_error("Connection closed by 192.0.2.1 port 22\r\n")
+                },
+                |_| pauses += 1,
+            )
+            .unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (4, LAN_HANDSHAKE_DROPPED));
+        assert_eq!((dials, pauses), (2, 1));
+        assert!(tr.can_fallback(&error));
         // The same drop of a status request is repeated once.
         let mut tr = configured("both", true);
         let request = json!({"v":1,"op":"status"});
-        let mut tries = [
-            ssh_error("Connection closed by 192.0.2.1 port 22\r\n"),
-            ok(br#"{"ok":true}"#),
-        ]
+        let mut tries = [session_drop("192.0.2.1"), ok(br#"{"ok":true}"#)]
         .into_iter();
         let mut pauses = Vec::new();
         let out = tr
