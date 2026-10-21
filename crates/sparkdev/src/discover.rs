@@ -2168,18 +2168,39 @@ pub(crate) mod tests {
         assert_eq!(saved(&home).hosts, ["192.0.2.40", "192.0.2.20"]);
     }
     #[test]
-    fn save_stores_the_canonical_address() {
+    fn save_refuses_every_non_canonical_form_and_stores_the_canonical_address() {
         let home = state::TestHome::new();
         let fixture = config(&["192.0.2.20"]);
         write_config(&home, &fixture);
-        // Whatever forms the parser accepts are stored as Ipv4Addr prints them.
-        for written in ["192.0.2.040", "192.0.2.40"] {
-            let (deps, _) = Fake::new().reply("192.0.2.40", 0, "").build();
-            match save(&fixture, written, &deps) {
-                Ok(out) => assert_eq!(out["host"], "192.0.2.40"),
-                Err(error) => assert_eq!((error.code, written), (2, "192.0.2.040")),
-            }
+        let before = raw_config(&home);
+        // Rust's Ipv4Addr parser accepts only four plain decimal octets
+        // without leading zeros, so every form it accepts already prints as
+        // itself. Canonical storage follows from that strict parser; this
+        // pins the refusal of every other form, with nothing checked or
+        // written.
+        for written in [
+            "192.0.2.040",
+            "0192.0.2.40",
+            "192.0.2.4e1",
+            "0xc0.0.2.40",
+            "3221226024",
+            "192.0.2",
+            " 192.0.2.40",
+            "192.0.2.40 ",
+        ] {
+            let (deps, calls) = Fake::new().reply("192.0.2.40", 0, "").build();
+            let error = save(&fixture, written, &deps).unwrap_err();
+            assert_eq!(
+                (error.code, error.message.as_str()),
+                (2, NOT_IPV4),
+                "{written}"
+            );
+            assert!(calls.lock().unwrap().verified.is_empty(), "{written}");
+            assert_eq!(raw_config(&home), before, "{written}");
         }
-        assert_eq!(saved(&home).hosts[0], "192.0.2.40");
+        let (deps, _) = Fake::new().reply("192.0.2.40", 0, "").build();
+        let out = save(&fixture, "192.0.2.40", &deps).unwrap();
+        assert_eq!(out["host"], "192.0.2.40");
+        assert_eq!(saved(&home).hosts, ["192.0.2.40", "192.0.2.20"]);
     }
 }
