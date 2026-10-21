@@ -6,7 +6,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git pkg-config libdbus-1-dev libssl-dev python3 python3-venv nodejs npm ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /opt/sparkdev/requirements.txt
-RUN python3 -m venv /opt/pyenv \
+RUN python3 -m venv --system-site-packages /opt/pyenv \
  && /opt/pyenv/bin/pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /opt/sparkdev/requirements.txt
 ENV PATH=/opt/pyenv/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CARGO_HOME=/cargo-home CARGO_TARGET_DIR=/target PYTHONDONTWRITEBYTECODE=1
