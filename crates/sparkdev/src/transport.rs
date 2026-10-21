@@ -658,12 +658,45 @@ const LOST_MARKERS: &[&str] = &[
 fn has_any(message: &str, markers: &[&str]) -> bool {
     markers.iter().any(|marker| message.contains(marker))
 }
+/// What OpenSSH itself wrote to stderr, without the text a device on the SSH
+/// port controls before the pinned host key is checked. Measured with
+/// OpenSSH 9.5 (Windows) against a loopback peer, that text reaches stderr
+/// verbatim in three messages: a malformed banner in "Bad remote protocol
+/// version identification: '...'", the text of the peer's disconnect message
+/// after "Received disconnect from <ip> port <n>:<code>: ", and the peer's
+/// algorithm list after "Their offer: " in "Unable to negotiate with ...".
+/// The banner cannot hold a line break, so that one line is dropped. The
+/// other two pass CR and LF through and can forge whole lines after them, so
+/// the text ends where they begin; OpenSSH exits right after either one.
+/// `message` is lowercased stderr. Every marker search reads only this.
+pub fn openssh_own(message: &str) -> String {
+    let mut own = String::new();
+    for line in message.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.contains("bad remote protocol version identification") {
+            continue;
+        }
+        if line.contains("received disconnect from") {
+            break;
+        }
+        if line.contains("unable to negotiate with") {
+            own.push_str(line.split(" their offer:").next().unwrap_or(line));
+            own.push('\n');
+            break;
+        }
+        own.push_str(line);
+        own.push('\n');
+    }
+    own
+}
 fn lost(message: &str) -> bool {
     has_any(message, LINK_MARKERS)
         || has_any(message, LOST_MARKERS)
         || (message.contains("connection to ") && message.contains(" timed out"))
 }
 /// Classify a failed dial from its exit code, stdout and lowercased stderr.
+/// Only what OpenSSH itself wrote counts (see `openssh_own`): text a device
+/// on the SSH port echoes before the host-key check never decides a result.
 ///
 /// An authentication or host-key marker is a rejection at any exit code.
 /// Otherwise only OpenSSH's own failure (exit 255) can be unreachability or
@@ -676,6 +709,7 @@ fn lost(message: &str) -> bool {
 /// and "Connection closed by <ip> port <n>" from one template in every
 /// phase, so those count as session drops.
 pub fn classify(code: Option<i32>, stdout: &[u8], message: &str) -> Failure {
+    let message = &openssh_own(message);
     if has_any(message, AUTH_MARKERS) {
         return Failure::Rejected;
     }
@@ -706,12 +740,16 @@ pub fn classify(code: Option<i32>, stdout: &[u8], message: &str) -> Failure {
     Failure::CommandFailed
 }
 /// Positive evidence that OpenSSH authenticated. Every dial runs with
-/// `LogLevel=VERBOSE`, at which OpenSSH writes "Authenticated to <host> ...
-/// using ..." (or "... (via proxy) using ...") to stderr when user
-/// authentication succeeds, before it opens the session that runs the
-/// command. `message` is lowercased stderr.
+/// `LogLevel=VERBOSE`, at which OpenSSH writes a line starting "Authenticated
+/// to <host> ... using ..." (or "... (via proxy) using ...") to stderr when
+/// user authentication succeeds, before it opens the session that runs the
+/// command. Only such a line that OpenSSH wrote itself counts, never the same
+/// words inside a peer's banner or disconnect text. `message` is lowercased
+/// stderr.
 fn authenticated(message: &str) -> bool {
-    message.contains("authenticated to ")
+    openssh_own(message)
+        .lines()
+        .any(|line| line.starts_with("authenticated to "))
 }
 /// OpenSSH's own failure (exit 255) with no stdout and without the
 /// authentication line: it ended before authentication, so no remote command
@@ -2571,6 +2609,64 @@ mod tests {
                 "stdout {stderr}"
             );
         }
+        // Before the host-key check a device on the SSH port controls some
+        // of stderr: a malformed banner, the text of a disconnect message and
+        // its algorithm list. These were captured from OpenSSH 9.5 (Windows)
+        // against a loopback peer; the disconnect text keeps CR and LF, so
+        // it can forge whole lines. None of it decides the result: a dial
+        // that never authenticated never reads as one that may have run.
+        let echoes = [
+            (
+                "Bad remote protocol version identification: 'SSH-2.0x authenticated to x connection reset'\r\nbanner exchange: Connection to 127.0.0.1 port 55420: invalid format\r\n",
+                Mismatch,
+            ),
+            (
+                "Received disconnect from 127.0.0.1 port 55422:2: x authenticated to x connection reset\r\nDisconnected from 127.0.0.1 port 55422\r\n",
+                CommandFailed,
+            ),
+            (
+                "Received disconnect from 127.0.0.1 port 63404:2: x\r\nAuthenticated to 192.0.2.5 ([192.0.2.5]:22) using \"publickey\".\r\nConnection reset by 192.0.2.5 port 22\r\nDisconnected from 127.0.0.1 port 63404\r\n",
+                CommandFailed,
+            ),
+            (
+                "Received disconnect from 127.0.0.1 port 55451:2: Permission denied (publickey). remote host identification has changed\r\nDisconnected from 127.0.0.1 port 55451\r\n",
+                CommandFailed,
+            ),
+            (
+                "Unable to negotiate with 192.0.2.5 port 22: no matching key exchange method found. Their offer: x\r\nAuthenticated to 192.0.2.5 ([192.0.2.5]:22) using \"publickey\".\r\nConnection reset by 192.0.2.5 port 22\r\n",
+                Mismatch,
+            ),
+            (
+                "Unable to negotiate with 192.0.2.5 port 22: no matching key exchange method found. Their offer: host key verification failed, connection reset\r\n",
+                Mismatch,
+            ),
+        ];
+        for (stderr, expected) in echoes {
+            assert_eq!(classified(Some(255), b"", stderr), expected, "{stderr}");
+            assert!(
+                before_auth(Some(255), b"", &stderr.to_lowercase()),
+                "{stderr}"
+            );
+        }
+        // OpenSSH's own part of a failed negotiation still counts.
+        assert_eq!(
+            classified(
+                Some(255),
+                b"",
+                "Unable to negotiate with 192.0.2.5 port 22: no matching host key type found. Their offer: ssh-dss\r\n"
+            ),
+            Rejected
+        );
+        // The authentication line counts only at the start of a line.
+        assert!(before_auth(
+            Some(255),
+            b"",
+            "kex_exchange_identification: x authenticated to 192.0.2.5\r\n"
+        ));
+        assert_eq!(
+            openssh_own("a\r\nbad remote protocol version identification: 'x'\r\nb\r\nreceived disconnect from x\r\nc\r\n"),
+            "a\nb\n"
+        );
         assert_eq!(Rejected.status(), "authentication_failed");
         assert_eq!(Unreachable.status(), "host_unreachable");
         assert_eq!(Dropped(Handshake).status(), "connection_dropped");
@@ -2697,6 +2793,47 @@ mod tests {
             "authentication_failed"
         );
         assert!(!kept(&tr));
+        // A device that took the remembered address controls text OpenSSH
+        // echoes before the host-key check, such as a malformed banner that
+        // names the authentication line and a reset. That is an incompatible
+        // server, not a drop that may have run the command: the address is
+        // forgotten and the configured address authenticates.
+        let mut tr = fixture(&hosts, "both");
+        let plan = stale(&mut tr);
+        tr.dial(&plan, [Open, Open], "true", |command| {
+            match hostname_of(&command).as_deref() {
+                Some("192.0.2.51") => ssh_error(
+                    "Bad remote protocol version identification: 'SSH-2.0x authenticated to x connection reset'\r\nbanner exchange: Connection to 192.0.2.51 port 22: invalid format\r\n",
+                ),
+                _ => ok(b""),
+            }
+        })
+        .unwrap();
+        assert_eq!(tr.info()["lan_host"], "192.0.2.50");
+        let attempts = tr.info()["attempted_routes"].clone();
+        assert_eq!(attempts[0]["reason"], REMEMBERED_MISMATCH_REASON);
+        assert!(!kept(&tr));
+        // Lines forged inside its disconnect text are not OpenSSH's either:
+        // the dial failed before authentication, and the result never says
+        // that the command may have run.
+        let mut tr = fixture(&hosts, "both");
+        let plan = stale(&mut tr);
+        let error = tr
+            .dial(&plan, [Open, Open], "true", |command| {
+                match hostname_of(&command).as_deref() {
+                    Some("192.0.2.51") => ssh_error(
+                        "Received disconnect from 192.0.2.51 port 22:2: x\r\nAuthenticated to 192.0.2.51 ([192.0.2.51]:22) using \"publickey\".\r\nConnection reset by 192.0.2.51 port 22\r\nDisconnected from 192.0.2.51 port 22\r\n",
+                    ),
+                    _ => ok(b""),
+                }
+            })
+            .unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (4, COMMAND_FAILED));
+        assert!(!is_dropped(&error));
+        assert_eq!(
+            tr.info()["attempted_routes"][0]["status"],
+            "ssh_command_failed"
+        );
         // Any other drop may have run the command: the request stops at the
         // remembered address, which is kept, with no fallback. That includes
         // the untagged reset and close without the authentication line,
@@ -3087,6 +3224,20 @@ mod tests {
             ),
             (
                 "Unable to negotiate with 192.0.2.9 port 22: no matching key exchange method found.\r\n",
+                "ssh_command_failed",
+                UNLISTED_HANDSHAKE_REASON,
+                LAN_UNREACHABLE,
+            ),
+            // Text the device there echoes before the host-key check, even
+            // naming the authentication line and a reset, is not OpenSSH's.
+            (
+                "Bad remote protocol version identification: 'SSH-2.0x authenticated to x connection reset'\r\nbanner exchange: Connection to 192.0.2.9 port 22: invalid format\r\n",
+                "ssh_command_failed",
+                UNLISTED_HANDSHAKE_REASON,
+                LAN_UNREACHABLE,
+            ),
+            (
+                "Received disconnect from 192.0.2.9 port 22:2: x\r\nAuthenticated to 192.0.2.9 ([192.0.2.9]:22) using \"publickey\".\r\nConnection reset by 192.0.2.9 port 22\r\nDisconnected from 192.0.2.9 port 22\r\n",
                 "ssh_command_failed",
                 UNLISTED_HANDSHAKE_REASON,
                 LAN_UNREACHABLE,
