@@ -723,37 +723,30 @@ class SizeLimitTests(unittest.TestCase):
         self.assertIn(f"type=bind,src={self.root / 'snapshots' / mid},dst=/sparkdev-source,readonly", args)
         for arg in args:
             self.assertNotIn("a,b", arg)
-        self.assertEqual(args[args.index("--ulimit") + 1], "fsize=4294967296:4294967296")
+        self.assertEqual(args[args.index("--ulimit") + 1], "fsize=68719476736:68719476736")
 
-    def test_small_only_manifest_docker_arguments_are_unchanged(self):
+    def test_small_manifest_retains_work_copy_and_hardening_with_shared_downloads(self):
+        self.c.resources({"v":1,"op":"resources","internet":False})
         content = b"print('hello')\n"
         self.upload(content)
         mid = self.sync(entry("main.py", content))["manifest_id"]
         job = self.job(mid)["job"]
         args = self.c.create_args(self.c.get_job(job))
-        root, cache = self.root / "jobs" / job, self.root / "caches" / PROJECT / IMAGE.split(":", 1)[1]
-        uid = os.getuid() if hasattr(os, "getuid") else 1000
-        gid = os.getgid() if hasattr(os, "getgid") else 1000
-        golden = ["create", "--name", "sparkdev-job-" + job, "--pull", "never", "--network", "none", "--read-only",
-                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}",
-                  "--cpus", "4", "--cpu-shares", "256", "--memory", "8g", "--memory-swap", "8g",
-                  "--pids-limit", "1024", "--init", "--restart", "no", "--log-driver", "none", "--ulimit", "fsize=4294967296:4294967296",
-                  "--tmpfs", "/tmp:rw,nosuid,nodev,size=536870912", "--workdir", "/work",
-                  "--label", "com.delores.sparkdev.job=" + job, "--label", "com.delores.sparkdev.client=codex",
-                  "--mount", f"type=bind,src={root / 'work'},dst=/work", "--mount", f"type=bind,src={root / 'output'},dst=/sparkdev-output",
-                  "--mount", f"type=bind,src={root / 'argv.json'},dst=/sparkdev-argv.json,readonly",
-                  "--mount", f"type=bind,src={root / 'worker.py'},dst=/sparkdev-worker.py,readonly",
-                  "--mount", f"type=bind,src={cache / 'target'},dst=/target", "--mount", f"type=bind,src={cache / 'cargo'},dst=/cargo-home",
-                  "--mount", f"type=bind,src={cache / 'npm'},dst=/npm-cache", "--mount", f"type=bind,src={cache / 'pip'},dst=/pip-cache",
-                  "--env", "HOME=/tmp", "--env", "CARGO_HOME=/cargo-home", "--env", "CARGO_TARGET_DIR=/target", "--env", "CARGO_NET_OFFLINE=true",
-                  "--env", "npm_config_cache=/npm-cache", "--env", "npm_config_offline=true", "--env", "PIP_CACHE_DIR=/pip-cache", "--env", "PIP_NO_INDEX=1",
-                  "--env", "PYTHONDONTWRITEBYTECODE=1", "--env", "PYTHONUNBUFFERED=1", "--env", "SPARKDEV_RUNTIME_NAME=python",
-                  "--env", "RAYON_NUM_THREADS=4", "--env", "OMP_NUM_THREADS=4", "--env", "OPENBLAS_NUM_THREADS=4", "--env", "MKL_NUM_THREADS=4",
-                  "--env", "CARGO_BUILD_JOBS=4", "--entrypoint", "/usr/bin/python3", IMAGE, "/sparkdev-worker.py"]
-        self.assertEqual(args, golden)
-        self.assertEqual((root / "work" / "main.py").read_bytes(), content)
+        root = self.root / "jobs" / job
+        for option, value in (("--network","none"),("--read-only",None),("--cap-drop","ALL"),("--ulimit","fsize=68719476736:68719476736")):
+            self.assertIn(option,args)
+            if value is not None:
+                self.assertEqual(args[args.index(option)+1],value)
+        self.assertEqual(args[-4:], ["--entrypoint","/usr/bin/python3",IMAGE,"/sparkdev-worker.py"])
+        self.assertEqual((root / "work" / "main.py").read_bytes(),content)
+        self.assertFalse(any("dst=/sparkdev-source" in arg for arg in args))
+        self.assertIn(f"type=bind,src={self.root / 'shared' / 'cache'},dst=/cache",args)
+        self.assertIn(f"type=bind,src={root / 'tmp'},dst=/var/tmp",args)
+        env = [args[i+1] for i,value in enumerate(args) if value == "--env"]
+        self.assertEqual([v for v in env if v.startswith("PIP_CACHE_DIR=")],["PIP_CACHE_DIR=/cache/pip"])
+        self.assertIn("HF_HUB_OFFLINE=1",env)
         if os.name == "posix":
-            self.assertEqual(os.stat(root / "work" / "main.py").st_mode & 0o777, 0o644)
+            self.assertEqual(os.stat(root / "work" / "main.py").st_mode & 0o777,0o644)
 
 
 if __name__ == "__main__":

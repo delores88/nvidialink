@@ -73,6 +73,9 @@ class ControllerTests(unittest.TestCase):
         self.docker = FakeDocker()
         self.c = Controller(self.root, self.docker, lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=NO_LINK, disk_probe=PLENTY_DISK)
         (self.root.parent / "runtimes.json").write_text(json.dumps({"v": 1, "runtimes": {"python": {"image": IMAGE, "provenance": "test fixture"}}}))
+        # These legacy tests exercise the offline runner. The 0.4 default-on and
+        # private-network protections are covered separately in test_internet_controller.
+        self.c.resources({"v": 1, "op": "resources", "internet": False})
 
     def tearDown(self):
         self.c.db.close()
@@ -502,8 +505,8 @@ class ControllerTests(unittest.TestCase):
         def unavailable(name):
             raise Rejected("docker_unavailable", "Fixture")
         self.docker.inspect = unavailable
-        with self.assertRaises(Rejected):
-            self.c.tick()
+        self.c.tick()
+        self.assertTrue(self.c._docker_unavailable)
         self.assertFalse(self.docker.calls)
         self.assertEqual(self.c.get_job(job["job"])["state"], "starting")
 
@@ -736,7 +739,7 @@ class NetworkLinkTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def reports(self, probe):
-        c = Controller(Path(self.tmp.name) / "state", FakeDocker(), lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=probe)
+        c = Controller(Path(self.tmp.name) / "state", FakeDocker(), lambda: 120, lambda: {"cpu_count": 20, "memory_gb": 120}, link_probe=probe, lan_probe=mock.Mock(side_effect=OSError("LAN discovery tested separately")))
         try:
             return c.rpc({"v": 1, "op": "status"}), c.rpc({"v": 1, "op": "doctor"})
         finally:

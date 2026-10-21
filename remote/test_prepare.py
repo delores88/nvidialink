@@ -138,7 +138,7 @@ class CommandTests(Sandbox):
         self.assertFalse({k for k in env if k.startswith("PYTHON")})
         self.assertEqual({k for k in env if k.startswith("PIP_")},
                          {"PIP_CONFIG_FILE", "PIP_CACHE_DIR", "PIP_INDEX_URL", "PIP_DISABLE_PIP_VERSION_CHECK", "PIP_NO_INPUT"})
-        self.assertEqual((env["PIP_CONFIG_FILE"], env["PIP_INDEX_URL"], env["PIP_CACHE_DIR"]), (os.devnull, "https://pypi.org/simple", "/pip-cache"))
+        self.assertEqual((env["PIP_CONFIG_FILE"], env["PIP_INDEX_URL"], env["PIP_CACHE_DIR"]), (os.devnull, "https://pypi.org/simple", "/prepare-cache/pip"))
         self.assertEqual(env["TMPDIR"], str(self.cache_tmp))
         folded = {k.upper(): v for k, v in env.items()}  # Windows environment keys are case-insensitive.
         self.assertEqual((folded["HTTPS_PROXY"], folded["NO_PROXY"]), ("http://sparkdev-proxy:3128", ""))

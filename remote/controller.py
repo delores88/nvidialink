@@ -28,6 +28,9 @@ import threading
 import time
 import uuid
 
+import model_cache
+import model_server
+
 CHUNK = 1024 * 1024
 GIB = 1024**3
 MAX_REQUEST = 32 * CHUNK
@@ -39,7 +42,9 @@ MAX_TREE = 32 * GIB
 MAX_SMALL_TREE = 8 * GIB
 LARGE_FILE = 512 * CHUNK
 # Controller only.
-JOB_FILE_LIMIT = 4 * GIB  # Largest file a job may write (--ulimit fsize).
+JOB_FILE_LIMIT = 64 * GIB  # Runs may download model shards; preparations keep their old 4 GiB cap.
+PREPARATION_FILE_LIMIT = 4 * GIB
+DISK_STOP_FLOOR = 16 * GIB
 DISK_RESERVE = 64 * GIB  # Free state-filesystem space kept back; syncs and uploads into it are refused, admissions wait.
 PUT_MANY_BODY = 12 * CHUNK
 INLINE_BYTES = 512 * CHUNK  # Snapshots needing at most this many new bytes assemble inside the RPC.
@@ -74,7 +79,7 @@ DENY_DIRS = {".git", "target", "node_modules", "dist", "build", "__pycache__",
              ".ssh", ".aws", ".azure", ".kube", ".gnupg", ".docker", "secrets", "credentials"}
 DENY_SUFFIX = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".ppk", ".ovpn", ".tfvars"}
 DENY_NAMES = re.compile(r"^(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?(?:\.pub)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|credentials(?:\..*)?|authorized_keys|known_hosts|nvsync\..*)$", re.I)
-SECRET = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-\d|(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}")
+SECRET = re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-\d|(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|hf_[A-Za-z]{34}")
 # Network link report. A leading letter or digit keeps a name from reading as an iw/nmcli option.
 IFNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,14}$")
 # systemd's MAC naming policy (Ubuntu's 73-usb-net-by-mac.rules for USB adapters) embeds the MAC.
@@ -186,7 +191,7 @@ def atomic_write(path, data, mode=0o600):
 
 
 def safe_open(path, flags=os.O_RDONLY, mode=0o600):
-    fd = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), mode)
+    fd = os.open(path, flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0), mode)
     if not stat.S_ISREG(os.fstat(fd).st_mode):
         os.close(fd)
         reject("unsafe_state", "State file is not regular")
@@ -512,6 +517,101 @@ def interface_ipv4(name):
     return ipaddress.IPv4Address(reply[20:24])
 
 
+def interface_netmask(name):
+    """Primary IPv4 netmask via SIOCGIFNETMASK; no packet is sent."""
+    import fcntl
+    import socket
+    import struct
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            reply = fcntl.ioctl(sock.fileno(), 0x891b, struct.pack("256s", name.encode("ascii")))
+        except OSError:
+            return None
+    return str(ipaddress.IPv4Address(reply[20:24]))
+
+
+def lan_addresses(sys_root=Path("/sys"), ipv4_addr=None, netmask=None, os_name=None):
+    """Private dial candidates, returned only by authenticated lan_routes, never status."""
+    if (os_name or os.name) != "posix":
+        return []
+    ipv4_addr, netmask = ipv4_addr or interface_ipv4, netmask or interface_netmask
+    base = Path(sys_root) / "class" / "net"
+    with os.scandir(base) as entries:
+        names = sorted(e.name for e in itertools.islice(entries, MAX_IFACES) if IFNAME.fullmatch(e.name))
+    kinds = {n: link_kind(base / n) for n in names}
+    private = tuple(ipaddress.IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+    rows = []
+    for name in names:
+        kind, member = kinds[name], name
+        if kind == "virtual":
+            member = carrier_member(base, name, kinds)
+            kind = kinds.get(member)
+        if kind not in ("wired", "wifi"):
+            continue
+        if kind == "wired" and sys_carrier(base / member / "carrier") is not True:
+            continue
+        if kind == "wifi" and sys_operstate(base / member / "operstate") != "up":
+            continue
+        try:
+            address = ipaddress.IPv4Address(str(ipv4_addr(name)))
+            mask = netmask(name)
+            if mask is None:
+                continue
+            network = ipaddress.IPv4Network((str(address), str(mask)), strict=False)
+        except (ValueError, OSError):
+            continue
+        if not any(address in n for n in private) or not 8 <= network.prefixlen <= 30:
+            continue
+        speed = sys_positive(base / member / "speed")
+        rows.append({"kind": kind, "ipv4": str(address), "prefix": network.prefixlen,
+                     "speed_mbps": speed if speed and speed <= 1000000 else None})
+    rows.sort(key=lambda r: (r["kind"] != "wired", -(r["speed_mbps"] or 0), r["ipv4"], r["prefix"]))
+    result, seen = [], set()
+    for row in rows:
+        if row["ipv4"] not in seen:
+            seen.add(row["ipv4"])
+            result.append(row)
+    return result[:8]
+
+
+def lan_routes_view(root, probe=None):
+    """Salted change signal and private addresses, with no audit or logging."""
+    routes = (probe or lan_addresses)()
+    result = {"v": 1, "routes": routes, "shared_network": any(
+        a["kind"] != b["kind"] and
+        ipaddress.IPv4Network((a["ipv4"], a["prefix"]), strict=False) ==
+        ipaddress.IPv4Network((b["ipv4"], b["prefix"]), strict=False)
+        for a in routes for b in routes)}
+    salt_path = Path(root) / "lan-epoch.salt"
+    try:
+        if not os.path.lexists(salt_path):
+            fd, name = tempfile.mkstemp(prefix=".lan-salt-", dir=root)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    os.chmod(name, 0o600)
+                    stream.write(os.urandom(16))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                try:
+                    os.link(name, salt_path)  # Atomic publication without replacing another RPC's salt.
+                except FileExistsError:
+                    pass
+            finally:
+                os.unlink(name)
+        with os.fdopen(safe_open(salt_path), "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if info.st_size != 16 or info.st_nlink != 1 or (os.name == "posix" and
+                    (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600)):
+                return result
+            salt = stream.read(17)
+        if len(salt) == 16:
+            signal = sorted([r["kind"], r["ipv4"], r["prefix"]] for r in routes)
+            result["epoch"] = sha(salt + canonical(signal))[:16]
+    except (OSError, ValueError, Rejected):
+        pass
+    return result
+
+
 def address_owner(server, zone, names, proc_root, routes, ipv4_addr):
     if zone:
         return zone if zone in names else None
@@ -762,8 +862,10 @@ def network_view(raw):
 
     Additive fields keep v:1; only a breaking change bumps v.
     """
+    epoch = raw.get("lan_epoch") if isinstance(raw, dict) else None
+    epoch_field = {"lan_epoch": epoch} if isinstance(epoch, str) and re.fullmatch(r"[0-9a-f]{16}", epoch) else {}
     if not isinstance(raw, dict) or raw.get("observed") is not True:
-        return {"v": 1, "observed": False, "basis": "unknown"}
+        return {"v": 1, "observed": False, "basis": "unknown", **epoch_field}
 
     def mapping(value):
         return value if isinstance(value, dict) else {}
@@ -833,7 +935,7 @@ def network_view(raw):
                 "source": choice(radio.get("source"), WIFI_SOURCES)}
     active = link(raw.get("active"), True)
     basis = choice(raw.get("basis"), ("ssh_session", "default_route")) if active else None
-    return {"v": 1, "observed": True, "basis": basis or "unknown", "active": active,
+    return {"v": 1, "observed": True, "basis": basis or "unknown", "active": active, **epoch_field,
             "underlay": link(raw.get("underlay"), False), "wired": wired,
             "wired_up": sum(p["carrier"] is True for p in wired) if wired_up is None else wired_up,
             "wired_lan_up": sum(p["carrier"] is True and p["default_route"] for p in wired) if wired_lan_up is None else wired_lan_up,
@@ -857,41 +959,97 @@ def validate_resources(value, hardware):
 
 
 def reserved_cpu(row):
-    return row["cpu"] + (PROXY_CPU if row["proxy_image"] else 0)
+    return row["cpu"] + (PROXY_CPU if is_preparation(row) else 0)
 
 
 def reserved_memory(row):
-    return row["memory"] + (PROXY_MEMORY_GB if row["proxy_image"] else 0)
+    return row["memory"] + (PROXY_MEMORY_GB if is_preparation(row) else 0)
 
 
 def is_preparation(row):
     return json.loads(row["request"])["op"] == "prepare"
 
 
+INTERNET_COUNTERS = ("connections", "http_requests", "bytes_down", "bytes_up", "blocked_private", "refused_invalid", "failed_connect")
+
+
+def internet_deny(proc_root=Path("/proc")):
+    """Snapshot connected prefixes and all local IPv4 addresses before binding the file."""
+    # On the real Linux runner both files must be readable: missing host facts fail closed.
+    routes_text = bounded_text(proc_root / "net" / "route", PROC_READ + 1)
+    fib = bounded_text(proc_root / "net" / "fib_trie", PROC_READ + 1)
+    if routes_text is None or fib is None or len(routes_text.encode()) > PROC_READ or len(fib.encode()) > PROC_READ:
+        reject("network_facts", "Spark network addresses could not be checked")
+    values = {str(network) for _, network, _, flags in route_table(proc_root)
+              if network.version == 4 and network.prefixlen > 0 and not flags & RTF_GATEWAY}
+    previous = None
+    for line in fib.splitlines():
+        match = re.search(r"(?:\+--|\|--)\s+(\d+\.\d+\.\d+\.\d+)(?:\s|$)", line)
+        if match:
+            try:
+                previous = ipaddress.IPv4Address(match.group(1))
+            except ValueError:
+                previous = None
+        elif re.search(r"/32\s+host\s+LOCAL\s*$", line) and previous is not None:
+            values.add(str(previous) + "/32")
+            previous = None
+    if len(values) > 256:
+        reject("network_facts", "Spark has too many network addresses to check")
+    return sorted(values)
+
+
+def guard_bridge_ipv6(network, proc_root=Path("/proc")):
+    root = proc_root / "sys" / "net" / "ipv6"
+    if not root.exists():
+        return
+    bridge = (network.get("Options") or {}).get("com.docker.network.bridge.name")
+    if not bridge:
+        identity = network.get("Id", "")
+        bridge = "br-" + identity[:12] if re.fullmatch(r"[0-9a-f]{64}", identity) else ""
+    if not IFNAME.fullmatch(bridge):
+        reject("ipv6_link", "The private job network could not be checked for IPv6 isolation")
+    conf = root / "conf" / bridge
+    if (bounded_text(conf / "disable_ipv6") or "").strip() != "1" and (bounded_text(conf / "addr_gen_mode") or "").strip() != "1":
+        reject("ipv6_link", "The private job network does not disable IPv6 link-local access")
+
+
 class Docker:
+    @staticmethod
+    def invoke(args, timeout):
+        try:
+            return subprocess.run(["docker", *args], capture_output=True, timeout=timeout, check=False)
+        except (OSError, subprocess.SubprocessError):
+            reject("docker_unavailable", "Docker command could not complete")
+
     def call(self, args, timeout=30):
-        result = subprocess.run(["docker", *args], capture_output=True, timeout=timeout, check=False)
+        result = self.invoke(args, timeout)
         if result.returncode:
             reject("docker_failed", "Docker operation failed; owner may inspect local service logs")
         return result.stdout
 
     def inspect(self, name):
-        result = subprocess.run(["docker", "container", "inspect", name], capture_output=True, timeout=10, check=False)
+        result = self.invoke(["container", "inspect", name], 10)
         if result.returncode:
             # Only a definite not-found permits a new launch. Daemon failures must never
             # be interpreted as absence, or restart reconciliation could duplicate work.
             if b"No such container" in result.stderr or b"No such object" in result.stderr:
                 return None
             reject("docker_unavailable", "Docker state is unavailable")
-        return json.loads(result.stdout)[0]
+        try:
+            return json.loads(result.stdout)[0]
+        except (ValueError, IndexError, KeyError, TypeError):
+            reject("docker_unavailable", "Docker state is invalid")
 
     def network_inspect(self, name):
-        result = subprocess.run(["docker", "network", "inspect", name], capture_output=True, timeout=10, check=False)
+        result = self.invoke(["network", "inspect", name], 10)
         if result.returncode:
             if b"not found" in result.stderr or b"No such network" in result.stderr:
                 return None
             reject("docker_unavailable", "Docker network state is unavailable")
-        return json.loads(result.stdout)[0]
+        try:
+            return json.loads(result.stdout)[0]
+        except (ValueError, IndexError, KeyError, TypeError):
+            reject("docker_unavailable", "Docker network state is invalid")
 
 
 class Progress:
@@ -918,7 +1076,7 @@ class Progress:
 
 class Controller:
     def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None, link_probe=None, *,
-                 disk_probe=None, spawn=None, clock=None, sleep=None):
+                 disk_probe=None, spawn=None, clock=None, sleep=None, lan_probe=None):
         self.root = Path(root or os.environ.get("SPARKDEV_STATE", Path.home() / "sparkdev/state")).absolute()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.root.is_symlink():
@@ -967,6 +1125,9 @@ class Controller:
             self.db.execute("ALTER TABLE jobs ADD COLUMN proxy_image TEXT")
         if "proxy_cleaned" not in columns:
             self.db.execute("ALTER TABLE jobs ADD COLUMN proxy_cleaned INTEGER NOT NULL DEFAULT 0")
+        for name in ("egress", "internet_use"):
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE jobs ADD COLUMN {name} TEXT")
         if "scratch_mb" not in columns:
             self.db.execute("ALTER TABLE jobs ADD COLUMN scratch_mb INTEGER NOT NULL DEFAULT 512")
         if "headroom_gb" not in columns:
@@ -975,6 +1136,12 @@ class Controller:
         self.memory_probe = memory_probe or available_gb
         self.hardware_probe = hardware_probe or hardware_capacity
         self.link_probe = link_probe or network_link
+        self.lan_probe = lan_probe or lan_addresses
+        self.services = model_server.ServiceManager(self, sys.modules[__name__])
+        self.download_cache = model_cache.CacheManager(self, sys.modules[__name__])
+        if "launch_failures" not in columns:
+            self.db.execute("ALTER TABLE jobs ADD COLUMN launch_failures INTEGER NOT NULL DEFAULT 0")
+        self._docker_unavailable = False
 
     def resource_policy(self):
         hardware = self.hardware_probe()
@@ -990,18 +1157,54 @@ class Controller:
             limits = validate_resources({"cpu_per_job": min(CPUS, total_cpu), "memory_gb_per_job": min(MEMORY_GB, total_memory),
                                          "cpu_total": total_cpu, "memory_gb_total": total_memory, "client_jobs": 2,
                                          "client_cpu": min(8, total_cpu), "headroom_gb": headroom}, hardware)
-        return {"limits": limits, "hardware": hardware, "policy_saved": bool(stored),
+        return {"limits": limits, "hardware": hardware, "policy_saved": bool(stored), "internet": self.internet_policy(),
                 "applies_to": "new_jobs_and_admissions", "running_jobs_unchanged": True,
                 "legacy_project_overrides": "clamped_to_per_job_caps" if stored else "preserved"}
 
     def resources(self, request):
-        fields(request, ("v", "op"), ("limits",))
-        if "limits" in request:
-            limits = validate_resources(request["limits"], self.hardware_probe())
+        fields(request, ("v", "op"), ("limits", "internet"))
+        limits = validate_resources(request["limits"], self.hardware_probe()) if "limits" in request else None
+        if "internet" in request and type(request["internet"]) is not bool:
+            reject("invalid_request", "internet must be boolean")
+        if limits is not None or "internet" in request:
             with self.transaction():
-                self.db.execute("INSERT OR REPLACE INTO settings VALUES('resource_policy',?)", (canonical(limits).decode(),))
-                self.audit("resource_policy_updated", limits=limits)
+                if limits is not None:
+                    self.db.execute("INSERT OR REPLACE INTO settings VALUES('resource_policy',?)", (canonical(limits).decode(),))
+                    self.audit("resource_policy_updated", limits=limits)
+                if "internet" in request:
+                    self.db.execute("INSERT OR REPLACE INTO settings VALUES('internet_policy',?)", (canonical({"v": 1, "enabled": request["internet"]}).decode(),))
+                    self.audit("internet_policy_updated", enabled=request["internet"])
         return self.resource_policy()
+
+    def internet_policy(self):
+        stored = self.db.execute("SELECT value FROM settings WHERE key='internet_policy'").fetchone()
+        enabled = True
+        if stored:
+            value = json.loads(stored[0])
+            fields(value, ("v", "enabled"))
+            if type(value["v"]) is not int or value["v"] != 1 or type(value["enabled"]) is not bool:
+                reject("invalid_internet_policy", "Saved internet policy is invalid")
+            enabled = value["enabled"]
+        return {"enabled": enabled, "saved": bool(stored), "available": "python" in self.registry(),
+                "blocks": "home and private networks, this Spark, cloud metadata",
+                "applies": "new jobs; turning off also cuts running jobs"}
+
+    def job_network(self):
+        policy = self.internet_policy()
+        image = self.registry().get("python", {}).get("image")
+        egress = "off" if not policy["enabled"] else "internet" if image else "no_helper"
+        return {"egress": egress, "proxy_image": image if egress == "internet" else None}
+
+    def stage_network(self, job_root, network):
+        if network["egress"] == "internet":
+            atomic_write(job_root / "proxy.py", Path(__file__).with_name("proxy.py").read_bytes(), 0o444)
+
+    def internet_status(self, row):
+        names = {"internet": "on", "off": "off", "cut": "cut_by_owner", "no_helper": "unavailable", "setup_failed": "unavailable"}
+        reason = {"cut": "Internet was turned off by the owner", "no_helper": "The Python runtime needed for internet is not installed",
+                  "setup_failed": "The private connection could not be safely prepared; this job runs offline"}.get(row["egress"])
+        return {"internet": names.get(row["egress"], "package_registries_only" if is_preparation(row) else None),
+                "internet_reason": reason, "internet_use": json.loads(row["internet_use"]) if row["internet_use"] else None}
 
     @contextlib.contextmanager
     def transaction(self):
@@ -1012,6 +1215,26 @@ class Controller:
         except BaseException:
             self.db.execute("ROLLBACK")
             raise
+
+    @contextlib.contextmanager
+    def runtime_gate(self):
+        """Only DGXBridge's runtime installer owns the exclusive side of this gate."""
+        if os.name != "posix":
+            yield
+            return
+        import fcntl
+        fd = safe_open(self.root.parent / "runtime-refresh.lock", os.O_RDWR | os.O_CREAT)
+        try:
+            info = os.fstat(fd)
+            if info.st_uid != os.getuid() or info.st_nlink != 1:
+                reject("unsafe_state", "Runtime refresh lock ownership is unsafe")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                reject("runtime_refresh_in_progress", "DGXBridge is updating its Spark runtime; retry this request afterward")
+            yield
+        finally:
+            os.close(fd)
 
     def audit(self, kind, job=None, client=None, **data):
         previous = self.db.execute("SELECT hash FROM audit ORDER BY seq DESC LIMIT 1").fetchone()
@@ -1562,12 +1785,13 @@ class Controller:
     def get_job(self, job):
         identifier(job)
         row = self.db.execute("SELECT * FROM jobs WHERE id=?", (job,)).fetchone()
+        if row is None and model_server.NAME.fullmatch(job) and not job.startswith("laptop"):
+            row = self.services.resolve(job)
         if row is None:
             reject("job_not_found", "Job does not exist")
         return row
 
-    @staticmethod
-    def job_status(row):
+    def job_status(self, row):
         return {"job": row["id"], "project": row["project"], "manifest_id": row["manifest"],
                 "runtime": row["runtime"], "runtime_digest": row["image"], "client": row["client"],
                 "where": "spark", "state": row["state"], "exit_code": row["exit_code"],
@@ -1575,10 +1799,11 @@ class Controller:
                 "cancel_requested": bool(row["cancel"]), "cache_hit": row["cached_from"] is not None,
                 "cached_from": row["cached_from"], "error": row["error"], "cpu": row["cpu"], "memory_gb": row["memory"],
                 "reserved_cpu": reserved_cpu(row), "reserved_memory_gb": reserved_memory(row),
-                "scratch_mb": row["scratch_mb"], "headroom_gb": row["headroom_gb"]}
+                "scratch_mb": row["scratch_mb"], "headroom_gb": row["headroom_gb"],
+                **self.internet_status(row), **model_server.status_fields(row)}
 
     def claim_conflict(self, project):
-        remote = self.db.execute("SELECT id FROM jobs WHERE project=? AND state IN ('queued','starting','running')", (project,)).fetchone()
+        remote = self.db.execute("SELECT id FROM jobs WHERE project=? AND kind<>'service' AND state IN ('queued','starting','running')", (project,)).fetchone()
         # A sleeping laptop cannot prove that its workload stopped at lease expiry.
         # Keep stale claims blocking until that client explicitly reports/relinquishes.
         local = self.db.execute("SELECT id FROM leases WHERE project=? AND state='running'", (project,)).fetchone()
@@ -1598,6 +1823,8 @@ class Controller:
             reject("invalid_request", "no_cache must be boolean")
         encoded = canonical(request).decode()
         with self.transaction():
+            if self.db.execute("SELECT 1 FROM service_requests WHERE request_id=?", (request_id,)).fetchone():
+                reject("idempotency_conflict", "Request ID already belongs to a model server")
             old = self.db.execute("SELECT * FROM jobs WHERE request_id=?", (request_id,)).fetchone()
             if old:
                 if old["request"] != encoded:
@@ -1643,11 +1870,16 @@ class Controller:
                 cpu -= PROXY_CPU
                 memory -= PROXY_MEMORY_GB
                 scratch_mb = min(scratch_mb, int(memory * 512))
-            cache_key = sha(canonical({"project": project, "manifest": manifest_id, "argv": args,
-                                      "runtime": runtime, "worker": sha(worker), "policy": 1,
-                                      "cpu": cpu, "memory": memory, "scratch_mb": scratch_mb}))
+            network = self.job_network() if request["op"] == "run" else {"egress": None, "proxy_image": registry["python"]["image"]}
+            cache_body = {"project": project, "manifest": manifest_id, "argv": args,
+                          "runtime": runtime, "worker": sha(worker), "policy": 2,
+                          "network": "open" if network["egress"] == "internet" else "none",
+                          "cpu": cpu, "memory": memory, "scratch_mb": scratch_mb}
+            if network["egress"] == "internet":
+                cache_body["egress"] = "internet"
+            cache_key = sha(canonical(cache_body))
             cached = None if request.get("no_cache") else self.db.execute(
-                "SELECT id FROM jobs WHERE cache_key=? AND state='succeeded' AND cached_from IS NULL ORDER BY finished DESC LIMIT 1", (cache_key,)).fetchone()
+                "SELECT id FROM jobs WHERE cache_key=? AND egress IS ? AND state='succeeded' AND cached_from IS NULL ORDER BY finished DESC LIMIT 1", (cache_key, network["egress"])).fetchone()
             if not cached:
                 self.claim_conflict(project)
             job = uuid.uuid4().hex
@@ -1658,13 +1890,14 @@ class Controller:
             if request["op"] == "prepare":
                 for name in ("prepare.py", "proxy.py"):
                     atomic_write(job_root / name, Path(__file__).with_name(name).read_bytes(), 0o444)
+            elif not cached:
+                self.stage_network(job_root, network)
             self.db.execute("""INSERT INTO jobs(id,request_id,request,project,manifest,runtime,image,client,state,created,
                             finished,exit_code,cache_key,cached_from) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                             (job, request_id, encoded, project, manifest_id, request["runtime"], runtime["image"], client,
                              "succeeded" if cached else "queued", now, now if cached else None, 0 if cached else None,
                              cache_key, cached[0] if cached else None))
-            if request["op"] == "prepare":
-                self.db.execute("UPDATE jobs SET proxy_image=? WHERE id=?", (registry["python"]["image"], job))
+            self.db.execute("UPDATE jobs SET proxy_image=?,egress=? WHERE id=?", (network["proxy_image"] if not cached else None, network["egress"], job))
             self.db.execute("UPDATE jobs SET cpu=?,memory=?,scratch_mb=?,headroom_gb=? WHERE id=?", (cpu, memory, scratch_mb, limits["headroom_gb"], job))
             self.audit("job_cached" if cached else "job_queued", job, client, cache_key=cache_key, cached_from=cached[0] if cached else None)
         return self.job_status(self.get_job(job))
@@ -1713,11 +1946,15 @@ class Controller:
             time.sleep(min(0.2, max(0, deadline - time.monotonic())))
 
     def cancel(self, request):
+        if "name" in request:
+            return self.services.cancel_name(request)
         fields(request, ("v", "op", "job"))
         with self.transaction():
             row = self.get_job(request["job"])
             if row["state"] not in TERMINAL and not row["cancel"]:
                 self.db.execute("UPDATE jobs SET cancel=1 WHERE id=?", (row["id"],))
+                if model_server.is_service(row):
+                    self.db.execute("UPDATE jobs SET stop_reason='stopped' WHERE id=?", (row["id"],))
                 self.audit("cancel_requested", row["id"], row["client"])
                 if row["state"] == "queued":
                     self.db.execute("UPDATE jobs SET state='cancelled',exit_code=130,finished=? WHERE id=?", (time.time(), row["id"]))
@@ -1815,11 +2052,11 @@ class Controller:
             reject("invalid_request", "all must be boolean")
         policy = self.resource_policy()
         registry = self.registry()
-        jobs = [self.job_status(r) for r in self.db.execute("SELECT * FROM jobs ORDER BY created DESC LIMIT 200")]
+        jobs = [self.job_status(r) for r in self.db.execute("SELECT * FROM jobs WHERE state IN ('queued','starting','running') OR id IN (SELECT id FROM jobs WHERE state NOT IN ('queued','starting','running') ORDER BY created DESC LIMIT 200) ORDER BY created DESC")]
         queue = self.queue_view()
         storage = self.storage_view(queued=sum(item["remaining_bytes"] for item in queue))
         for job in jobs:
-            if job["state"] == "queued" and policy["policy_saved"] and (job["reserved_cpu"] > policy["limits"]["cpu_per_job"] or job["reserved_memory_gb"] > policy["limits"]["memory_gb_per_job"]):
+            if job["kind"] != "service" and job["state"] == "queued" and policy["policy_saved"] and (job["reserved_cpu"] > policy["limits"]["cpu_per_job"] or job["reserved_memory_gb"] > policy["limits"]["memory_gb_per_job"]):
                 job["admission_blocked"] = "Saved per-job caps are below this existing job's immutable allocation; raise caps or cancel and resubmit"
             elif job["state"] == "queued":
                 small = self.work_bytes(job["manifest_id"])
@@ -1827,7 +2064,7 @@ class Controller:
                     job["admission_blocked"] = (f"Spark has {gib(storage['free_bytes'])} GiB free; this job's work copy needs {gib(small)} GiB, "
                                                 f"snapshots being assembled {gib(storage['queued_bytes'])} GiB, and DGXBridge keeps "
                                                 f"{DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space; the job stays queued")
-        for row in self.db.execute("SELECT * FROM leases ORDER BY created DESC LIMIT 200"):
+        for row in self.db.execute("SELECT * FROM leases WHERE state='running' OR id IN (SELECT id FROM leases WHERE state<>'running' ORDER BY created DESC LIMIT 200) ORDER BY created DESC"):
             jobs.append({"job": row["job"] or row["id"], "project": row["project"], "client": row["client"], "where": "laptop",
                          "state": "lease_lost" if row["state"] == "running" and row["expires"] < time.time() else row["state"],
                          "exit_code": row["exit_code"], "created_at": row["created"], "expires_at": row["expires"], "next_offset": row["log_offset"]})
@@ -1838,13 +2075,24 @@ class Controller:
             network = network_view(bounded_call(self.link_probe, PROBE_LIMIT))
         except Exception:
             pass
+        try:
+            epoch = bounded_call(lambda: lan_routes_view(self.root, self.lan_probe), PROBE_LIMIT).get("epoch")
+            if epoch:
+                network["lan_epoch"] = epoch
+        except Exception:
+            pass
         # Every preparation, whatever its runtime, needs the Python image for its proxy.
         return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(registry),
                 "preparable_runtimes": list(registry) if "python" in registry else [],
                 "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": self.scheduler_alive()},
                 **policy, "dependency_preparation": "isolated_allowlist_proxy", "network": network,
                 # `limits` above is the resource policy; transfer limits use their own key.
-                "storage": storage, "sync_limits": sync_limits(), "materializing": queue}
+                "storage": storage, "sync_limits": sync_limits(), "materializing": queue,
+                "downloads": self.download_cache.status(storage)}
+
+    def lan_routes(self, request):
+        fields(request, ("v", "op"))
+        return bounded_call(lambda: lan_routes_view(self.root, self.lan_probe), PROBE_LIMIT)
 
     def doctor(self, request):
         fields(request, ("v", "op"))
@@ -1865,7 +2113,14 @@ class Controller:
             if not isinstance(request, dict) or type(request.get("v")) is not int or request["v"] != 1:
                 reject("version_unsupported", "Protocol version 1 is required")
             op = request.get("op")
-            if op not in {"put", "put_many", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources"}:
+            if op in {"run", "prepare", "serve"}:
+                with self.runtime_gate():
+                    return {"ok": True, **(self.services.serve(request) if op == "serve" else getattr(self, op)(request))}
+            if op in {"call", "reply"}:
+                return {"ok": True, **getattr(self.services, op)(request)}
+            if op == "downloads":
+                return {"ok": True, **self.download_cache.downloads(request)}
+            if op not in {"put", "put_many", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources", "lan_routes"}:
                 reject("unknown_operation", "Unsupported operation")
             return {"ok": True, **getattr(self, op)(request)}
         except Rejected as error:
@@ -1884,6 +2139,8 @@ class Controller:
     def finish(self, row, state, code, error=None):
         with self.transaction():
             self.db.execute("UPDATE jobs SET state=?,exit_code=?,finished=?,error=? WHERE id=?", (state, code, time.time(), error, row["id"]))
+            if model_server.is_service(row) and error in ("memory_watchdog", "disk_full"):
+                self.db.execute("UPDATE jobs SET stop_reason=? WHERE id=?", (error, row["id"]))
             self.audit("job_finished", row["id"], row["client"], state=state, exit_code=code, error=error)
 
     def manifest_entries(self, manifest_id):
@@ -1965,10 +2222,12 @@ class Controller:
         uid = os.getuid() if hasattr(os, "getuid") else 1000
         gid = os.getgid() if hasattr(os, "getgid") else 1000
         preparing = is_preparation(row)
-        args = ["create", "--name", self.container_name(row["id"]), "--pull", "never", "--network", "sparkdev-fetch-" + row["id"] if preparing else "none", "--read-only",
+        online = row["egress"] == "internet"
+        file_limit = PREPARATION_FILE_LIMIT if preparing else JOB_FILE_LIMIT
+        args = ["create", "--name", self.container_name(row["id"]), "--pull", "never", "--network", "sparkdev-fetch-" + row["id"] if preparing or online else "none", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}",
                 "--cpus", str(row["cpu"]), "--cpu-shares", "256", "--memory", f"{row['memory']}g", "--memory-swap", f"{row['memory']}g",
-                "--pids-limit", "1024", "--init", "--restart", "no", "--log-driver", "none", "--ulimit", f"fsize={JOB_FILE_LIMIT}:{JOB_FILE_LIMIT}",
+                "--pids-limit", "1024", "--init", "--restart", "no", "--log-driver", "none", "--ulimit", f"fsize={file_limit}:{file_limit}",
                 "--tmpfs", "/tmp:rw,nosuid,nodev,size=" + str(row["scratch_mb"] * 1024 * 1024), "--workdir", "/work",
                 "--label", "com.delores.sparkdev.job=" + row["id"], "--label", "com.delores.sparkdev.client=" + row["client"],
                 "--mount", f"type=bind,src={work},dst=/work", "--mount", f"type=bind,src={output},dst=/sparkdev-output",
@@ -1983,10 +2242,29 @@ class Controller:
                 reject("unsafe_state", "Cache root is a symlink")
             path.mkdir(exist_ok=True)
             args += ["--mount", f"type=bind,src={path},dst={destination}"]
-        for value in ("HOME=/tmp", "CARGO_HOME=/cargo-home", "CARGO_TARGET_DIR=/target", "CARGO_NET_OFFLINE=true",
-                      "npm_config_cache=/npm-cache", "npm_config_offline=true", "PIP_CACHE_DIR=/pip-cache", "PIP_NO_INDEX=1",
+        for value in ("HOME=/tmp", "CARGO_HOME=/cargo-home", "CARGO_TARGET_DIR=/target", "CARGO_NET_OFFLINE=false" if online else "CARGO_NET_OFFLINE=true",
+                      "npm_config_cache=/npm-cache", "npm_config_offline=false" if online else "npm_config_offline=true",
+                      *(("PIP_NO_INDEX=1",) if not online else ()),
                       "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1", "SPARKDEV_RUNTIME_NAME=" + row["runtime"]):
             args += ["--env", value]
+        if online:
+            # Docker's embedded resolver still knows the helper alias, but must
+            # not forward workload DNS queries through the host's resolver.
+            args += ["--dns", "127.0.0.1"]
+            scratch = root / "scratch"
+            if scratch.is_symlink():
+                reject("unsafe_state", "Job scratch is a symlink")
+            scratch.mkdir(mode=0o700, exist_ok=True)
+            args += ["--mount", f"type=bind,src={scratch},dst=/sparkdev-scratch"]
+            for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"):
+                args += ["--env", name + "=http://sparkdev-proxy:3128"]
+            for value in ("NO_PROXY=localhost,127.0.0.1,::1,127.0.0.0/8", "no_proxy=localhost,127.0.0.1,::1,127.0.0.0/8",
+                          "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=url.https://github.com/.insteadOf", "GIT_CONFIG_VALUE_0=git@github.com:",
+                          "GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf", "GIT_CONFIG_VALUE_1=ssh://git@github.com/",
+                          "CARGO_NET_GIT_FETCH_WITH_CLI=true", "CARGO_NET_RETRY=10", "PIP_TIMEOUT=60", "npm_config_fetch_retries=5",
+                          "HF_HUB_DOWNLOAD_TIMEOUT=60", "HF_HUB_DISABLE_TELEMETRY=1", "NODE_USE_ENV_PROXY=1", "SPARKDEV_INTERNET=on",
+                          "PYTHONUSERBASE=/sparkdev-scratch/python", "PIP_BREAK_SYSTEM_PACKAGES=1"):
+                args += ["--env", value]
         for name in ("RAYON_NUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "CARGO_BUILD_JOBS"):
             args += ["--env", name + "=" + str(max(1, int(row["cpu"])))]
         if row["runtime"] == "cuda" and preparing:
@@ -2002,30 +2280,60 @@ class Controller:
                 args += ["--env", name + "=http://sparkdev-proxy:3128"]
             for value in ("CARGO_NET_OFFLINE=false", "npm_config_offline=false", "PIP_NO_INDEX=0", "NO_PROXY=", "no_proxy="):
                 args += ["--env", value]
+        args += self.download_cache.create_args(row, preparing=preparing, network_open=online)
+        self.services.create_args(row, args)
         args += ["--entrypoint", "/usr/bin/python3", row["image"], "/sparkdev-worker.py"]
         return args
 
     def ensure_proxy(self, row):
-        if not row["proxy_image"]:
+        if not row["proxy_image"] or row["egress"] in ("cut", "setup_failed"):
             return
+        online = row["egress"] == "internet"
+        root = self.root / "jobs" / row["id"]
+        if online:
+            deny = root / "egress-deny.json"
+            if not os.path.lexists(deny):
+                atomic_write(deny, canonical(internet_deny()), 0o444)
+            elif regular_size(deny) is None or regular_size(deny) > 65536:
+                reject("unsafe_state", "Job network deny file is not a bounded regular file")
+            for name in ("egress", "scratch"):
+                path = root / name
+                if path.is_symlink():
+                    reject("unsafe_state", "Job network state is a symlink")
+                path.mkdir(mode=0o700, exist_ok=True)
         network = "sparkdev-fetch-" + row["id"]
         info = self.docker.network_inspect(network)
         if info is None:
             self.docker.call(["network", "create", "--internal", "--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated",
                               "--opt", "com.docker.network.bridge.gateway_mode_ipv6=isolated", "--label", "com.delores.sparkdev.job=" + row["id"], network])
-        elif not info.get("Internal") or (info.get("Labels") or {}).get("com.delores.sparkdev.job") != row["id"] or (info.get("Options") or {}).get("com.docker.network.bridge.gateway_mode_ipv4") != "isolated":
+            info = self.docker.network_inspect(network)
+        if not info or not info.get("Internal") or (info.get("Labels") or {}).get("com.delores.sparkdev.job") != row["id"] or (info.get("Options") or {}).get("com.docker.network.bridge.gateway_mode_ipv4") != "isolated":
             reject("network_conflict", "Dependency network does not match its job")
+        if online:
+            guard_bridge_ipv6(info)
         name = "sparkdev-proxy-" + row["id"]
         info = self.docker.inspect(name)
         if info is None:
             uid = os.getuid() if hasattr(os, "getuid") else 1000
             gid = os.getgid() if hasattr(os, "getgid") else 1000
-            self.docker.call(["create", "--name", name, "--pull", "never", "--network", "bridge", "--read-only", "--cap-drop", "ALL",
-                              "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}", "--cpus", str(PROXY_CPU), "--cpu-shares", "128",
-                              "--memory", f"{int(PROXY_MEMORY_GB * 1024)}m", "--memory-swap", f"{int(PROXY_MEMORY_GB * 1024)}m", "--pids-limit", "64", "--log-driver", "none",
+            args = ["create", "--name", name, "--pull", "never", "--network", "bridge", "--read-only", "--cap-drop", "ALL",
+                              "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}", "--cpus", "1" if online else str(PROXY_CPU), "--cpu-shares", "512" if online else "128",
+                              "--memory", "256m" if online else f"{int(PROXY_MEMORY_GB * 1024)}m", "--memory-swap", "256m" if online else f"{int(PROXY_MEMORY_GB * 1024)}m", "--pids-limit", "512" if online else "64", "--log-driver", "none",
                               "--label", "com.delores.sparkdev.job=" + row["id"], "--mount",
-                              f"type=bind,src={self.root / 'jobs' / row['id'] / 'proxy.py'},dst=/sparkdev-proxy.py,readonly",
-                              "--entrypoint", "/usr/bin/python3", row["proxy_image"], "/sparkdev-proxy.py"])
+                              f"type=bind,src={root / 'proxy.py'},dst=/sparkdev-proxy.py,readonly"]
+            if online:
+                args += ["--env", "SPARKDEV_PROXY_MODE=public", "--restart", "on-failure:3", "--mount",
+                         f"type=bind,src={root / 'egress-deny.json'},dst=/sparkdev-deny.json,readonly", "--mount",
+                         f"type=bind,src={root / 'egress'},dst=/sparkdev-egress"]
+            args += ["--entrypoint", "/usr/bin/python3", row["proxy_image"], "/sparkdev-proxy.py"]
+            try:
+                self.docker.call(args)
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError):
+                # A preparation cannot run without its helper. A missing/pruned
+                # helper image must not reserve that job's quota forever.
+                if is_preparation(row) and self.docker.inspect(name) is None:
+                    self.record_launch_failure(row)
+                raise
             info = self.docker.inspect(name)
         if info is None or info.get("Image") != row["proxy_image"] or (info.get("Config", {}).get("Labels") or {}).get("com.delores.sparkdev.job") != row["id"]:
             reject("container_conflict", "Dependency proxy identity does not match its job")
@@ -2036,15 +2344,40 @@ class Controller:
         elif info["State"]["Status"] != "running":
             reject("proxy_failed", "Dependency proxy stopped; cancel and retry preparation")
 
-    def cleanup_proxy(self, row):
-        if not row["proxy_image"] or row["proxy_cleaned"]:
-            return
-        name, network = "sparkdev-proxy-" + row["id"], "sparkdev-fetch-" + row["id"]
+    def remove_proxy(self, row, graceful=False):
+        name = "sparkdev-proxy-" + row["id"]
         info = self.docker.inspect(name)
         if info:
             if info.get("Image") != row["proxy_image"] or (info.get("Config", {}).get("Labels") or {}).get("com.delores.sparkdev.job") != row["id"]:
                 reject("container_conflict", "Refusing to clean an unrelated proxy")
+            if graceful and info.get("State", {}).get("Status") in ("running", "restarting"):
+                self.docker.call(["stop", "--time", "5", name], timeout=15)
             self.docker.call(["rm", "--force", name])
+
+    def collect_internet_use(self, row):
+        if row["egress"] not in ("internet", "cut", "setup_failed") or row["internet_use"]:
+            return
+        path = self.root / "jobs" / row["id"] / "egress" / "counters.json"
+        try:
+            with os.fdopen(safe_open(path), "rb") as stream:
+                raw = stream.read(4097)
+            if len(raw) > 4096:
+                return
+            values = json.loads(raw)
+            if not isinstance(values, dict) or set(values) != set(INTERNET_COUNTERS) or any(type(v) is not int or v < 0 for v in values.values()):
+                return
+        except (OSError, ValueError, Rejected):
+            return
+        with self.transaction():
+            self.db.execute("UPDATE jobs SET internet_use=? WHERE id=?", (canonical(values).decode(), row["id"]))
+            self.audit("job_internet_use", row["id"], row["client"], **values)
+
+    def cleanup_proxy(self, row):
+        if not row["proxy_image"] or row["proxy_cleaned"]:
+            return
+        network = "sparkdev-fetch-" + row["id"]
+        self.remove_proxy(row, graceful=True)
+        self.collect_internet_use(row)
         net = self.docker.network_inspect(network)
         if net:
             if (net.get("Labels") or {}).get("com.delores.sparkdev.job") != row["id"]:
@@ -2053,58 +2386,148 @@ class Controller:
             if job and network in job.get("NetworkSettings", {}).get("Networks", {}):
                 self.docker.call(["network", "disconnect", network, self.container_name(row["id"])])
             self.docker.call(["network", "rm", network])
+        remove_tree(self.root / "jobs" / row["id"] / "scratch")
         self.db.execute("UPDATE jobs SET proxy_cleaned=1 WHERE id=?", (row["id"],))
 
     def reconcile(self):
-        for row in self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running')").fetchall():
-            name = self.container_name(row["id"])
+        rows = self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running') ORDER BY started DESC,created DESC,id DESC").fetchall()
+        for row in rows:
+            try:
+                self.reconcile_row(row)
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError) as error:
+                if isinstance(error, Rejected) and error.code == "docker_unavailable":
+                    self._docker_unavailable = True
+                self.scheduler_error("reconcile", error)
+
+    def reconcile_row(self, row):
+        name = self.container_name(row["id"])
+        info = self.docker.inspect(name)
+        if info is None:
+            if row["state"] == "running":
+                self.finish(row, "failed", 125, "container_lost")
+                return
+            if row["cancel"]:
+                self.finish(row, "cancelled", 130)
+                return
+            try:
+                self.prepare_work(row)
+            except (Rejected, OSError, ValueError) as error:
+                # A job whose work copy cannot be built fails; it never stays stuck in 'starting'.
+                short = (isinstance(error, Rejected) and error.code == "insufficient_disk") or \
+                    (isinstance(error, OSError) and error.errno == errno.ENOSPC)
+                self.finish(row, "failed", 125, "insufficient_disk" if short else "work_copy_failed")
+                return
+            if row["egress"] == "internet" and not self.internet_policy()["enabled"]:
+                self.db.execute("UPDATE jobs SET egress='cut' WHERE id=?", (row["id"],))
+                self.audit("internet_cut", row["id"], row["client"])
+                row = self.get_job(row["id"])
+            try:
+                self.ensure_proxy(row)
+            except Rejected as error:
+                if row["egress"] != "internet" or error.code == "docker_unavailable":
+                    raise
+                self.db.execute("UPDATE jobs SET egress='setup_failed' WHERE id=?", (row["id"],))
+                self.audit("internet_unavailable", row["id"], row["client"], code=error.code)
+                with contextlib.suppress(Rejected, OSError, subprocess.SubprocessError):
+                    self.remove_proxy(row)
+                row = self.get_job(row["id"])
+            try:
+                args = self.create_args(row)
+            except (Rejected, OSError, ValueError) as error:
+                self.finish(row, "failed", 125, "work_copy_failed")
+                self.scheduler_error("job setup", error)
+                return
+            try:
+                self.docker.call(args)
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError):
+                # Only a fresh, definite not-found may count against launch retries.
+                # An unavailable daemon or an existing container leaves identity intact.
+                if self.docker.inspect(name) is None:
+                    self.record_launch_failure(row)
+                raise
             info = self.docker.inspect(name)
             if info is None:
-                if row["state"] == "running":
-                    self.finish(row, "failed", 125, "container_lost")
-                    continue
-                if row["cancel"]:
-                    self.finish(row, "cancelled", 130)
-                    continue
-                try:
-                    self.prepare_work(row)
-                except (Rejected, OSError, ValueError) as error:
-                    # A job whose work copy cannot be built fails; it never stays stuck in 'starting'.
-                    short = (isinstance(error, Rejected) and error.code == "insufficient_disk") or \
-                        (isinstance(error, OSError) and error.errno == errno.ENOSPC)
-                    self.finish(row, "failed", 125, "insufficient_disk" if short else "work_copy_failed")
-                    continue
-                self.ensure_proxy(row)
-                self.docker.call(self.create_args(row))
-                info = self.docker.inspect(name)
-                if info is None:
-                    reject("docker_unavailable", "Created container cannot be inspected")
-            self.container_matches(info, row)
-            state = info["State"]["Status"]
-            # Preparation has no GPU, so only CUDA runs need the unified-memory watchdog.
-            if row["cancel"] or (row["runtime"] == "cuda" and not is_preparation(row) and self.memory_probe() < row["headroom_gb"]):
-                if state in ("running", "restarting", "paused"):
-                    self.docker.call(["stop", "--time", "5", name], timeout=15)
-                self.finish(row, "cancelled" if row["cancel"] else "failed", 130 if row["cancel"] else 137,
-                            None if row["cancel"] else "memory_watchdog")
-            elif state == "created":
-                # A cancellation which arrived while Docker creation was underway wins
-                # before start. The next tick observes it and removes the proxy.
-                if self.get_job(row["id"])["cancel"]:
-                    continue
-                self.docker.call(["start", name])
-                with self.transaction():
-                    self.db.execute("UPDATE jobs SET state='running',started=COALESCE(started,?) WHERE id=?", (time.time(), row["id"]))
-                    self.audit("job_started", row["id"], row["client"], image=row["image"], cpu=row["cpu"], memory_gb=row["memory"], scratch_mb=row["scratch_mb"])
-            elif state == "running":
+                reject("docker_unavailable", "Created container cannot be inspected")
+        self.container_matches(info, row)
+        if self.services.reconcile(row, info):
+            return
+        state = info["State"]["Status"]
+        # Preparation has no GPU, so only CUDA runs need the unified-memory watchdog.
+        if row["cancel"] or (row["runtime"] == "cuda" and not is_preparation(row) and self.memory_probe() < row["headroom_gb"]):
+            if state in ("running", "restarting", "paused"):
+                self.docker.call(["stop", "--time", "5", name], timeout=15)
+            self.finish(row, "cancelled" if row["cancel"] else "failed", 130 if row["cancel"] else 137,
+                        None if row["cancel"] else "memory_watchdog")
+        elif state == "created":
+            # A cancellation which arrived while Docker creation was underway wins
+            # before start. The next tick observes it and removes the proxy.
+            if self.get_job(row["id"])["cancel"]:
+                return
+            self.docker.call(["start", name])
+            with self.transaction():
                 self.db.execute("UPDATE jobs SET state='running',started=COALESCE(started,?) WHERE id=?", (time.time(), row["id"]))
-            elif state in ("exited", "dead"):
-                code = integer(info["State"]["ExitCode"], 0, 255)
-                self.finish(row, "succeeded" if code == 0 else "failed", code, "oom_killed" if info["State"].get("OOMKilled") else None)
-            else:
-                reject("container_state_unknown", "Container state is not safe for reconciliation")
+                self.audit("job_started", row["id"], row["client"], image=row["image"], cpu=row["cpu"], memory_gb=row["memory"], scratch_mb=row["scratch_mb"])
+        elif state == "running":
+            self.db.execute("UPDATE jobs SET state='running',started=COALESCE(started,?) WHERE id=?", (time.time(), row["id"]))
+        elif state in ("exited", "dead"):
+            code = integer(info["State"]["ExitCode"], 0, 255)
+            self.finish(row, "succeeded" if code == 0 else "failed", code, "oom_killed" if info["State"].get("OOMKilled") else None)
+        else:
+            reject("container_state_unknown", "Container state is not safe for reconciliation")
+
+    def record_launch_failure(self, row):
+        self.db.execute("UPDATE jobs SET launch_failures=launch_failures+1 WHERE id=?", (row["id"],))
+        if self.get_job(row["id"])["launch_failures"] >= 3:
+            self.finish(row, "failed", 125, "launch_failed")
 
     def tick(self):
+        try:
+            with self.runtime_gate():
+                self._tick()
+        except Rejected as error:
+            if error.code != "runtime_refresh_in_progress":
+                raise
+
+    def _tick(self):
+        self._docker_unavailable = False
+        if not self.internet_policy()["enabled"]:
+            for row in self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running') AND egress='internet'").fetchall():
+                try:
+                    self.remove_proxy(row)
+                    self.db.execute("UPDATE jobs SET egress='cut' WHERE id=?", (row["id"],))
+                    self.audit("internet_cut", row["id"], row["client"])
+                except (Rejected, OSError, subprocess.SubprocessError) as error:
+                    self.scheduler_error("internet cut", error)
+                    # A service must not retain internet after the owner's off switch.
+                    # Only stop a container whose immutable identity still matches.
+                    if model_server.is_service(row):
+                        try:
+                            info = self.docker.inspect(self.container_name(row["id"]))
+                            if info is not None:
+                                self.container_matches(info, row)
+                                if info["State"]["Status"] in ("running", "restarting", "paused"):
+                                    self.docker.call(["stop", "--time", "10", self.container_name(row["id"])], timeout=20)
+                            self.db.execute("UPDATE jobs SET stop_reason='internet_off',cancel=1 WHERE id=?", (row["id"],))
+                            self.finish(row, "cancelled", 130)
+                        except (Rejected, OSError, ValueError, subprocess.SubprocessError) as stop_error:
+                            self._docker_unavailable = True
+                            self.scheduler_error("internet stop", stop_error)
+        # Stop one most-recently-started workload per tick when disk headroom is exhausted.
+        if self.free_bytes() < DISK_STOP_FLOOR:
+            row = self.db.execute("SELECT * FROM jobs WHERE state='running' ORDER BY started DESC LIMIT 1").fetchone()
+            if row:
+                try:
+                    info = self.docker.inspect(self.container_name(row["id"]))
+                    if info:
+                        self.container_matches(info, row)
+                        self.docker.call(["stop", "--time", "5", self.container_name(row["id"])], timeout=15)
+                    if model_server.is_service(row):
+                        self.db.execute("UPDATE jobs SET stop_reason='disk_full',cancel=1 WHERE id=?", (row["id"],))
+                        self.finish(row, "cancelled", 130)
+                    else:
+                        self.finish(row, "failed", 137, "disk_full")
+                except (Rejected, OSError, subprocess.SubprocessError) as error:
+                    self.scheduler_error("disk floor", error)
         # Backstop: a materializer that died, or one never spawned, restarts from the queue.
         try:
             self.kick()
@@ -2113,7 +2536,16 @@ class Controller:
             print("sparkdev materializer: " + (error.code if isinstance(error, Rejected) else type(error).__name__), file=sys.stderr, flush=True)
         self.reconcile()
         for row in self.db.execute("SELECT * FROM jobs WHERE state IN ('succeeded','failed','cancelled') AND proxy_image IS NOT NULL AND proxy_cleaned=0").fetchall():
-            self.cleanup_proxy(row)
+            try:
+                self.cleanup_proxy(row)
+            except (Rejected, OSError, subprocess.SubprocessError) as error:
+                self.scheduler_error("cleanup", error)
+        try:
+            self.services.housekeeping()
+        except (Rejected, OSError, ValueError, subprocess.SubprocessError) as error:
+            self.scheduler_error("service housekeeping", error)
+        if self._docker_unavailable:
+            return
         with self.transaction():
             policy = self.resource_policy()
             limits = policy["limits"]
@@ -2121,18 +2553,20 @@ class Controller:
             active = self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running')").fetchall()
             cpu, memory = reserved_cpu, reserved_memory
             used_cpu, used_mem = sum(cpu(r) for r in active), sum(memory(r) for r in active)
+            live_reserved = self.services.reserved_for_headroom(active)
+            server_admitted = self.services.admit(active, limits)
             last = self.db.execute("SELECT value FROM settings WHERE key='last_client'").fetchone()
             start = (CLIENTS.index(last[0]) + 1) % len(CLIENTS) if last else 0
-            for client in CLIENTS[start:] + CLIENTS[:start]:
-                mine = [r for r in active if r["client"] == client]
-                row = self.db.execute("SELECT * FROM jobs WHERE client=? AND state='queued' AND cancel=0 ORDER BY created LIMIT 1", (client,)).fetchone()
+            for client in (() if server_admitted else CLIENTS[start:] + CLIENTS[:start]):
+                mine = [r for r in active if r["client"] == client and not model_server.is_service(r)]
+                row = self.db.execute("SELECT * FROM jobs WHERE client=? AND kind<>'service' AND state='queued' AND cancel=0 ORDER BY created LIMIT 1", (client,)).fetchone()
                 if not row:
                     continue
                 if len(mine) >= limits["client_jobs"] or sum(cpu(r) for r in mine) + cpu(row) > limits["client_cpu"]:
                     continue
                 if policy["policy_saved"] and (cpu(row) > limits["cpu_per_job"] or memory(row) > limits["memory_gb_per_job"]):
                     continue
-                if used_cpu + cpu(row) > limits["cpu_total"] or used_mem + memory(row) > limits["memory_gb_total"] or self.memory_probe() - used_mem - memory(row) < limits["headroom_gb"]:
+                if used_cpu + cpu(row) > limits["cpu_total"] or used_mem + memory(row) > limits["memory_gb_total"] or self.memory_probe() - live_reserved - memory(row) < limits["headroom_gb"]:
                     continue
                 if not self.disk_admits(row):
                     continue  # The work copy would cut into the disk reserve; status reports admission_blocked.
@@ -2141,6 +2575,11 @@ class Controller:
                 # One admission per tick avoids long uninterruptible Docker bursts.
                 break
         self.reconcile()
+
+    def scheduler_error(self, operation, error):
+        if isinstance(error, Rejected) and error.code == "docker_unavailable":
+            self._docker_unavailable = True
+        print("sparkdev " + operation + ": " + (error.code if isinstance(error, Rejected) else type(error).__name__), file=sys.stderr, flush=True)
 
     def serve(self):
         if os.name != "posix":
@@ -2154,6 +2593,7 @@ class Controller:
             while True:
                 try:
                     self.tick()
+                    self.download_cache.tidy_step()
                 except (Rejected, OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as error:
                     # Deliberately never log argv, Docker stderr, paths or user input.
                     print("sparkdev scheduler: " + (error.code if isinstance(error, Rejected) else type(error).__name__), file=sys.stderr, flush=True)
