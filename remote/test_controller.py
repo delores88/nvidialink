@@ -1155,6 +1155,13 @@ class NetworkLinkTests(unittest.TestCase):
             process.kill.assert_called_once_with()
             process.wait.assert_called_once_with(timeout=controller.REAP_WAIT)
 
+    @unittest.skipUnless(os.name == "posix" and os.path.exists("/bin/sleep"), "needs a posix sleep binary")
+    def test_a_real_tool_past_its_timeout_is_killed_promptly(self):
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_tool(["/bin/sleep", "30"], 0.2)
+        self.assertLess(time.monotonic() - started, 5)
+
     def test_a_probe_that_never_returns_cannot_hold_status(self):
         release = threading.Event()
         self.addCleanup(release.set)
