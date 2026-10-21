@@ -203,7 +203,10 @@ pub fn mcp_client(args: &[String]) -> Option<String> {
 /// Find my Spark runs only for the owner: exactly one `--client X` or
 /// `--client=X` token before any `--`, naming `human`, and clap's parsed
 /// client agrees. A bare call (clap's default), an agent label or a
-/// duplicate flag that clap would resolve to `human` is refused.
+/// duplicate flag that clap would resolve to `human` is refused. Like every
+/// client label this is self-declared, so the check is advisory: it stops
+/// an accidental run, not an agent with a shell that types `--client human`
+/// (which could as well run `setup` or probe the network itself).
 fn owner_only(raw: &[String], parsed: Client) -> Result<()> {
     let mut named = Vec::new();
     let mut tokens = raw.iter();

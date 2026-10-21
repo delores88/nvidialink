@@ -37,7 +37,7 @@ The `run` tool takes the same planning arguments plus optional `request_id` and 
 
 An agent can submit Linux-capable work to the Spark and Windows-specific work to the laptop. Agents see the same board. A client label alone does not authenticate a particular model or prove a Claude/Codex session made the call. CodaClauda, a separate product, owns agent-to-agent conversations and delegation; this server owns compute jobs only.
 
-Find my Spark (`sparkdev discover`) is an owner-only desktop action. It is not an MCP tool, no tool argument reaches it, and agents must not run it.
+Find my Spark (`sparkdev discover`) is an owner-only desktop action. It is not an MCP tool, no tool argument reaches it, and agents must not run it. Its `--client human` check is advisory, like every client label: it prevents accidents, not a misbehaving agent with a shell.
 
 `prepare`, `status`, remote `wait` and remote `logs` also deliver cancellations previously queued by the owner when they reconnect. Their tool annotations disclose this mutating effect; they do not request new cancellations. `logs` saves captured output locally. `devices` and `plan` are the observation tools and do not deliver queued cancellations.
 
