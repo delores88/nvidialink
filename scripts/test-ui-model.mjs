@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel} from '../ui/model.mjs';
+import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,
+  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses} from '../ui/model.mjs';
 import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
 import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
@@ -128,4 +129,53 @@ test('visibility lifecycle cancels hidden/offscreen animation and disposes obser
   assert.equal(frames.size,0);observer([{target:host,isIntersecting:true}]);assert.equal(frames.size,1);
   document.hidden=true;callback();assert.equal(frames.size,0);assert.equal(cancelled,1);assert.equal(drawn,0);
   document.hidden=false;callback();assert.equal(frames.size,1);loop.dispose();assert.equal(frames.size,0);assert.equal(disconnected,1);assert.equal(callback,null);
+});
+test('Find my Spark is offered only when an owner search can run, and suggested when the LAN is unreachable',()=>{
+  const config={ssh_alias:'fixture-spark',hosts:['192.0.2.20'],connection_mode:'both',connection_enabled:true};
+  const ready=findSparkControl({config,connection:connectionView(lan,config)});
+  assert.deepEqual(ready,{disabled:false,reason:'',suggested:false});
+  for(const [state,pattern] of [[{config:null},/Save your SSH connection/],[{config:{...config,connection_enabled:false}},/Connect first/],[{config:{...config,connection_mode:'remote-only'}},/LAN only or Both/]]){
+    const control=findSparkControl(state);assert.equal(control.disabled,true);assert.match(control.reason,pattern);assert.equal(control.suggested,false);
+  }
+  assert.equal(findSparkControl({config,connecting:true}).disabled,true);
+  assert.equal(findSparkControl({config,busy:true}).disabled,true);
+  const unreachable={ok:true,devices:[{id:'spark',reachable:false,error:{message:LAN_UNREACHABLE},transport:{route:'none',authenticated:false}}]};
+  assert.equal(findSparkControl({config,connection:connectionView(unreachable,config)}).suggested,true);
+  assert.equal(findSparkControl({config:{...config,connection_mode:'remote-only'},connection:connectionView(unreachable,config)}).suggested,false);
+  assert.match(FIND_INTRO,/Nothing is saved until you choose an address/);
+});
+test('Find my Spark results show only sanitized found addresses, plain notes and honest empty copy',()=>{
+  const config={hosts:['192.0.2.20','192.0.2.41']};
+  const result={ok:true,found:[{host:'192.0.2.41',adapter:'Ethernet',medium:'wired',configured_index:1},{host:'192.0.2.40',adapter:'Wi-Fi\n<img src=x>',medium:'wifi',configured_index:null},{host:'<script>',adapter:'x',medium:'wired'},{host:'192.0.2.40',adapter:'dup',medium:'wired'},{host:'192.0.2.300',adapter:'bad',medium:'wired'}],
+    configured:[{index:0,host:'192.0.2.20',status:'other_host'},{index:1,host:'192.0.2.41',status:'verified'}],login_rejected:2,local_key_error:1,other_ssh_hosts:3,unknown_key_hosts:1,unchecked:4,not_checked:1,pin_hint:false};
+  const view=discoveryView(result,config);
+  assert.deepEqual(view.rows.map(row=>[row.host,row.adapterLabel,row.mediumLabel,row.configuredIndex,row.alreadyFirst]),[['192.0.2.41','Ethernet','wired',1,false],['192.0.2.40','network adapter','Wi-Fi',null,false]]);
+  assert.match(view.rows[0].detail,/this laptop's Ethernet \(wired\) · saved as LAN address 2/);
+  assert.match(view.summary,/2 addresses/);assert.match(view.summary,/cannot yet tell which one is the Spark's wired connection/);
+  assert.deepEqual(view.conflicts,['192.0.2.20']);assert.equal(view.loginRejected,2);assert.equal(view.localKeyError,1);assert.equal(view.pinHint,false);assert.equal(view.emptyReason,'');
+  const notes=view.notes.join('\n');
+  assert.match(notes,/192\.0\.2\.20 now answers as a different SSH device/);assert.match(notes,/2 addresses refused the SSH login/);assert.match(notes,/file permissions/);assert.match(notes,/3 other SSH devices answered and were left alone/);assert.match(notes,/4 addresses could not be checked in time/);assert.match(notes,/1 more address answered but was not checked/);
+  assert.doesNotMatch(JSON.stringify(view),/<script>|<img/);
+  // The current saved list, not the search-time index, decides "already first".
+  const first=discoveryView({found:[{host:'192.0.2.41',adapter:'Ethernet',medium:'wired',configured_index:1}]},{hosts:['192.0.2.41']});
+  assert.equal(first.rows[0].alreadyFirst,true);assert.match(first.summary,/^Found your Spark at 192\.0\.2\.41\.$/);assert.match(first.rows[0].detail,/already your first LAN address/);
+  assert.equal(discoveryView({found:[{host:'192.0.2.41',configured_index:0}]}).rows[0].alreadyFirst,true);
+  const pin=discoveryView({found:[],pin_hint:true,configured:[{index:0,host:'192.0.2.20',status:'unknown_key'}]},config);
+  assert.equal(pin.pinHint,true);assert.match(pin.notes.join(' '),/known_hosts entry yourself/);assert.match(pin.notes.join(' '),/never changes it/);assert.deepEqual(pin.conflicts,[]);
+  const empty=discoveryView({ok:true,found:[]},config);
+  assert.match(empty.summary,/did not find your Spark/);
+  for(const cause of [/guest network or client isolation/,/VPN/,/\/24/,/Hyper-V virtual switch/])assert.match(empty.emptyReason,cause);
+  assert.match(discoveryView({found:[],reason:'no_physical_adapter'}).emptyReason,/no wired or Wi-Fi connection/);
+  assert.match(discoveryView({found:[],reason:'no_routed_targets'}).emptyReason,/Pause the VPN/);
+  assert.deepEqual(discoveryView(null).rows,[]);
+});
+test('a saved address names what was removed and the Other LAN addresses field keeps every address',()=>{
+  assert.equal(discoverySaved({host:'192.0.2.40',removed:[]},'192.0.2.40'),'Saved 192.0.2.40 as the first LAN address DGXBridge tries.');
+  const text=discoverySaved({host:'192.0.2.40',removed:['192.0.2.20','192.0.2.21\nx'],warning:'You now have 5 saved LAN addresses, tried in order.'},'192.0.2.40');
+  assert.match(text,/Removed 192\.0\.2\.20, which now answers as a different SSH device\./);assert.match(text,/5 saved LAN addresses/);assert.doesNotMatch(text,/\n/);
+  assert.deepEqual(otherLanAddresses('192.0.2.21, 192.0.2.22 192.0.2.21;spark-b.local,,192.0.2.20','192.0.2.20'),['192.0.2.21','192.0.2.22','spark-b.local']);
+  assert.deepEqual(otherLanAddresses('',''),[]);assert.deepEqual(otherLanAddresses(null),[]);
+});
+test('copied agent prompts forbid Find my Spark',()=>{
+  for(const agent of ['claude','codex'])assert.match(agentPrompt({agent,config:{hosts:['192.0.2.10']}}),/Never run sparkdev discover; Find my Spark is an owner-only action\./);
 });

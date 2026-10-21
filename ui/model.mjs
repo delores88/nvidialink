@@ -93,7 +93,7 @@ export function agentPrompt({agent,path,stateRoot,config,connection,limits}) {
   if(Number.isInteger(config?.port))references.push(`SSH port: ${config.port}`);
   if(cleanReference(stateRoot))references.push(`Set SPARKDEV_HOME explicitly to this owner-state reference: ${cleanReference(stateRoot)}. Before configuring or running work, verify returned state diagnostics resolve to this physical owner state. Packaged Codex processes may redirect AppData into Codex LocalCache; stop and report that mismatch rather than creating or migrating another identity.`);
   const resourceLines=limits ? RESOURCE_FIELDS.filter(([key])=>Number.isSafeInteger(limits[key])).map(([key,label,unit])=>`${label}: ${limits[key]} ${unit}`) : ['Spark resource policy has not been read in this app session.'];
-  return `Use DGXBridge for this project. You are ${client==='claude'?'Claude Code':'Codex'}; use client label ${client}.\n\nInstalled CLI: ${exe}\nConnection policy: ${MODE_LABELS[configMode(config)]}. Connection enabled: ${config?.connection_enabled===false?'no':'yes'}.\nLast observed route: ${connection?.route || 'not checked'}. This is an observation, not a reserved connection or capacity. Recheck devices before work. Paired transport does not prove a relay or hotspot path.\n${references.join('\n')}\n\nObserved Spark policy:\n${resourceLines.join('\n')}\n\nStart with the installed CLI's --client ${client} --json devices, then status --all. Use its MCP tools if configured. If the Spark or scheduler is unavailable, explain the observed failure; do not weaken host-key checks, invent capacity, or silently bypass the scheduler. Both managed runners currently require the Spark scheduler.\n\nFor a job, use --client ${client} --json run PROJECT_DIR --where auto --detach --request-id RETAINED_ID -- COMMAND ARGS. Keep one request ID for an uncertain submission and retain the returned job ID. Poll wait JOB_ID --timeout 20. Fetch logs JOB_ID --since OFFSET and continue from next_offset. Inspect final state and workload exit_code. Repeated successful Spark jobs may use the result cache; --no-cache forces a fresh run. Use --argv-json FILE when shell quoting needs exact arguments.\n\nUse Spark for Linux-capable work and laptop for Windows/MSVC, installers and Windows-only tests. Native laptop jobs have no enforced CPU or memory cap; direct Cargo must use the saved build gate unchanged. Do not split one compile across OS/architecture. Run prepare PROJECT_DIR --runtime rust|node|python for locked dependencies before offline jobs. Do not modify unrelated services or containers. Never print or copy private keys, credential contents, pairing tickets or approval codes.\n\nThe job board is shared with the other agent and the owner. Before heavy work, read status --all and avoid stacking onto a runner that another agent is already saturating. Another agent's result can be inspected by its job ID with wait and logs; never resubmit its work to read a result. Client labels are self-declared, so attribute jobs only to what you actually submitted.\n\nAsk before changing the owner's connection or resource policy. Report actual receipts and distinguish source tests, Spark jobs, installed Windows checks and remote-network verification. DGXBridge coordinates workloads; separate agent conversations belong to CodaClauda.`;
+  return `Use DGXBridge for this project. You are ${client==='claude'?'Claude Code':'Codex'}; use client label ${client}.\n\nInstalled CLI: ${exe}\nConnection policy: ${MODE_LABELS[configMode(config)]}. Connection enabled: ${config?.connection_enabled===false?'no':'yes'}.\nLast observed route: ${connection?.route || 'not checked'}. This is an observation, not a reserved connection or capacity. Recheck devices before work. Paired transport does not prove a relay or hotspot path.\n${references.join('\n')}\n\nObserved Spark policy:\n${resourceLines.join('\n')}\n\nStart with the installed CLI's --client ${client} --json devices, then status --all. Use its MCP tools if configured. If the Spark or scheduler is unavailable, explain the observed failure; do not weaken host-key checks, invent capacity, or silently bypass the scheduler. Both managed runners currently require the Spark scheduler.\n\nFor a job, use --client ${client} --json run PROJECT_DIR --where auto --detach --request-id RETAINED_ID -- COMMAND ARGS. Keep one request ID for an uncertain submission and retain the returned job ID. Poll wait JOB_ID --timeout 20. Fetch logs JOB_ID --since OFFSET and continue from next_offset. Inspect final state and workload exit_code. Repeated successful Spark jobs may use the result cache; --no-cache forces a fresh run. Use --argv-json FILE when shell quoting needs exact arguments.\n\nUse Spark for Linux-capable work and laptop for Windows/MSVC, installers and Windows-only tests. Native laptop jobs have no enforced CPU or memory cap; direct Cargo must use the saved build gate unchanged. Do not split one compile across OS/architecture. Run prepare PROJECT_DIR --runtime rust|node|python for locked dependencies before offline jobs. Do not modify unrelated services or containers. Never print or copy private keys, credential contents, pairing tickets or approval codes.\n\nThe job board is shared with the other agent and the owner. Before heavy work, read status --all and avoid stacking onto a runner that another agent is already saturating. Another agent's result can be inspected by its job ID with wait and logs; never resubmit its work to read a result. Client labels are self-declared, so attribute jobs only to what you actually submitted.\n\nAsk before changing the owner's connection or resource policy. Never run sparkdev discover; Find my Spark is an owner-only action. Report actual receipts and distinguish source tests, Spark jobs, installed Windows checks and remote-network verification. DGXBridge coordinates workloads; separate agent conversations belong to CodaClauda.`;
 }
 
 // Job board presentation. Every label is derived from recorded job fields; nothing is inferred
@@ -194,4 +194,79 @@ export function routeAddress(observation, config) {
 export function routeAddressLabel(used) {
   if (!used) return '—';
   return used.index !== null && used.of > 1 ? `${used.address} (configured address ${used.index + 1} of ${used.of})` : used.address;
+}
+
+// Find my Spark. Values from the CLI pass through cleanReference and are
+// rendered with textContent. Nothing here searches or saves: the owner starts
+// both from the Spark page, never a refresh, an agent or MCP.
+export const LAN_UNREACHABLE = 'Configured LAN addresses are unreachable';
+export const FIND_INTRO = "Checks this laptop's own network on the SSH port and confirms answers with your pinned host key. Nothing is saved until you choose an address.";
+const MEDIUM_LABELS = Object.freeze({wired:'wired', wifi:'Wi-Fi'});
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const positive = value => Number.isSafeInteger(value) && value > 0 ? value : 0;
+const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+export function findSparkControl({config = null, connection = null, connecting = false, busy = false} = {}) {
+  const reason = !config ? 'Save your SSH connection first. Find my Spark confirms answers with its pinned host key.'
+    : config.connection_enabled === false ? 'Connect first. Find my Spark does not run while new requests are paused.'
+    : configMode(config) === 'remote-only' ? 'Find my Spark uses SSH on your own network. Choose LAN only or Both to use it.'
+    : '';
+  return {disabled: busy || connecting || !!reason, reason, suggested: !reason && String(connection?.reason || '').includes(LAN_UNREACHABLE)};
+}
+const EMPTY = Object.freeze({
+  no_physical_adapter: "This laptop has no wired or Wi-Fi connection to a private home or office network that Find my Spark can search. A network reached only through a Hyper-V virtual switch or a VPN does not count. Connect this laptop to your Spark's network and search again.",
+  no_routed_targets: "A VPN or another network route is carrying this laptop's local traffic, so Find my Spark checked no address. Pause the VPN and search again.",
+  other: "Your Spark did not answer on this laptop's network. Common causes: a Wi-Fi network that keeps devices apart (a guest network or client isolation), a VPN carrying local traffic, a Spark outside this laptop's own address range (its /24 network), or a laptop connected through a Hyper-V virtual switch.",
+});
+export function discoveryView(result, config = null) {
+  const hosts = Array.isArray(config?.hosts) ? config.hosts.map(cleanReference) : null;
+  const seen = new Set(), rows = [];
+  for (const row of Array.isArray(result?.found) ? result.found : []) {
+    const host = cleanReference(row?.host);
+    if (!IPV4.test(host) || seen.has(host)) continue;
+    seen.add(host);
+    // The current saved list decides the position; the result's index is
+    // only used when no configuration is at hand.
+    const listed = hosts ? hosts.findIndex(item => item.toLowerCase() === host) : Number.isSafeInteger(row.configured_index) ? row.configured_index : -1;
+    const configuredIndex = listed >= 0 ? listed : null;
+    const adapterLabel = cleanReference(row.adapter).trim().slice(0, 80) || 'network adapter', mediumLabel = MEDIUM_LABELS[row.medium] || 'network';
+    rows.push({host, adapterLabel, mediumLabel, configuredIndex, alreadyFirst: configuredIndex === 0,
+      // The adapter is this laptop's own; it says nothing about the Spark's link.
+      detail: `Reached through this laptop's ${adapterLabel} (${mediumLabel}) · ${configuredIndex === 0 ? 'already your first LAN address' : configuredIndex !== null ? `saved as LAN address ${configuredIndex + 1}` : 'not saved yet'}`});
+  }
+  const conflicts = (Array.isArray(result?.configured) ? result.configured : []).filter(entry => entry?.status === 'other_host').map(entry => cleanReference(entry.host)).filter(Boolean);
+  const loginRejected = positive(result?.login_rejected), localKeyError = positive(result?.local_key_error), pinHint = result?.pin_hint === true;
+  const others = positive(result?.other_ssh_hosts), unchecked = positive(result?.unchecked), notChecked = positive(result?.not_checked);
+  const emptyReason = rows.length ? '' : EMPTY[result?.reason] || EMPTY.other;
+  const summary = rows.length === 1 ? `Found your Spark at ${rows[0].host}.`
+    : rows.length > 1 ? `Found your Spark at ${rows.length} addresses. DGXBridge cannot yet tell which one is the Spark's wired connection, so choose the address you want tried first.`
+    : 'Find my Spark did not find your Spark.';
+  const notes = [];
+  if (conflicts.length) notes.push(`Saved ${conflicts.length === 1 ? 'address' : 'addresses'} ${conflicts.join(', ')} now ${conflicts.length === 1 ? 'answers' : 'answer'} as a different SSH device. Using an address below checks again and removes ${conflicts.length === 1 ? 'it' : 'them'} from your list.`);
+  if (loginRejected) notes.push(`${counted(loginRejected, 'address', 'addresses')} refused the SSH login. Check the SSH username and key file under Saved SSH connection.`);
+  if (localKeyError) notes.push(`This laptop's SSH key or SSH settings could not be used for ${counted(localKeyError, 'address', 'addresses')}, often because of file permissions. Fix that, then search again.`);
+  if (pinHint) notes.push("The answers did not match the host key this laptop has saved for your Spark, or none is saved. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. DGXBridge never changes it for you.");
+  if (others) notes.push(`${counted(others, 'other SSH device', 'other SSH devices')} answered and ${others === 1 ? 'was' : 'were'} left alone.`);
+  if (unchecked) notes.push(`${counted(unchecked, 'address', 'addresses')} could not be checked in time, so this result may be incomplete.`);
+  if (notChecked) notes.push(`${counted(notChecked, 'more address', 'more addresses')} answered but ${notChecked === 1 ? 'was' : 'were'} not checked; Find my Spark checks up to 32.`);
+  return {rows, loginRejected, localKeyError, conflicts, pinHint, emptyReason, summary, notes};
+}
+export function discoverySaved(result, host = '') {
+  const saved = cleanReference(result?.host) || cleanReference(host);
+  const removed = (Array.isArray(result?.removed) ? result.removed : []).map(cleanReference).filter(Boolean);
+  const parts = [`Saved ${saved} as the first LAN address DGXBridge tries.`];
+  if (removed.length) parts.push(`Removed ${removed.join(', ')}, which now ${removed.length === 1 ? 'answers' : 'answer'} as a different SSH device.`);
+  const warning = cleanReference(result?.warning);
+  if (warning) parts.push(warning);
+  return parts.join(' ');
+}
+// The "Other LAN addresses" field: separated by commas or spaces, without
+// repeats or the first LAN address, in the order written.
+export function otherLanAddresses(text, first = '') {
+  const seen = new Set([String(first || '').trim().toLowerCase()].filter(Boolean));
+  return String(text ?? '').split(/[\s,;]+/).filter(value => {
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
