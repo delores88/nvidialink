@@ -147,7 +147,7 @@ WHERE: Linux work on Spark; Windows/MSVC, installers and Windows tests on laptop
 
 DEPENDENCIES: prepare PROJECT_DIR --runtime rust|node|python before offline work. Use cuda preparation only if preparable_runtimes lists it; requirements-cuda.lock excludes torch, triton and nvidia-* wheels. On insufficient_disk report it and delete nothing.
 
-INTERNET: When enabled and available, new Spark jobs get public HTTP/HTTPS; this setting does not prove a successful download. Keep HTTP_PROXY/HTTPS_PROXY and the supplied cache variables. A name-resolution error may mean the tool ignores these settings. Private networks and Spark addresses are blocked, but the home's public address is not detected. Jobs can send data out. Don't change the owner's internet policy.
+INTERNET: When enabled and available, new Spark jobs get public HTTP/HTTPS; this is not proof of a successful download. Keep HTTP_PROXY/HTTPS_PROXY and supplied cache variables. DNS errors may mean a tool ignores them. Private networks and Spark addresses are blocked. If internet.guard reports observed_public_egress_blocked, the detected public address is also blocked; extra router addresses or routes may not be detected. Checks are periodic, not instant. Jobs can send data out. Don't change the owner's policy.
 
 SAVED DOWNLOADS: Reuse HF_HOME, TORCH_HOME, XDG_CACHE_HOME and /cache/files. Use the supplied TMPDIR for temporary files, not /tmp. --no-cache does not clear downloads. Shared files can be changed by another job. Keep tokens and credentials out of shared files.
 
@@ -218,7 +218,7 @@ export const INTERNET_COPY=Object.freeze({
   title:'Internet for Spark jobs',
   note:'New jobs can download from public websites and send data out. Turning this off also cuts internet access for running jobs; turning it on applies to new jobs.',
   blocked:'Home and private network addresses, the Spark itself (including apps such as Ollama), and cloud metadata addresses are blocked.',
-  limitation:'The home’s public internet address is not detected. Router forwarding through that address is not blocked.',
+  limitation:'A router may have more than one public internet address. Extra addresses, or addresses used by a different internet connection, may not be detected. Network changes are checked periodically, not instantly.',
   rule:'Agents are told not to change this setting. That is an instruction, not a separate security lock.',
 });
 export function internetView(value) {
