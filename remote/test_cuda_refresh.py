@@ -110,6 +110,30 @@ class CudaRefreshTests(unittest.TestCase):
         helper["register_runtimes"].assert_not_called()
         self.assertEqual(json.loads((self.root / "runtimes.json").read_text()), original)
         self.assertEqual(json.loads((self.root / "runtime-cuda-build.json").read_text())["state"], "failed")
+        self.assertEqual(json.loads((self.root / "runtime-cuda-build.json").read_text())["phase"], "gpu_probe")
+
+    def test_unreadable_media_probe_is_identified_without_activation_or_raw_error_leak(self):
+        digest = self.cuda_sources()
+        original = self.registry()
+        outputs = [json.dumps([{"Id": fixture.IMAGE, "Architecture": "arm64"}]).encode(), b'{"user_site":true}',
+                   subprocess.CalledProcessError(2, ["docker"], stderr=b"/usr/bin/python3: can't open file '/opt/sparkdev/media_probe.py': [Errno 13] Permission denied private-fixture-text")]
+        with self.cuda_context() as helper, mock.patch.object(cuda.subprocess, "check_output", side_effect=outputs):
+            self.assertEqual(cuda.build_cuda(self.root, digest, "a" * 32), 1)
+        helper["register_runtimes"].assert_not_called()
+        self.assertEqual(json.loads((self.root / "runtimes.json").read_text()), original)
+        receipt = json.loads((self.root / "runtime-cuda-build.json").read_text())
+        self.assertEqual((receipt["error"], receipt["phase"], receipt["process_exit_code"]), ("cuda_media_probe_unreadable", "media_probe", 2))
+        self.assertNotIn("private-fixture-text", json.dumps(receipt))
+
+    def test_copied_runtime_probe_and_egl_metadata_are_readable_to_nonroot_users(self):
+        root = Path(__file__).resolve().parents[1]
+        cuda_recipe = (root / "runtimes/Dockerfile.cuda").read_text()
+        blender_recipe = (root / "runtimes/Dockerfile.blender").read_text()
+        self.assertIn("chmod 0755 /opt/sparkdev", cuda_recipe)
+        self.assertIn("chmod 0644 /opt/sparkdev/media_probe.py /usr/share/glvnd/egl_vendor.d/10_nvidia.json", cuda_recipe)
+        self.assertGreater(cuda_recipe.index("chmod 0644 /opt/sparkdev/media_probe.py"), cuda_recipe.index("COPY media_probe.py"))
+        self.assertIn("chmod 0644 /usr/share/glvnd/egl_vendor.d/10_nvidia.json", blender_recipe)
+        self.assertGreater(blender_recipe.index("chmod 0644 /usr/share/glvnd/egl_vendor.d/10_nvidia.json"), blender_recipe.index("COPY 10_nvidia.json"))
 
     def test_success_uses_immutable_context_caps_exact_worker_python_and_probe(self):
         digest = self.cuda_sources()
@@ -153,6 +177,10 @@ class CudaRefreshTests(unittest.TestCase):
             self.assertEqual(cuda.build_cuda(self.root, digest, "a" * 32), 1)
         helper["register_runtimes"].assert_not_called()
         self.assertEqual(json.loads((self.root / "runtimes.json").read_text()), original)
+
+        receipt = json.loads((self.root / "runtime-cuda-build.json").read_text())
+        self.assertEqual((receipt["error"], receipt["phase"]), ("cuda_nvenc_not_compiled", "media_probe"))
+        self.assertEqual(receipt["probe"]["gpu_video"]["listed_encoders"], [])
 
     def test_missing_owner_image_builds_bounded_standalone_blender(self):
         for name in cuda.BLENDER_FILES:

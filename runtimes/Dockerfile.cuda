@@ -20,6 +20,9 @@ COPY --from=blender /opt/blender /opt/blender
 COPY --from=blender /usr/lib/aarch64-linux-gnu/libEGL.so.1* /usr/lib/aarch64-linux-gnu/
 COPY --from=blender /usr/share/glvnd/egl_vendor.d/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 COPY media_probe.py /opt/sparkdev/media_probe.py
+# Bootstrap source files are owner-private (0600); jobs and probes run nonroot.
+RUN chmod 0755 /opt/sparkdev \
+ && chmod 0644 /opt/sparkdev/media_probe.py /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 ENV PATH=/opt/blender:${PATH} NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /work
 ENTRYPOINT ["/usr/bin/python3"]

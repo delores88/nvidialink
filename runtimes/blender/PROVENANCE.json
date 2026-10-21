@@ -17,6 +17,7 @@
   "adaptations": [
     "Default compiler parallelism reduced from 18 to 2",
     "COPY paths flattened for hash-checked bootstrap context",
-    "Own sparkdev image title"
+    "Own sparkdev image title",
+    "Make EGL vendor metadata readable by nonroot runtime users after private bootstrap source copy"
   ]
 }

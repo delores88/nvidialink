@@ -83,49 +83,72 @@ def build_cuda(root, expected=None, attempt_id=None):
     publish = lambda: cpu["publish_runtime_status"](root, receipt, attempt_id, cuda=True)
     publish()
     env = {**os.environ, "DOCKER_BUILDKIT": "0"}
+    phase = "blender_image"
     try:
         blender, blender_origin = blender_image(root, context, env)
         receipt.update(blender_image=blender, blender_provenance=blender_origin)
         publish()
+        phase = "image_build"
         with (root / "runtime-cuda-build.log").open("wb") as log:
             code = subprocess.run(["docker", "build", "--cpu-period", "100000", "--cpu-quota", "100000",
                 "--memory", "1g", "--memory-swap", "1g", "--build-arg", "BLENDER_IMAGE=" + blender, "--file", str(context / "Dockerfile.cuda"),
                 "--tag", receipt["tag"], str(context)], stdout=log, stderr=subprocess.STDOUT, env=env, check=False).returncode
         if code:
-            receipt.update(state="failed", exit_code=code, finished_at=time.time())
+            receipt.update(state="failed", exit_code=code, finished_at=time.time(), phase=phase,
+                           error="cuda_image_build_failed", message="CUDA Docker build failed; inspect runtime-cuda-build.log")
             publish()
             return code
+        phase = "image_identity"
         image = json.loads(subprocess.check_output(["docker", "image", "inspect", receipt["tag"]], timeout=10))[0]
         image_id = image["Id"]
         if image.get("Architecture") != "arm64" or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise ValueError("Unexpected image identity")
         require_probe_headroom()
+        phase = "gpu_probe"
         # Probe the worker's exact interpreter, not the image's PATH alias.
         program = "import io,json,site,pip,torch,PIL; from PIL import Image; assert site.ENABLE_USER_SITE; assert PIL.__version__ == '13.0.0'; b=io.BytesIO(); Image.new('RGB',(2,2),(1,2,3)).save(b,format='PNG'); b.seek(0); im=Image.open(b); im.load(); assert im.resize((1,1)).getpixel((0,0)) == (1,2,3); assert torch.cuda.is_available(); x=torch.ones(4*1024*1024,device='cuda'); torch.cuda.synchronize(); print(json.dumps({'torch':torch.__version__,'pillow':PIL.__version__,'pillow_png_decode_resize':True,'cuda':torch.version.cuda,'device':torch.cuda.get_device_name(0),'bytes':x.numel()*x.element_size(),'sum':x.sum().item(),'user_site':site.ENABLE_USER_SITE}))"
         probe = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000", "--cpus", "1", "--memory", "4g", "--memory-swap", "4g",
             "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video", "--env", "OMP_NUM_THREADS=1",
-            "--tmpfs", "/tmp:rw,nosuid,nodev,size=268435456", "--entrypoint", "/usr/bin/python3", image_id, "-c", program], timeout=120)
+            "--tmpfs", "/tmp:rw,nosuid,nodev,size=268435456", "--entrypoint", "/usr/bin/python3", image_id, "-c", program], timeout=120, stderr=subprocess.PIPE)
         probe_value = json.loads(probe)
+        phase = "media_probe"
         media = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000", "--cpus", "1", "--memory", "4g", "--memory-swap", "4g",
             "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video",
             "--env", "HOME=/tmp", "--env", "OMP_NUM_THREADS=1", "--tmpfs", "/tmp:rw,nosuid,nodev,size=536870912",
-            "--entrypoint", "/usr/bin/python3", image_id, "/opt/sparkdev/media_probe.py", "--probe"], timeout=300)
+            "--entrypoint", "/usr/bin/python3", image_id, "/opt/sparkdev/media_probe.py", "--probe"], timeout=300, stderr=subprocess.PIPE)
         probe_value.update(json.loads(media))
+        receipt.update(probe=probe_value, probe_sha256=hashlib.sha256(probe).hexdigest(),
+                       media_probe_sha256=hashlib.sha256(media).hexdigest())
         # A listed encoder is only a build capability, not hardware acceptance.
         # Require the promised FFmpeg codecs, while reporting actual successes separately.
         if set(probe_value["gpu_video"]["listed_encoders"]) != {"h264_nvenc", "hevc_nvenc", "av1_nvenc"}:
-            raise ValueError("FFmpeg lacks the required compiled NVENC encoders")
+            raise RuntimeRefreshError("cuda_nvenc_not_compiled", "FFmpeg lacks the required compiled NVENC encoders")
+        phase = "registry_activation"
         cpu["register_runtimes"](root, {"cuda": {"image": image_id, "gpu": True,
             "provenance": "sparkdev CUDA Dockerfile; source " + source_digest + "; base " + BASE}})
-        receipt.update(state="succeeded", image=image_id, probe=probe_value, probe_sha256=hashlib.sha256(probe).hexdigest(),
-                       media_probe_sha256=hashlib.sha256(media).hexdigest(), finished_at=time.time(), exit_code=0)
+        phase = "receipt_publish"
+        receipt.update(state="succeeded", image=image_id, finished_at=time.time(), exit_code=0)
         publish()
         print(json.dumps(receipt))
         return 0
-    except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError):
-        receipt.update(state="failed", exit_code=1, finished_at=time.time(), error="runtime_verification_failed")
+    except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError) as error:
+        code = getattr(error, "code", "cuda_" + phase + "_failed")
+        detail = "CUDA " + phase.replace("_", " ") + " failed"
+        detail += ("; inspect the runtime registry and attempt receipt before retry" if phase in ("registry_activation", "receipt_publish")
+                   else "; the prior runtime registry is preserved")
+        stderr = getattr(error, "stderr", b"") or b""
+        if isinstance(stderr, str):
+            stderr = stderr.encode()
+        if phase == "media_probe" and b"media_probe.py" in stderr and b"Permission denied" in stderr:
+            code, detail = "cuda_media_probe_unreadable", "The packaged media probe is not readable by the nonroot probe user"
+        if isinstance(error, RuntimeRefreshError):
+            detail = str(error)
+        receipt.update(state="failed", exit_code=1, finished_at=time.time(), phase=phase, error=code, message=detail,
+                       failure_kind="timeout" if isinstance(error, subprocess.TimeoutExpired) else type(error).__name__)
+        if isinstance(error, subprocess.CalledProcessError):
+            receipt["process_exit_code"] = error.returncode
         publish()
         return 1
 

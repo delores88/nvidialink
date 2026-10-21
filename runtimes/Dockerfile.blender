@@ -184,6 +184,7 @@ COPY --from=builder /usr/lib/aarch64-linux-gnu/libEGL.so.1* /usr/lib/aarch64-lin
 # vendor and EEVEE aborts (BUILD_LOG.md, attempt 10). Identical to the host's
 # /usr/share/glvnd/egl_vendor.d/10_nvidia.json from libnvidia-gl-580.
 COPY 10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+RUN chmod 0644 /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
 COPY --from=builder /opt/blender /opt/blender
 
