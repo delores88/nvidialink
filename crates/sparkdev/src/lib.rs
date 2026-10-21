@@ -1,5 +1,7 @@
 pub mod discover;
 pub mod inventory;
+pub mod lan_learn;
+pub mod laptop_network;
 pub mod local;
 pub mod mcp;
 mod servers;
@@ -152,6 +154,8 @@ enum Commands {
         mode: Option<state::ConnectionMode>,
         #[arg(long)]
         laptop_jobs: Option<usize>,
+        #[arg(long, value_enum)]
+        auto_addresses: Option<Switch>,
     },
     Connect,
     Disconnect,
@@ -271,7 +275,7 @@ pub fn mcp_client(args: &[String]) -> Option<String> {
 /// client label this is self-declared, so the check is advisory: it stops
 /// an accidental run, not an agent with a shell that types `--client human`
 /// (which could as well run `setup` or probe the network itself).
-fn owner_only(raw: &[String], parsed: Client) -> Result<()> {
+fn explicitly_owner(raw: &[String], parsed: Client) -> bool {
     let mut named = Vec::new();
     let mut tokens = raw.iter();
     while let Some(token) = tokens.next() {
@@ -284,7 +288,10 @@ fn owner_only(raw: &[String], parsed: Client) -> Result<()> {
             named.push(Some(value));
         }
     }
-    if named == [Some("human")] && matches!(parsed, Client::Human) {
+    named == [Some("human")] && matches!(parsed, Client::Human)
+}
+fn owner_only(raw: &[String], parsed: Client) -> Result<()> {
+    if explicitly_owner(raw, parsed) {
         Ok(())
     } else {
         Err(AppError::new(2, discover::OWNER_ONLY))
@@ -326,6 +333,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                 connection_mode: previous.as_ref().and_then(|c| c.connection_mode),
                 connection_enabled: previous.as_ref().is_none_or(|c| c.connection_enabled),
                 laptop_jobs: previous.as_ref().map(|c| c.laptop_jobs).unwrap_or(2),
+                auto_addresses: previous.as_ref().is_none_or(|c| c.auto_addresses),
                 local_build_gate,
             })?;
             Ok(json!({"ok":true,"configured":true,"remote_enabled":allow_remote}))
@@ -351,8 +359,12 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             Ok(out)
         }
         Commands::Devices => devices(),
-        Commands::Connection { mode, laptop_jobs } => {
-            let config = if mode.is_some() || laptop_jobs.is_some() {
+        Commands::Connection {
+            mode,
+            laptop_jobs,
+            auto_addresses,
+        } => {
+            let config = if mode.is_some() || laptop_jobs.is_some() || auto_addresses.is_some() {
                 state::update_config(|config| {
                     if let Some(mode) = mode {
                         config.connection_mode = Some(mode);
@@ -360,6 +372,9 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
                     }
                     if let Some(jobs) = laptop_jobs {
                         config.laptop_jobs = jobs;
+                    }
+                    if let Some(enabled) = auto_addresses {
+                        config.auto_addresses = matches!(enabled, Switch::On);
                     }
                 })?
             } else {
@@ -373,6 +388,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             let mut tr = transport::Transport::new()?;
             match tr.rpc(json!({"v":1,"op":"doctor"})) {
                 Ok(doctor) => {
+                    lan_learn::learn_if_needed(&mut tr, &doctor);
                     result["reachable"] = json!(true);
                     result["doctor"] = doctor;
                 }
@@ -395,6 +411,12 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             stdin,
             internet,
         } => {
+            if internet.is_some() && !explicitly_owner(&raw, parsed_client) {
+                return Err(AppError::new(
+                    2,
+                    "Only the owner can change job internet; use exactly one --client human.",
+                ));
+            }
             let policy = if stdin {
                 Some(read_resource_input(std::io::stdin().lock())?)
             } else {
@@ -402,7 +424,15 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             };
             resource_settings(policy, internet.map(|v| matches!(v, Switch::On)))
         }
-        Commands::Downloads { keep_gb, free_up } => downloads(client, keep_gb, free_up),
+        Commands::Downloads { keep_gb, free_up } => {
+            if (keep_gb.is_some() || free_up) && !explicitly_owner(&raw, parsed_client) {
+                return Err(AppError::new(
+                    2,
+                    "Only the owner can change saved downloads; use exactly one --client human.",
+                ));
+            }
+            downloads(client, keep_gb, free_up)
+        }
         Commands::Serve {
             dir,
             name,
@@ -579,6 +609,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             let local = local::status()?;
             match remote {
                 Ok(mut v) => {
+                    lan_learn::learn_if_needed(&mut tr, &v);
                     v["transport"] = tr.info();
                     if all {
                         v["laptop_jobs"] = local;
@@ -594,6 +625,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
         Commands::Doctor => {
             let mut tr = transport::Transport::new()?;
             let mut v = tr.rpc(json!({"v":1,"op":"doctor"}))?;
+            lan_learn::learn_if_needed(&mut tr, &v);
             v["transport"] = tr.info();
             v["client"] = json!({"version":env!("CARGO_PKG_VERSION"),"os":std::env::consts::OS,"state_writable":true,"process_launch":true,"ssh_network":tr.selected=="ssh"});
             Ok(v)
@@ -697,12 +729,12 @@ fn downloads(client: &str, keep_gb: Option<u64>, free_up: bool) -> Result<Value>
     let d = &value["downloads"];
     let used = d["used_bytes"]
         .as_u64()
-        .map(|v| format!("{:.1} GB", v as f64 / 1e9))
+        .map(|v| format!("{:.1} GiB", v as f64 / 1073741824.0))
         .unwrap_or_else(|| "not measured yet".into());
     value["message"] = json!(format!(
-        "Saved downloads: {used} of {:.1} GB. Spark has {:.1} GB free.",
-        d["keep_bytes"].as_u64().unwrap_or(0) as f64 / 1e9,
-        d["free_bytes"].as_u64().unwrap_or(0) as f64 / 1e9
+        "Saved downloads: {used} of {:.1} GiB. Spark has {:.1} GiB free.",
+        d["keep_bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0,
+        d["free_bytes"].as_u64().unwrap_or(0) as f64 / 1073741824.0
     ));
     value["transport"] = tr.info();
     Ok(value)
@@ -744,6 +776,15 @@ fn devices() -> Result<Value> {
         Ok(mut tr) => {
             spark["availability"] = json!("unreachable");
             let result = tr.rpc(json!({"v":1,"op":"status","all":true}));
+            if let Ok(status) = &result {
+                lan_learn::learn_if_needed(&mut tr, status);
+            }
+            let lan_host = if tr.selected == "ssh" && tr.authenticated {
+                tr.host.as_deref()
+            } else {
+                None
+            };
+            laptop["network"] = laptop_network::info(lan_host);
             spark["transport"] = tr.info();
             if !tr.config.connection_enabled {
                 spark["availability"] = json!("disconnected");
@@ -1508,6 +1549,29 @@ pub fn logs(job: &str, since: u64, limit: usize) -> Result<Value> {
 mod tests {
     use super::*;
     #[test]
+    fn internet_and_download_changes_require_an_explicit_owner_before_io() {
+        for command in [
+            vec!["resources", "--internet", "on"],
+            vec!["downloads", "--free-up"],
+            vec!["downloads", "--keep-gb", "200"],
+        ] {
+            for prefix in [
+                vec![],
+                vec!["--client", "codex"],
+                vec!["--client", "claude"],
+            ] {
+                let args = prefix
+                    .into_iter()
+                    .chain(command.iter().copied())
+                    .map(String::from)
+                    .collect();
+                let error = execute(args).unwrap_err();
+                assert_eq!(error.code, 2);
+                assert!(error.message.contains("Only the owner"));
+            }
+        }
+    }
+    #[test]
     fn setup_holds_the_config_lock_and_keeps_settings_read_under_it() {
         let home = state::TestHome::new();
         let setup = |alias: &str| -> Vec<String> {
@@ -1528,6 +1592,7 @@ mod tests {
         state::update_config(|config| {
             config.connection_mode = Some(state::ConnectionMode::LanOnly);
             config.laptop_jobs = 1;
+            config.auto_addresses = false;
         })
         .unwrap();
         // Another writer, such as a Find my Spark save, holds the lock: setup
@@ -1564,6 +1629,7 @@ mod tests {
         assert_eq!(saved.ssh_alias, "other-spark");
         assert_eq!(saved.mode(), state::ConnectionMode::Both);
         assert_eq!(saved.laptop_jobs, 2);
+        assert!(!saved.auto_addresses);
     }
     #[test]
     fn argv_is_exact() {

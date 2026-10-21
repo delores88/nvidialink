@@ -160,7 +160,7 @@ fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
             "Finish or cancel the current pairing before changing the SSH connection.".into(),
         );
     }
-    let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect", "discover"];
+    let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect", "discover", "downloads"];
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
         || args.len() > 24
@@ -556,13 +556,14 @@ mod agent_path_tests {
 }
 
 #[tauri::command]
-async fn connection(app: tauri::AppHandle, mode: Option<String>, enabled: Option<bool>, laptop_jobs: Option<usize>) -> Result<Value, String> {
-    if (mode.is_some() || enabled.is_some()) && app.state::<PairState>().running.load(Ordering::SeqCst) {
+async fn connection(app: tauri::AppHandle, mode: Option<String>, enabled: Option<bool>, laptop_jobs: Option<usize>, auto_addresses: Option<bool>) -> Result<Value, String> {
+    if (mode.is_some() || enabled.is_some() || auto_addresses.is_some()) && app.state::<PairState>().running.load(Ordering::SeqCst) {
         return Err("Finish or cancel phone pairing before changing the connection.".into());
     }
     let mut args = vec!["--json".into(), "--client".into(), "human".into(), "connection".into()];
     if let Some(mode) = mode { args.extend(["--mode".into(), mode]); }
     if let Some(jobs) = laptop_jobs { args.extend(["--laptop-jobs".into(), jobs.to_string()]); }
+    if let Some(enabled) = auto_addresses { args.extend(["--auto-addresses".into(), if enabled { "on" } else { "off" }.into()]); }
     let saved = launch(app.clone(), "sparkdev", args, None, 15).await?;
     if saved["ok"] != true { return Ok(saved); }
     if let Some(enabled) = enabled {
@@ -572,9 +573,10 @@ async fn connection(app: tauri::AppHandle, mode: Option<String>, enabled: Option
 }
 
 #[tauri::command]
-async fn resources(app: tauri::AppHandle, policy: Option<Value>) -> Result<Value, String> {
+async fn resources(app: tauri::AppHandle, policy: Option<Value>, internet: Option<bool>) -> Result<Value, String> {
     let mut args = vec!["--json".into(), "--client".into(), "human".into(), "resources".into()];
     if policy.is_some() { args.push("--stdin".into()); }
+    if let Some(enabled) = internet { args.extend(["--internet".into(), if enabled { "on" } else { "off" }.into()]); }
     launch(app, "sparkdev", args, policy, 40).await
 }
 
