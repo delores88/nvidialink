@@ -35,16 +35,17 @@ pub async fn status() -> Result<Value> {
     )
 }
 
+fn bound_poll(request: &mut Value) {
+    // This sidecar is reached after the CLI has chosen/fallen back to pairing.
+    // Do not coerce malformed input into a valid request; the controller rejects it.
+    if let Some(timeout) = request.get("timeout").and_then(Value::as_u64) {
+        request["timeout"] = json!(timeout.min(2));
+    }
+}
+
 pub async fn rpc(input: Value) -> Result<Value> {
     let mut request = input.get("request").context("missing RPC request")?.clone();
-    if request.get("op").and_then(Value::as_str) == Some("wait") {
-        let timeout = request
-            .get("timeout")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            .min(2);
-        request["timeout"] = json!(timeout);
-    }
+    bound_poll(&mut request);
     let dir = storage::client_dir()?;
     let _lease = storage::endpoint_lease(&dir).await?;
     let peer: Peer = storage::read(&dir, "peer.json").context("this computer is not paired")?;
@@ -71,6 +72,28 @@ pub async fn rpc(input: Value) -> Result<Value> {
     .context("remote response missing")?;
     endpoint.close().await;
     Ok(result)
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::*;
+
+    #[test]
+    fn every_timeout_bearing_operation_is_bounded_at_the_paired_boundary() {
+        for op in ["wait", "call", "future_poll"] {
+            for timeout in [0, 1, 2, 20, 60] {
+                let mut request = json!({"op":op,"timeout":timeout,"request_id":"retained"});
+                bound_poll(&mut request);
+                assert_eq!(request["timeout"], timeout.min(2));
+                assert_eq!(request["request_id"], "retained");
+            }
+        }
+        for mut request in [json!({"op":"status"}), json!({"op":"call","timeout":false})] {
+            let original = request.clone();
+            bound_poll(&mut request);
+            assert_eq!(request, original);
+        }
+    }
 }
 
 pub async fn pair(input: Value) -> Result<()> {
