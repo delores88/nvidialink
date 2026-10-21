@@ -1187,7 +1187,10 @@ class Controller:
             enabled = value["enabled"]
         return {"enabled": enabled, "saved": bool(stored), "available": "python" in self.registry(),
                 "blocks": "home and private networks, this Spark, cloud metadata",
-                "applies": "new jobs; turning off also cuts running jobs"}
+                "applies": "new jobs; turning off also cuts running jobs",
+                "guard": {"mode": "ipv4_snapshot", "host_network_checks": "before_start_and_each_scheduler_tick",
+                          "home_public_address_blocked": False,
+                          "limitation": "The home public IP is not detected; router port forwarding or hairpin access through that address is not blocked."}}
 
     def job_network(self):
         policy = self.internet_policy()
@@ -1200,9 +1203,10 @@ class Controller:
             atomic_write(job_root / "proxy.py", Path(__file__).with_name("proxy.py").read_bytes(), 0o444)
 
     def internet_status(self, row):
-        names = {"internet": "on", "off": "off", "cut": "cut_by_owner", "no_helper": "unavailable", "setup_failed": "unavailable"}
+        names = {"internet": "on", "off": "off", "cut": "cut_by_owner", "no_helper": "unavailable", "setup_failed": "unavailable", "network_changed": "unavailable"}
         reason = {"cut": "Internet was turned off by the owner", "no_helper": "The Python runtime needed for internet is not installed",
-                  "setup_failed": "The private connection could not be safely prepared; this job runs offline"}.get(row["egress"])
+                  "setup_failed": "The private connection could not be safely prepared; this job runs offline",
+                  "network_changed": "Spark network addresses changed or could not be checked; this job's internet was stopped. Submit a new job to reconnect."}.get(row["egress"])
         return {"internet": names.get(row["egress"], "package_registries_only" if is_preparation(row) else None),
                 "internet_reason": reason, "internet_use": json.loads(row["internet_use"]) if row["internet_use"] else None}
 
@@ -2286,7 +2290,7 @@ class Controller:
         return args
 
     def ensure_proxy(self, row):
-        if not row["proxy_image"] or row["egress"] in ("cut", "setup_failed"):
+        if not row["proxy_image"] or row["egress"] in ("cut", "setup_failed", "network_changed"):
             return
         online = row["egress"] == "internet"
         root = self.root / "jobs" / row["id"]
@@ -2296,6 +2300,8 @@ class Controller:
                 atomic_write(deny, canonical(internet_deny()), 0o444)
             elif regular_size(deny) is None or regular_size(deny) > 65536:
                 reject("unsafe_state", "Job network deny file is not a bounded regular file")
+            elif not self.network_snapshot_matches(row, internet_deny()):
+                reject("network_changed", "Spark network addresses changed before this job started")
             for name in ("egress", "scratch"):
                 path = root / name
                 if path.is_symlink():
@@ -2355,7 +2361,7 @@ class Controller:
             self.docker.call(["rm", "--force", name])
 
     def collect_internet_use(self, row):
-        if row["egress"] not in ("internet", "cut", "setup_failed") or row["internet_use"]:
+        if row["egress"] not in ("internet", "cut", "setup_failed", "network_changed") or row["internet_use"]:
             return
         path = self.root / "jobs" / row["id"] / "egress" / "counters.json"
         try:
@@ -2488,30 +2494,71 @@ class Controller:
             if error.code != "runtime_refresh_in_progress":
                 raise
 
+    def network_snapshot_matches(self, row, current):
+        # A single-file bind keeps its original inode. Never rewrite it under a
+        # live helper: terminate that helper if newly local public addresses are
+        # not covered. Private/Docker networks are already denied unconditionally,
+        # so another job's newly created 172.x bridge does not cut every peer.
+        def relevant(values):
+            if not isinstance(values, list) or len(values) > 256:
+                raise ValueError("Invalid network snapshot")
+            networks = [ipaddress.IPv4Network(value, strict=True) for value in values]
+            return [network for network in networks if network.is_global]
+        path = self.root / "jobs" / row["id"] / "egress-deny.json"
+        with os.fdopen(safe_open(path), "rb") as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("Network snapshot is too large")
+        previous = relevant(json.loads(raw))
+        return all(any(network.subnet_of(old) for old in previous) for network in relevant(current))
+
+    def cut_internet(self, row, reason):
+        try:
+            self.remove_proxy(row)
+            self.db.execute("UPDATE jobs SET egress=? WHERE id=?", (reason, row["id"]))
+            self.audit("internet_cut" if reason == "cut" else "internet_network_changed", row["id"], row["client"])
+        except (Rejected, OSError, ValueError, subprocess.SubprocessError) as error:
+            self.scheduler_error("internet cut", error)
+            # No workload may retain internet after a failed safety cut. Stop
+            # only its identity-checked container; never unrelated resources.
+            try:
+                info = self.docker.inspect(self.container_name(row["id"]))
+                if info is not None:
+                    self.container_matches(info, row)
+                    if info["State"]["Status"] in ("running", "restarting", "paused"):
+                        self.docker.call(["stop", "--time", "10", self.container_name(row["id"])], timeout=20)
+                if model_server.is_service(row):
+                    self.db.execute("UPDATE jobs SET stop_reason='internet_off',cancel=1,egress=? WHERE id=?", (reason, row["id"]))
+                    self.finish(row, "cancelled", 130)
+                else:
+                    self.db.execute("UPDATE jobs SET egress=? WHERE id=?", (reason, row["id"]))
+                    self.finish(row, "failed", 125, "internet_guard_failed")
+            except (Rejected, OSError, ValueError, subprocess.SubprocessError) as stop_error:
+                self._docker_unavailable = True
+                self.scheduler_error("internet stop", stop_error)
+
     def _tick(self):
         self._docker_unavailable = False
+        internet_rows = self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running') AND egress='internet'").fetchall()
         if not self.internet_policy()["enabled"]:
-            for row in self.db.execute("SELECT * FROM jobs WHERE state IN ('starting','running') AND egress='internet'").fetchall():
+            for row in internet_rows:
+                self.cut_internet(row, "cut")
+        elif internet_rows:
+            try:
+                current_network = internet_deny()
+            except (Rejected, OSError, ValueError):
+                current_network = None
+            for row in internet_rows:
+                # A newly admitted row has no helper yet; ensure_proxy takes
+                # its first current snapshot before creation instead.
+                if row["state"] == "starting" and not os.path.lexists(self.root / "jobs" / row["id"] / "egress-deny.json"):
+                    continue
                 try:
-                    self.remove_proxy(row)
-                    self.db.execute("UPDATE jobs SET egress='cut' WHERE id=?", (row["id"],))
-                    self.audit("internet_cut", row["id"], row["client"])
-                except (Rejected, OSError, subprocess.SubprocessError) as error:
-                    self.scheduler_error("internet cut", error)
-                    # A service must not retain internet after the owner's off switch.
-                    # Only stop a container whose immutable identity still matches.
-                    if model_server.is_service(row):
-                        try:
-                            info = self.docker.inspect(self.container_name(row["id"]))
-                            if info is not None:
-                                self.container_matches(info, row)
-                                if info["State"]["Status"] in ("running", "restarting", "paused"):
-                                    self.docker.call(["stop", "--time", "10", self.container_name(row["id"])], timeout=20)
-                            self.db.execute("UPDATE jobs SET stop_reason='internet_off',cancel=1 WHERE id=?", (row["id"],))
-                            self.finish(row, "cancelled", 130)
-                        except (Rejected, OSError, ValueError, subprocess.SubprocessError) as stop_error:
-                            self._docker_unavailable = True
-                            self.scheduler_error("internet stop", stop_error)
+                    safe = current_network is not None and self.network_snapshot_matches(row, current_network)
+                except (Rejected, OSError, ValueError, TypeError):
+                    safe = False
+                if not safe:
+                    self.cut_internet(row, "network_changed")
         # Stop one most-recently-started workload per tick when disk headroom is exhausted.
         if self.free_bytes() < DISK_STOP_FLOOR:
             row = self.db.execute("SELECT * FROM jobs WHERE state='running' ORDER BY started DESC LIMIT 1").fetchone()

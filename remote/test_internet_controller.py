@@ -137,9 +137,52 @@ class InternetControllerTests(unittest.TestCase):
         self.c.ensure_proxy(row)
         path = self.root / "jobs" / job["job"] / "egress-deny.json"
         before = (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes())
-        with mock.patch.object(controller, "internet_deny", side_effect=AssertionError("must not refresh")):
-            self.c.ensure_proxy(row)
+        self.c.ensure_proxy(row)
         self.assertEqual(before, (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes()))
+
+    def test_public_host_change_cuts_helper_and_keeps_batch_running_offline(self):
+        job, _ = self.run_job()
+        self.c.tick()
+        path = self.root / "jobs" / job["job"] / "egress-deny.json"
+        original = path.read_bytes()
+        with mock.patch.object(controller, "internet_deny", return_value=["192.168.0.0/24", "9.9.9.9/32"]):
+            self.c.tick()
+        row = self.c.get_job(job["job"])
+        self.assertEqual((row["state"], row["egress"]), ("running", "network_changed"))
+        self.assertEqual(self.c.job_status(row)["internet"], "unavailable")
+        self.assertNotIn("sparkdev-proxy-" + job["job"], self.docker.containers)
+        self.assertEqual(path.read_bytes(), original)
+        self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["egress"], "network_changed")
+
+    def test_private_bridge_changes_do_not_cut_public_internet(self):
+        job, _ = self.run_job()
+        self.c.tick()
+        with mock.patch.object(controller, "internet_deny", return_value=["192.168.0.0/24", "8.8.8.9/32", "172.25.0.0/16"]):
+            self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["egress"], "internet")
+
+    def test_unreadable_network_facts_cut_running_internet(self):
+        job, _ = self.run_job()
+        self.c.tick()
+        with mock.patch.object(controller, "internet_deny", side_effect=Rejected("network_facts", "fixture")):
+            self.c.tick()
+        self.assertEqual(self.c.get_job(job["job"])["egress"], "network_changed")
+
+    def test_failed_guard_cut_stops_matching_batch_instead_of_leaving_internet(self):
+        job, _ = self.run_job()
+        self.c.tick()
+        with mock.patch.object(controller, "internet_deny", return_value=["9.9.9.9/32"]), mock.patch.object(self.c, "remove_proxy", side_effect=Rejected("docker_failed", "fixture")):
+            self.c.tick()
+        row = self.c.get_job(job["job"])
+        self.assertEqual((row["state"], row["error"]), ("failed", "internet_guard_failed"))
+        self.assertTrue(any(call[:3] == ["stop", "--time", "10"] and call[-1] == self.c.container_name(job["job"]) for call in self.docker.calls))
+
+    def test_known_hairpin_gap_is_explicit_without_fabricated_canary(self):
+        guard = self.rpc("resources")["internet"]["guard"]
+        self.assertFalse(guard["home_public_address_blocked"])
+        self.assertNotIn("active", guard)
+        self.assertIn("home public IP", guard["limitation"])
 
     def test_helper_setup_failure_runs_offline_but_daemon_failure_does_not(self):
         first, _ = self.run_job()
