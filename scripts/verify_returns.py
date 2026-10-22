@@ -107,6 +107,17 @@ def file_hash(path):
     return digest.hexdigest(), info.st_size
 
 
+def same_location(left, right, *, directory=False):
+    """Compare existing filesystem identities, including Windows path aliases."""
+    left, right = Path(left), Path(right)
+    expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+    for path in (left, right):
+        info = path.lstat()
+        if not expected_type(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise RuntimeError("Acceptance location is a link or has the wrong file type")
+    return left.samefile(right)
+
+
 def expected_large_hash():
     digest = hashlib.sha256()
     for _ in range(COUNT):
@@ -290,11 +301,11 @@ class Acceptance:
                 if key[0] == "work":
                     desired = self.project / "files" / key[1]
                     if key[1] == "conflict.txt":
-                        if path.parent.resolve() != desired.parent.resolve() or path.resolve() == desired.resolve():
+                        if not same_location(path.parent, desired.parent, directory=True) or same_location(path, desired):
                             raise RuntimeError("Conflict output is not a sibling of the preserved source file")
-                    elif path.resolve() != desired.resolve() or receipt["status"] != "written":
+                    elif not same_location(path, desired) or receipt["status"] != "written":
                         raise RuntimeError("New/unchanged-original work did not return to its original source path")
-                elif path.resolve() != (self.state / "results" / job / key[1]).resolve():
+                elif not same_location(path, self.state / "results" / job / key[1]):
                     raise RuntimeError("Output did not land under the predictable owner results folder")
                 verified.append({"scope": key[0], "path": str(path), "bytes": size, "sha256": digest, "status": receipt["status"]})
             if case == "cache-repeat" and (not final.get("cache_hit") or final.get("cached_from") != record["submissions"]["cache"]["job"]):
