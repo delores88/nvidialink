@@ -1,10 +1,10 @@
 # DGXBridge 0.5.0 verification
 
-Status: replacement 0.5.0 installed on the physical Windows laptop with exact packaged payloads and preserved configuration and pairing. Final controlled-return acceptance passed. Publication and Marketplace admission remain separate pending gates at this source tag.
+Status: 0.5.0 is published, deployed to the physical Spark, installed on the physical Windows laptop, and accepted by DeloresAI Marketplace. The signed-in Marketplace download matches the installed release's exact installer bytes. Configuration and pairing were preserved. This post-publication receipt supplements the immutable `v0.5.0` source tag; the tag and its release assets were not changed.
 
 The complete release includes default automatic result return, GPU video codecs, Blender 4.5.9 with Cycles CUDA/OptiX and OIDN, locked system packages in project images, offload-by-default agent prompts, and Windows Apps version repair. Files return without a download button.
 
-## Evidence so far
+## Execution and installation evidence
 
 - Real Spark Rust source tests: 159 library tests and one return-worker test passed, job `82db297ba22541f1aa8bf50161cac0c2`; cargo-auditable ARM release binaries were produced. This is source validation, not installed automatic-return acceptance.
 - Remote Python suite under WSL: 352 tests, 10 skipped, no failures.
@@ -21,8 +21,18 @@ The complete release includes default automatic result return, GPU video codecs,
 
 - An offline regression with the actual old and replacement Windows worker binaries reproduced the old capture timeout at 4.156 seconds after dispatcher exit. The replacement returned exit code 0 and capture EOF in 0.172 seconds while its detached child remained alive. Both fixture children were then stopped; owner-worker identity and startup records were unchanged. This verifies uninstalled process behavior separately from the replacement-install workflow.
 
-## Remaining release gates
+## Final installed recovery
 
 The final installed replacement returned capture EOF in 3.282 seconds while its newly created background worker stayed alive. Job `cb328ad51df146218f05b4d8bcfb1cdc` retained an 8 MiB partial transfer through a definite SSH transport error. The installed dispatcher restarted the dedicated worker; the same job completed delivery before a foreground verifier ran. All four file hashes passed, including the 130 MiB output and conflict sibling, and the concurrent local edit remained intact. The first Python observer encountered a transient Windows receipt-sharing error; its preserved failure was recovered with bounded read retries and the same job, without another submission. Fixture processes were cleaned up and preexisting workers, configuration and pairing were unchanged. See [the installed acceptance receipt](../evidence/dgxbridge-050-installed.json).
 
-Independent complete draft review, immutable publication, Marketplace acceptance and exact served-installer verification follow. Phone-hotspot operation, laptop sleep, physical network loss and actual Windows logon remain unverified; paired transport and controlled proxy interruption do not establish those cases. Cold compilation of the optional standalone Blender fallback also remains unverified; the tested runtime reused its exact immutable existing image.
+## Publication and Marketplace acceptance
+
+Independent review passed against the complete draft. GitHub release `420852816` was published as [v0.5.0](https://github.com/delores88/nvidialink/releases/tag/v0.5.0) from source `8ccebae37fda3a65188a9982e97da3f0bfdb5d19`; all 17 assets retained their reviewed identities. Installer asset `666173875` is 13,062,523 bytes with SHA-256 `60c8772b747016f5d7b5b44c26c789347d8ecdce5b5195b382a3b6aa858772dc`.
+
+Native Developer tools > Release decisions reported acceptance at **2026-10-22 15:17:01 UTC**, with five passed checks, zero failed and zero incomplete. The public catalog and Marketplace agent independently corroborated release `0zlkeSfadAj3KJm4TaO0xpXk`, artifact `56zN6D8kIG-coY0iepFwMKuM` and attempt `cQ3r6KgxxytSEAvpLxbdOTRw`. The normal signed-in native download reached **Verified Download**; its separately saved file matched the exact installer size and SHA-256. No second installation was needed. DGXBridge remains nonfeatured and PhaseForge remains featured. See [the Marketplace receipt](../evidence/dgxbridge-050-marketplace.json).
+
+One medium dependency advisory remains: `GHSA-wrw7-89jp-8q8g`, `glib 0.18.5` in `src-tauri/Cargo.lock`, fixed upstream in 0.20.0. There were no critical or high dependency findings. Marketplace static admission is separate from installed behavior, comprehensive source security analysis and reproducible-build verification.
+
+## Verification limits
+
+Phone-hotspot operation, laptop sleep, physical network loss, actual Windows logon and a fresh in-app updater installation remain unverified; paired transport and controlled proxy interruption do not establish those cases. Cold compilation of the optional standalone Blender fallback also remains unverified; the tested runtime reused its exact immutable existing image. The Windows installer is unsigned. Prior releases and owner state were preserved, and no stopped heartbeat was restarted.

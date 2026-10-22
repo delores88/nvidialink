@@ -2,7 +2,7 @@
 
 A Windows desktop app and agent CLI for running Linux builds, tests and compute on your own NVIDIA DGX Spark, while Windows work stays on your laptop. Claude Code, Codex and humans share job status, worktree claims and retained logs. First-party source is MIT licensed; this is an independent DeloresAI utility.
 
-**0.5.0:** automatically returns files created or changed on the Spark to the laptop, adds GPU media and Blender 4.5.9, and prepares hash-locked system packages in project-specific images. Background return survives the submitting agent exiting. Physical Spark features, installed Windows delivery and controlled interrupted-transfer recovery passed; Marketplace admission is recorded separately in [release verification](docs/RELEASE-0.5.0.md).
+**0.5.0:** automatically returns files created or changed on the Spark to the laptop, adds GPU media and Blender 4.5.9, and prepares hash-locked system packages in project-specific images. Background return survives the submitting agent exiting. Physical Spark features, installed Windows delivery and controlled interrupted-transfer recovery passed. Marketplace accepted the release, and its signed-in download matched the exact installer hash. See [release verification and limits](docs/RELEASE-0.5.0.md).
 
 ## Connect your Spark
 

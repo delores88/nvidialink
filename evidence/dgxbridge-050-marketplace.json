@@ -1,0 +1,116 @@
+{
+  "version": "0.5.0",
+  "observed_at": "2026-10-22T15:26:17.7776836+00:00",
+  "marketplace_release_id": "0zlkeSfadAj3KJm4TaO0xpXk",
+  "marketplace_attempt_id": "cQ3r6KgxxytSEAvpLxbdOTRw",
+  "native_decision": {
+    "status": "accepted",
+    "accepted_at": "2026-10-22T15:17:01.75Z",
+    "checks_passed": 5,
+    "checks_failed": 0,
+    "checks_incomplete": 0
+  },
+  "artifact": {
+    "id": "56zN6D8kIG-coY0iepFwMKuM",
+    "appId": "dgxbridge",
+    "version": "0.5.0",
+    "releaseId": 420852816,
+    "assetId": 666173875,
+    "sourceCommit": "8ccebae37fda3a65188a9982e97da3f0bfdb5d19",
+    "size": 13062523,
+    "sha256": "60c8772b747016f5d7b5b44c26c789347d8ecdce5b5195b382a3b6aa858772dc",
+    "manifestSha256": "debd186c2b25a2323bd8a692c5ef5e6dc028158efda104a983e12049c94effc0",
+    "status": "accepted",
+    "revoked": false,
+    "acceptancePolicy": "immutable-release",
+    "acceptedAt": "2026-10-22T15:17:01.75Z",
+    "expiresAt": "2026-10-29T15:17:01.75Z"
+  },
+  "published_manifest_asset_id": 666178505,
+  "published_manifest_raw_sha256": "b288200a2d3c857057196a810a9f6440d60b95955a9b38fc67d6eda1b85603d8",
+  "marketplace_download": {
+    "bytes": 13062523,
+    "sha256": "60c8772b747016f5d7b5b44c26c789347d8ecdce5b5195b382a3b6aa858772dc",
+    "verified_at": "2026-10-22T09:24:08.7910795-06:00",
+    "method": "Signed-in native Marketplace Download for Windows, Verified Download, Save installer as",
+    "installed_again": false
+  },
+  "dependency_findings": {
+    "critical": 0,
+    "high": 0,
+    "medium": 1,
+    "low": 0,
+    "remaining_advisory": "GHSA-wrw7-89jp-8q8g: glib 0.18.5 in source src-tauri/Cargo.lock; fixed in 0.20.0"
+  },
+  "verification_checks": [
+    {
+      "id": "file.identity",
+      "label": "Installer file identity",
+      "status": "passed"
+    },
+    {
+      "id": "package.identity",
+      "label": "Package and architecture",
+      "status": "passed"
+    },
+    {
+      "id": "publisher.authorization",
+      "label": "Publisher authorization",
+      "status": "passed"
+    },
+    {
+      "id": "release.source-binding",
+      "label": "Source and release identity",
+      "status": "passed"
+    },
+    {
+      "id": "malware.scan",
+      "label": "Malware scan",
+      "status": "passed"
+    },
+    {
+      "id": "artifact.sbom",
+      "label": "Dependency inventory",
+      "status": "passed"
+    },
+    {
+      "id": "source.dependencies",
+      "label": "Dependency vulnerability assessment",
+      "status": "passed"
+    },
+    {
+      "id": "source.secrets",
+      "label": "Secret patterns in supported files",
+      "status": "passed"
+    },
+    {
+      "id": "artifact.os-signature",
+      "label": "Publisher signing",
+      "status": "not-required"
+    },
+    {
+      "id": "runtime.lifecycle",
+      "label": "Installation and application behavior",
+      "status": "not-run"
+    },
+    {
+      "id": "source.static-analysis",
+      "label": "Comprehensive source analysis",
+      "status": "not-run"
+    },
+    {
+      "id": "artifact.provenance",
+      "label": "Reproducible build provenance",
+      "status": "not-run"
+    }
+  ],
+  "installation_receipt": "dgxbridge-050-installed.json",
+  "native_decision_receipt_sha256": "708573687c9ff604e845012f1d3d04b76038261bbe3886b62e00dd52b04cfb6a",
+  "native_download_receipt_sha256": "d4bdd6c824b4fcda3b6efa3a7f905b071817e427453047374ea98777eab3703a",
+  "scope": "Native publisher decision and exact public catalog identity, plus normal signed-in native Marketplace download and independent saved-file hash. Installed Windows behavior and physical Spark runs are separate evidence.",
+  "limits": "Static admission is not comprehensive application security or lifecycle testing. The installer is unsigned. No fresh in-app updater installation, actual Windows logon, laptop sleep, phone-hotspot execution, physical network-drop test or cold standalone Blender fallback compilation is claimed. Authenticated paired transport and controlled SSH proxy interruption were tested separately.",
+  "featured": false,
+  "phaseforge_remains_featured": true,
+  "immutable_prior_releases_preserved": true,
+  "automations_restarted": false
+}
