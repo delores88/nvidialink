@@ -201,7 +201,7 @@ mod tests {
         let (dir, _) = fixture();
         let wire = load(dir.path()).unwrap();
         assert_eq!(wire["v"], 1);
-        assert_eq!(wire["files"].as_object().unwrap().len(), 15);
+        assert_eq!(wire["files"].as_object().unwrap().len(), ALLOWED.len());
         for name in ALLOWED {
             assert_eq!(
                 STANDARD
