@@ -949,20 +949,95 @@ fn worker_executable() -> Result<PathBuf> {
 }
 
 #[cfg(windows)]
+fn worker_command_line(worker: &Path, state: &Path) -> Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    let mut line = Vec::new();
+    for arg in [
+        worker.as_os_str(),
+        std::ffi::OsStr::new("--state-dir"),
+        state.as_os_str(),
+    ] {
+        if !line.is_empty() {
+            line.push(b' ' as u16);
+        }
+        line.push(b'"' as u16);
+        let mut slashes = 0;
+        for unit in arg.encode_wide() {
+            if unit == 0 {
+                return Err(err("The result-worker path contains a null character"));
+            }
+            if unit == b'\\' as u16 {
+                slashes += 1;
+                continue;
+            }
+            // Windows argv doubles backslashes before a quote, including the
+            // closing quote. Preserve UTF-16 paths without lossy conversion.
+            line.extend(std::iter::repeat_n(
+                b'\\' as u16,
+                if unit == b'"' as u16 {
+                    slashes * 2 + 1
+                } else {
+                    slashes
+                },
+            ));
+            line.push(unit);
+            slashes = 0;
+        }
+        line.extend(std::iter::repeat_n(b'\\' as u16, slashes * 2));
+        line.push(b'"' as u16);
+    }
+    line.push(0);
+    if line.len() > 32767 {
+        return Err(err(
+            "The result-worker command exceeds the Windows command-line limit",
+        ));
+    }
+    Ok(line)
+}
+
+#[cfg(windows)]
 fn spawn_return_worker(worker: &Path, state: &Path) -> Result<()> {
-    use std::{
-        os::windows::process::CommandExt,
-        process::{Command, Stdio},
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{
+            CREATE_NEW_PROCESS_GROUP, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION,
+            STARTUPINFOW,
+        },
     };
-    Command::new(worker)
-        .arg("--state-dir")
-        .arg(state)
-        .env("SPARKDEV_HOME", state)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(0x00000008 | 0x00000200)
-        .spawn()?;
+    let mut line = worker_command_line(worker, state)?;
+    let application: Vec<u16> = worker.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    let mut process: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    // Replacing the standard streams with NUL does not exclude other inherited
+    // capture-pipe handles. No handles may reach this persistent process, or
+    // the submitting caller can wait forever for EOF after the CLI has exited.
+    // The explicit state argument configures SPARKDEV_HOME before child threads.
+    let created = unsafe {
+        CreateProcessW(
+            application.as_ptr(),
+            line.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            std::ptr::null(),
+            std::ptr::null(),
+            &startup,
+            &mut process,
+        )
+    };
+    if created == 0 {
+        return Err(AppError::new(
+            3,
+            "The automatic result worker could not be started",
+        ));
+    }
+    unsafe {
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
     Ok(())
 }
 
@@ -1041,6 +1116,51 @@ pub fn ensure_worker() -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[cfg(windows)]
+    #[test]
+    fn worker_argv_round_trips_windows_state_paths() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::{Foundation::LocalFree, UI::Shell::CommandLineToArgvW};
+        let worker = Path::new(r"\\?\UNC\localhost\C$\Owner Apps\DGXBridge\sparkdev-return.exe");
+        for state in [
+            Path::new(r"C:\Owner Data\DGXBridge"),
+            Path::new(r"\\?\UNC\localhost\C$\Owner Data\"),
+            Path::new(r"C:\"),
+            Path::new("C:\\Données\\火花"),
+        ] {
+            let line = worker_command_line(worker, state).unwrap();
+            let mut count = 0;
+            let parsed = unsafe { CommandLineToArgvW(line.as_ptr(), &mut count) };
+            assert!(!parsed.is_null());
+            let actual: Vec<Vec<u16>> = unsafe {
+                std::slice::from_raw_parts(parsed, count as usize)
+                    .iter()
+                    .map(|&arg| {
+                        let mut len = 0;
+                        while *arg.add(len) != 0 {
+                            len += 1;
+                        }
+                        std::slice::from_raw_parts(arg, len).to_vec()
+                    })
+                    .collect()
+            };
+            unsafe {
+                LocalFree(parsed.cast());
+            }
+            let expected: Vec<Vec<u16>> = [
+                worker.as_os_str(),
+                std::ffi::OsStr::new("--state-dir"),
+                state.as_os_str(),
+            ]
+            .into_iter()
+            .map(|arg| arg.encode_wide().collect())
+            .collect();
+            assert_eq!(actual, expected);
+        }
+        assert!(worker_command_line(worker, Path::new("C:\\bad\0state")).is_err());
+        assert!(worker_command_line(worker, Path::new(&"a".repeat(32768))).is_err());
+    }
 
     #[test]
     fn startup_ownership_matches_physical_windows_spellings_only() {
