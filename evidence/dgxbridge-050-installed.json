@@ -1,0 +1,87 @@
+{
+  "version": "0.5.0",
+  "recorded_at": "2026-10-22T14:53:08.055199+00:00",
+  "scope": "Physical Windows replacement install and controlled pinned-LAN return recovery; other feature evidence is in docs/RELEASE-0.5.0.md",
+  "installer_sha256": "60c8772b747016f5d7b5b44c26c789347d8ecdce5b5195b382a3b6aa858772dc",
+  "installed_payloads": [
+    {
+      "relative_path": "bin/sparkdev-return.exe",
+      "bytes": 1559552,
+      "sha256": "8fbcae9c719e4758c9a31398e13596abfbf3abf180bb3470a53739194f0704f8",
+      "matches_package": true
+    },
+    {
+      "relative_path": "bin/sparkdev.exe",
+      "bytes": 4259328,
+      "sha256": "491d1f71c30048ccb4288191dce4411eec16e4cdfcb15fbe7dd82306cd9fa901",
+      "matches_package": true
+    },
+    {
+      "relative_path": "dgxbridge.exe",
+      "bytes": 13431296,
+      "sha256": "fcd17205ab6a988eb004734c22333c4a8e691e1fa790762f82022a45b57892a8",
+      "matches_package": true
+    },
+    {
+      "relative_path": "bin/sparkdev-link.exe",
+      "bytes": 13842432,
+      "sha256": "93faf5e41fe4ee03f0529bae280a22adb1a4063f71907a2dea4bee4868846dad",
+      "matches_package": true
+    }
+  ],
+  "native_version": "0.5.0",
+  "owner_config_and_pairing_preserved": true,
+  "automatic_return": {
+    "job": "cb328ad51df146218f05b4d8bcfb1cdc",
+    "client": "codex",
+    "state": "succeeded",
+    "exit_code": 0,
+    "return_status": "complete",
+    "fresh_cli_capture_eof_seconds": 3.2820000000065193,
+    "fresh_background_worker_alive_after_cli_exit": true,
+    "partial_before_interruption_bytes": 8388608,
+    "transport_failure_code": 4,
+    "manual_dispatcher_restart": true,
+    "completed_before_any_foreground_verifier_call": true,
+    "same_job_recovered_without_resubmission": true,
+    "files": [
+      {
+        "scope": "work",
+        "bytes": 38,
+        "sha256": "ccb1d5e51ef47c36e67e342a856d0ce4e0e8f0acfb70db07866dd644468088c9",
+        "status": "written"
+      },
+      {
+        "scope": "work",
+        "bytes": 42,
+        "sha256": "636a269f3c83f883e7161c0c7647ee2e1f2a17c3e0ae416701bc2071f3d78e46",
+        "status": "conflict"
+      },
+      {
+        "scope": "work",
+        "bytes": 28,
+        "sha256": "1838a068595e0efc8ee0e9cb2642a367b62c17c702615dc10044d235eac96ce5",
+        "status": "written"
+      },
+      {
+        "scope": "output",
+        "bytes": 136314880,
+        "sha256": "b0099ba6760d739684ca1ff8ba4f8369cff5216af01e90b4020453caec1cf05a",
+        "status": "written"
+      }
+    ],
+    "local_concurrent_edit_preserved": true,
+    "observer_error": "The first Python observer hit a transient Windows PermissionError while reading a worker-updated receipt. Its cleanup stopped only its fixture. A bounded retrying observer resumed the same retained job; original failure receipts were preserved.",
+    "preexisting_workers_unchanged": true,
+    "fixture_processes_cleaned_up": true
+  },
+  "unverified": [
+    "phone hotspot/relay traversal",
+    "physical network loss",
+    "laptop sleep",
+    "actual Windows logon execution",
+    "cold compilation of optional Blender fallback"
+  ],
+  "published": false,
+  "marketplace_accepted": false
+}
