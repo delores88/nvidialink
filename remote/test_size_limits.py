@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -424,12 +425,10 @@ class SizeLimitTests(unittest.TestCase):
             controller.spawn_materializer(self.root)
         argv, options = popen.call_args
         self.assertEqual(argv[0][-3:], ["materialize", "--state", str(self.root)])
-        self.assertEqual(argv[0][1:4], ["-I", "-c", controller.ISOLATED_LAUNCHER])
+        self.assertEqual(argv[0][1:4], ["-I", "-c", controller.MATERIALIZER_SUPERVISOR])
         self.assertEqual(Path(argv[0][4]).name, "controller.py")
-        for name in ("stdin", "stdout"):
+        for name in ("stdin", "stdout", "stderr"):
             self.assertIs(options[name], subprocess.DEVNULL)
-        self.assertIsInstance(options["stderr"], int)
-        self.assertTrue((self.root / "snapshots" / controller.MATERIALIZER_LOG).is_file())
         self.assertTrue(options["start_new_session"] and options["close_fds"])
         self.assertEqual(options["env"], controller.TOOL_ENV)
         self.assertEqual(self.error("materialize")["code"], "unknown_operation")
@@ -439,9 +438,10 @@ class SizeLimitTests(unittest.TestCase):
         # modules, so every builder died before reading the queue and large syncs never finished.
         process = controller.spawn_materializer(self.root)
         self.assertEqual(process.wait(timeout=60), 0)
-        self.assertEqual((self.root / "snapshots" / controller.MATERIALIZER_LOG).read_bytes(), b"")
         health = self.rpc("status")["materializer"]
-        self.assertEqual((health["running"], health["last_error"], health["stalled"]), (False, None, False))
+        self.assertEqual((health["running"], health["last_exit_code"], health["last_error"], health["stalled"]),
+                         (False, 0, None, False))
+        self.assertGreaterEqual(health["last_finished"], health["last_started"])
 
     def pack(self, *raws, name="0" * 32 + ".pack", body=None):
         (self.root / "incoming" / name).write_bytes(b"".join(raws) if body is None else body)
@@ -528,27 +528,51 @@ class SizeLimitTests(unittest.TestCase):
             self.assertEqual(self.c.prune_pending(), [])
         self.assertEqual(self.c.prune_pending(), [manifest_id])
 
-    def test_status_reports_a_builder_that_died(self):
+    def supervised(self, body):
+        """A real builder process under the real supervisor, running `body` instead of controller.py."""
+        script = Path(self.tmp.name) / "builder.py"
+        script.write_text(body)
+        return subprocess.Popen([sys.executable, "-I", "-c", controller.MATERIALIZER_SUPERVISOR, str(script),
+                                 "materialize", "--state", str(self.root)],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                env=dict(controller.TOOL_ENV))
+
+    def test_status_reports_how_a_dead_builder_ended(self):
         big = large(6)
         self.upload(big)
         self.assertEqual(self.sync(entry("big.bin", big))["error"]["code"], "materializing")
-        # A real builder that fails at startup: its state root is not a directory.
-        blocker = Path(self.tmp.name) / "not-a-directory"
-        blocker.write_bytes(b"")
-        argv = controller.isolated_argv(Path(controller.__file__).resolve(), "materialize", "--state", str(blocker))
-        with open(self.root / "snapshots" / controller.MATERIALIZER_LOG, "wb") as log:
-            self.assertNotEqual(subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log,
-                                               env=dict(controller.TOOL_ENV), timeout=60).returncode, 0)
+        # Raised: the error kind only, never its message or a path.
+        self.assertEqual(self.supervised("raise ConnectionResetError('/home/x/secret path')").wait(timeout=60), 1)
         health = self.rpc("status")["materializer"]
-        self.assertFalse(health["running"])
-        self.assertTrue(health["stalled"])
-        # The error kind only, never the path the traceback names.
-        self.assertIn(health["last_error"], ("FileExistsError", "NotADirectoryError"))
-        # The same sync now fails at once with the reason instead of polling for ten minutes.
+        self.assertEqual((health["last_exit_code"], health["last_error"], health["stalled"]), (1, "ConnectionResetError", True))
+        self.assertNotIn("secret", json.dumps(health))
+        # Exited nonzero without a word.
+        self.assertEqual(self.supervised("import sys\nsys.exit(3)").wait(timeout=60), 3)
+        health = self.rpc("status")["materializer"]
+        self.assertEqual((health["running"], health["last_exit_code"], health["last_error"], health["stalled"]),
+                         (False, 3, "exit 3", True))
+        # The sync now fails at once with that reason instead of polling for ten minutes.
         error = self.sync(entry("big.bin", big))["error"]
         self.assertEqual(error["code"], "materializer_stopped")
-        self.assertIn(health["last_error"], error["message"])
-        self.assertNotIn(str(blocker), json.dumps(error))
+        self.assertIn("exit 3", error["message"])
+
+    @unittest.skipUnless(os.name == "posix", "SIGKILL is posix-only")
+    def test_a_builder_killed_without_reporting_is_reported(self):
+        big = large(6)
+        self.upload(big)
+        self.sync(entry("big.bin", big))
+        process = self.supervised("import time\ntime.sleep(60)")
+        health_file = self.root / "snapshots" / controller.MATERIALIZER_HEALTH
+        deadline = time.time() + 30
+        while not (health_file.exists() and "pid" in health_file.read_text()) and time.time() < deadline:
+            time.sleep(0.05)
+        # Alive and still starting up: not an error.
+        starting = self.rpc("status")["materializer"]
+        self.assertEqual((starting["last_error"], starting["stalled"]), (None, False))
+        process.kill()
+        process.wait(timeout=30)
+        health = self.rpc("status")["materializer"]
+        self.assertEqual((health["last_error"], health["last_finished"], health["stalled"]), ("stopped without reporting", None, True))
 
     # Crash, resume and per-chunk checks.
 

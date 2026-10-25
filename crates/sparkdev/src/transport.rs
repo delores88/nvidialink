@@ -1164,17 +1164,19 @@ impl Transport {
             .arg(remote);
         command
     }
-    /// Pinned scp between `dir/name` and the Spark path `remote`, to the host
-    /// the latest LAN SSH exchange authenticated, with `dial_command`'s pin and
-    /// options. None off that route, or for a name, path or alias that is not
-    /// plain: nothing here is ever quoted or read as an option.
-    pub fn scp_command(
+    /// A pinned file copy between `dir/name` and the Spark path `remote`, to the
+    /// host the latest LAN SSH exchange authenticated, with `dial_command`'s pin
+    /// and options, plus the stdin it reads. Uploads use scp. Results use sftp
+    /// `reget`, which continues a partial local file and never truncates it.
+    /// None off that route, or for a name, path or alias that is not plain:
+    /// nothing here is ever quoted or read as an option.
+    pub fn file_copy_command(
         &self,
         dir: &Path,
         name: &str,
         remote: &str,
         upload: bool,
-    ) -> Option<Command> {
+    ) -> Option<(Command, Vec<u8>)> {
         let plain = |text: &str| {
             !text.is_empty()
                 && !text.starts_with(['-', '.'])
@@ -1187,10 +1189,11 @@ impl Transport {
         if !plain(name) || !path_plain || !plain(&self.config.ssh_alias) {
             return None;
         }
-        let mut command = Command::new("scp");
+        let mut command = Command::new(if upload { "scp" } else { "sftp" });
         command.current_dir(dir).args([
             "-q",
-            "-B",
+            "-o",
+            "BatchMode=yes",
             "-o",
             "StrictHostKeyChecking=yes",
             "-o",
@@ -1236,13 +1239,16 @@ impl Transport {
             command.arg("-o").arg(format!("User={user}"));
         }
         command.arg("-P").arg(self.config.port.to_string());
-        let spark = format!("{}:{remote}", self.config.ssh_alias);
         if upload {
-            command.arg(name).arg(spark);
+            command
+                .arg(name)
+                .arg(format!("{}:{remote}", self.config.ssh_alias));
+            Some((command, Vec::new()))
         } else {
-            command.arg(spark).arg(name);
+            // A batch read from stdin: the one command, then the end of input.
+            command.args(["-b", "-"]).arg(&self.config.ssh_alias);
+            Some((command, format!("reget {remote} {name}\n").into_bytes()))
         }
-        Some(command)
     }
     /// The pinned controller RPC to the host the latest LAN SSH exchange
     /// authenticated, for one request run off this thread. None off that route.
