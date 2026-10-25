@@ -400,6 +400,41 @@ impl Directory {
         Ok(self)
     }
 }
+/// Result files smaller than this come back by RPC alone.
+const COPY_MIN: u64 = 4 * inventory::MIB;
+/// On the LAN route, bring a whole result file into `stage` with one pinned scp,
+/// at the link rate. Best effort: `download` then verifies every chunk and the
+/// whole file against the manifest, and fetches anything that differs by RPC.
+fn copy_whole(rpc: &mut dyn Rpc, job: &str, entry: &Entry, stage: &Path) {
+    if entry.bytes < COPY_MIN || rpc.route() != "ssh" {
+        return;
+    }
+    // A stage already at full size was copied before; a link is never written through.
+    if fs::symlink_metadata(stage)
+        .is_ok_and(|m| m.len() == entry.bytes || m.file_type().is_symlink() || reparse(&m))
+    {
+        return;
+    }
+    let (Some(dir), Some(name)) = (stage.parent(), stage.file_name().and_then(|n| n.to_str()))
+    else {
+        return;
+    };
+    let Ok(found) = rpc
+        .call(json!({"v":1,"op":"output_locate","job":job,"scope":entry.scope,"path":entry.path}))
+    else {
+        return;
+    };
+    let Some(file) = found["file"]
+        .as_str()
+        .filter(|_| found["bytes"] == entry.bytes && found["sha256"] == entry.sha256.as_str())
+    else {
+        return;
+    };
+    if let Some(command) = rpc.copy_command(dir, name, file, false) {
+        let timeout = Duration::from_secs(60 + entry.bytes / (4 * inventory::MIB));
+        let _ = transport::run_process(command, &[], timeout);
+    }
+}
 fn download(
     rpc: &mut dyn Rpc,
     job: &str,
@@ -407,6 +442,7 @@ fn download(
     stage: &Path,
     until: Instant,
 ) -> Result<bool> {
+    copy_whole(rpc, job, entry, stage);
     let mut opts = fs::OpenOptions::new();
     opts.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]

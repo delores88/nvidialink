@@ -156,6 +156,38 @@ class OutputManager:
         return {"job": row["id"], "source_job": source, "scope": request["scope"], "path": request["path"], "index": index,
                 "bytes": len(data), "data": base64.b64encode(data).decode("ascii"), "sha256": entry["chunks"][index]}
 
+    def output_locate(self, request):
+        """Where one ready result file is saved, for a pinned scp copy on the LAN route.
+
+        The laptop verifies every chunk and the whole file against the result manifest, and
+        fetches anything that does not match with output_chunk.
+        """
+        self.api.fields(request, ("v", "op", "job", "scope", "path"))
+        row = self.c.get_job(self.api.identifier(request["job"]))
+        if request["scope"] not in ("work", "output") or not isinstance(request["path"], str):
+            self.api.reject("invalid_request", "Invalid result file selector")
+        source = row["cached_from"] or row["id"]
+        with self.rpc_lock(source) as locked:
+            if not locked:
+                self.api.reject("outputs_busy", "Result collection is in progress. Retry shortly.")
+            saved = self.metadata(row, manifest=True)
+            if saved["state"] != "ready":
+                self.api.reject("outputs_unavailable", "Result files are not ready or their retention period has expired")
+            entries = saved["manifest"]["entries"]
+            found = next(((i, e) for i, e in enumerate(entries) if e["scope"] == request["scope"] and e["path"] == request["path"]), None)
+            if not found:
+                self.api.reject("output_not_found", "The result manifest does not contain that file")
+            number, entry = found
+            path = Path(self.root).absolute() / source / str(number)
+            try:
+                info = os.lstat(path)
+            except OSError:
+                self.api.reject("outputs_corrupt", "The saved result file cannot be read safely")
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != entry["bytes"]:
+                self.api.reject("outputs_corrupt", "The saved result file failed its integrity check")
+        return {"job": row["id"], "source_job": source, "scope": request["scope"], "path": request["path"],
+                "file": str(path), "bytes": entry["bytes"], "sha256": entry["sha256"]}
+
     def outputs_ack(self, request):
         self.api.fields(request, ("v", "op", "job", "manifest_sha256"))
         digest = self.api.digest(request["manifest_sha256"])

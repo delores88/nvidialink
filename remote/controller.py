@@ -63,6 +63,13 @@ MAX_PENDING = 4
 PENDING_SUPERSEDED_AGE = 3600
 PENDING_MAX_AGE = 24 * 3600
 PRUNE_INTERVAL = 60
+# Packs: many chunks copied as one file over pinned scp on the LAN route, then verified
+# and stored by put_pack. Windows OpenSSH carries stdin at about 110 Mbit/s per connection;
+# its file copy runs at the link rate.
+PACK_BYTES = 64 * CHUNK
+PACK_CHUNKS = 128
+PACK_MAX_AGE = 3600  # A pack its put_pack never claimed.
+PACK_NAME = re.compile(r"[0-9a-f]{32}\.pack")
 SCHEDULER_FRESH = 15  # Seconds since its last heartbeat for the scheduler to count as alive.
 MISSING_BATCH = 10000
 PROGRESS_INTERVAL = 1.0
@@ -243,7 +250,8 @@ def gib(value):
 def sync_limits():
     return {"chunk": CHUNK, "max_file": MAX_FILE, "max_tree": MAX_TREE, "max_small_tree": MAX_SMALL_TREE,
             "large_file": LARGE_FILE, "max_files": MAX_FILES, "max_request": MAX_REQUEST,
-            "put_many_body": PUT_MANY_BODY, "missing_batch": MISSING_BATCH}
+            "put_many_body": PUT_MANY_BODY, "missing_batch": MISSING_BATCH,
+            "pack_bytes": PACK_BYTES, "pack_chunks": PACK_CHUNKS}
 
 
 def disk_space(path):
@@ -1114,7 +1122,7 @@ class Controller:
             if self.root.stat().st_uid != os.getuid():
                 reject("unsafe_state", "State root has a different owner")
             os.chmod(self.root, 0o700)
-        for name in ("objects", "snapshots", "jobs", "caches", "local", "pending", "files"):
+        for name in ("objects", "snapshots", "jobs", "caches", "local", "pending", "files", "incoming"):
             path = self.root / name
             if path.is_symlink():
                 reject("unsafe_state", "State directory is a symlink")
@@ -1122,6 +1130,7 @@ class Controller:
             if os.name == "posix" and path.lstat().st_uid != os.getuid():
                 reject("unsafe_state", "State directory has a different owner")
         self.pending, self.files, self.snapshots = self.root / "pending", self.root / "files", self.root / "snapshots"
+        self.incoming = self.root / "incoming"
         self.disk_probe = disk_probe or (lambda: disk_space(self.root))
         self.spawn = spawn or (lambda: spawn_materializer(self.root))
         self.clock = clock or time.monotonic
@@ -1369,6 +1378,68 @@ class Controller:
             accepted.append({"sha256": chunk["sha256"], "size": len(raw)})
         return {"accepted": accepted, "bytes": sum(c["size"] for c in accepted)}
 
+    def put_pack(self, request):
+        """Store the chunks of one pack file the laptop copied into incoming/, then remove it.
+
+        The same checks as put_many: every chunk's hash, length and credential scan pass
+        before any is stored, and the disk guard sees the whole pack.
+        """
+        fields(request, ("v", "op", "pack", "chunks"))
+        name, chunks = request["pack"], request["chunks"]
+        if not isinstance(name, str) or not PACK_NAME.fullmatch(name):
+            reject("invalid_request", "Invalid pack name")
+        if not isinstance(chunks, list) or not 1 <= len(chunks) <= PACK_CHUNKS:
+            reject("size_limit", f"A pack holds 1 to {PACK_CHUNKS} chunks")
+        for chunk in chunks:
+            fields(chunk, ("sha256", "size"))
+            self.object_path(chunk["sha256"])
+            integer(chunk["size"], 1, CHUNK)
+        total = sum(chunk["size"] for chunk in chunks)
+        if total > PACK_BYTES:
+            reject("size_limit", f"A pack holds at most {PACK_BYTES // CHUNK} MiB")
+        path = self.incoming / name
+        try:
+            fd = safe_open(path)
+        except FileNotFoundError:
+            reject("pack_missing", "The pack file did not arrive; send these chunks again")
+        try:
+            info = os.fstat(fd)
+            if (os.name == "posix" and info.st_uid != os.getuid()) or info.st_nlink != 1 or info.st_size != total:
+                reject("hash_mismatch", "The pack file does not match its chunk list")
+            with os.fdopen(os.dup(fd), "rb") as stream:
+                raws = []
+                for chunk in chunks:
+                    raw = stream.read(chunk["size"])
+                    if len(raw) != chunk["size"] or sha(raw) != chunk["sha256"]:
+                        reject("hash_mismatch", "Chunk hash or length does not match")
+                    if SECRET.search(raw):
+                        reject("secret_detected", "Chunk contains credential material")
+                    raws.append(raw)
+        finally:
+            os.close(fd)
+            unlink_quietly(path)
+        self.require_disk(total, self.queued_bytes())
+        accepted = []
+        for chunk, raw in zip(chunks, raws):
+            atomic_write(self.object_path(chunk["sha256"]), raw)
+            accepted.append({"sha256": chunk["sha256"], "size": len(raw)})
+        return {"accepted": accepted, "bytes": total}
+
+    def prune_incoming(self, now=None):
+        """Remove pack files no put_pack claimed within an hour; return how many."""
+        now = time.time() if now is None else now
+        removed = 0
+        try:
+            with os.scandir(self.incoming) as found:
+                for item in found:
+                    if PACK_NAME.fullmatch(item.name.removesuffix(".part")) and item.is_file(follow_symlinks=False) \
+                            and now - item.stat(follow_symlinks=False).st_mtime >= PACK_MAX_AGE:
+                        unlink_quietly(self.incoming / item.name)
+                        removed += 1
+        except FileNotFoundError:
+            pass
+        return removed
+
     def missing(self, request):
         fields(request, ("v", "op", "hashes"))
         values = request["hashes"]
@@ -1376,7 +1447,8 @@ class Controller:
             reject("size_limit", "Too many chunk hashes")
         absent = [value for value in values if not self.object_present(value)]
         # An empty probe tells a new CLI which limits apply; older controllers omit both keys.
-        return {"missing": absent, "limits": sync_limits(), "storage": self.storage_view()}
+        # The LAN route copies packs here with scp; the paired route has no file copy.
+        return {"missing": absent, "limits": sync_limits(), "storage": self.storage_view(), "incoming": str(self.incoming)}
 
     # Snapshot assembly. A sync validates and queues; one global materializer assembles.
 
@@ -2242,9 +2314,9 @@ class Controller:
                 return {"ok": True, **getattr(self.services, op)(request)}
             if op == "downloads":
                 return {"ok": True, **self.download_cache.downloads(request)}
-            if op in {"outputs", "output_chunk", "outputs_ack"}:
+            if op in {"outputs", "output_chunk", "output_locate", "outputs_ack"}:
                 return {"ok": True, **getattr(self.outputs_manager, op)(request)}
-            if op not in {"put", "put_many", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources", "lan_routes"}:
+            if op not in {"put", "put_many", "put_pack", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources", "lan_routes"}:
                 reject("unknown_operation", "Unsupported operation")
             return {"ok": True, **getattr(self, op)(request)}
         except Rejected as error:
@@ -2732,6 +2804,7 @@ class Controller:
             self._pruned = self.clock()
             try:
                 self.prune_pending()
+                self.prune_incoming()
             except (Rejected, OSError, sqlite3.Error) as error:
                 self.scheduler_error("prune", error)
         # Backstop: a materializer that died, or one never spawned, restarts from the queue.

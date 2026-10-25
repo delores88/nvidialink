@@ -113,7 +113,8 @@ class SizeLimitTests(unittest.TestCase):
         self.assertEqual(probe["missing"], [])
         self.assertEqual(probe["limits"], {"chunk": CHUNK, "max_file": 16 * GIB, "max_tree": 32 * GIB, "max_small_tree": 8 * GIB,
                                            "large_file": controller.LARGE_FILE, "max_files": 100000, "max_request": 32 * CHUNK,
-                                           "put_many_body": 12 * CHUNK, "missing_batch": 10000})
+                                           "put_many_body": 12 * CHUNK, "missing_batch": 10000,
+                                           "pack_bytes": 64 * CHUNK, "pack_chunks": 128})
         self.assertEqual((probe["storage"]["free_bytes"], probe["storage"]["reserve_bytes"]), (PLENTY, 64 * GIB))
         status = self.rpc("status")
         self.assertIn("cpu_per_job", status["limits"])
@@ -441,6 +442,50 @@ class SizeLimitTests(unittest.TestCase):
         self.assertEqual((self.root / "snapshots" / controller.MATERIALIZER_LOG).read_bytes(), b"")
         health = self.rpc("status")["materializer"]
         self.assertEqual((health["running"], health["last_error"], health["stalled"]), (False, None, False))
+
+    def pack(self, *raws, name="0" * 32 + ".pack", body=None):
+        (self.root / "incoming" / name).write_bytes(b"".join(raws) if body is None else body)
+        return self.c.rpc({"v": 1, "op": "put_pack", "pack": name,
+                           "chunks": [{"sha256": sha(raw), "size": len(raw)} for raw in raws]})
+
+    def test_a_pack_stores_every_verified_chunk_and_is_removed(self):
+        first, second = b"x" * CHUNK, b"tail"
+        probe = self.rpc("missing", hashes=[sha(first), sha(second)])
+        self.assertEqual(Path(probe["incoming"]), self.root / "incoming")
+        self.assertEqual(probe["limits"]["pack_bytes"], controller.PACK_BYTES)
+        result = self.pack(first, second)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([item["sha256"] for item in result["accepted"]], [sha(first), sha(second)])
+        self.assertEqual(self.rpc("missing", hashes=[sha(first), sha(second)])["missing"], [])
+        self.assertEqual(list((self.root / "incoming").iterdir()), [])
+
+    def test_a_pack_that_does_not_match_stores_nothing(self):
+        good, other = b"g" * 100, b"o" * 100
+        # A chunk whose bytes do not match its hash, a short file and a missing file.
+        self.assertEqual(self.pack(good, other, body=good + b"x" * 100)["error"]["code"], "hash_mismatch")
+        self.assertEqual(self.pack(good, other, body=good)["error"]["code"], "hash_mismatch")
+        self.assertEqual(self.c.rpc({"v": 1, "op": "put_pack", "pack": "1" * 32 + ".pack",
+                                     "chunks": [{"sha256": sha(good), "size": 100}]})["error"]["code"], "pack_missing")
+        self.assertEqual(self.rpc("missing", hashes=[sha(good), sha(other)])["missing"], [sha(good), sha(other)])
+        self.assertEqual(list((self.root / "incoming").iterdir()), [])
+        # Names outside the pack pattern never reach the filesystem.
+        for name in ("../state.sqlite3", "0" * 32, "A" * 32 + ".pack"):
+            refused = self.c.rpc({"v": 1, "op": "put_pack", "pack": name, "chunks": [{"sha256": sha(good), "size": 100}]})
+            self.assertEqual(refused["error"]["code"], "invalid_request")
+
+    def test_a_pack_with_credentials_is_refused(self):
+        secret = b"-----BEGIN " + b"PRIVATE KEY-----"
+        self.assertEqual(self.pack(secret)["error"]["code"], "secret_detected")
+        self.assertEqual(list((self.root / "incoming").iterdir()), [])
+
+    def test_unclaimed_packs_are_removed_after_an_hour(self):
+        young, old = self.root / "incoming" / ("a" * 32 + ".pack"), self.root / "incoming" / ("b" * 32 + ".pack")
+        young.write_bytes(b"1")
+        old.write_bytes(b"2")
+        when = time.time() - controller.PACK_MAX_AGE - 1
+        os.utime(old, (when, when))
+        self.assertEqual(self.c.prune_incoming(), 1)
+        self.assertEqual(list((self.root / "incoming").iterdir()), [young])
 
     def queue(self, seed, name="big.bin"):
         content = large(seed)

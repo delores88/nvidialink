@@ -1022,6 +1022,27 @@ pub trait Rpc {
     fn route(&self) -> String;
     /// Owner intent, read again from saved state before every retry.
     fn connection_enabled(&self) -> bool;
+    /// A pinned scp of `name` in `dir` to the Spark path `remote` (`upload`) or
+    /// back, over the LAN route just authenticated. None when this route copies
+    /// no files (the paired link, tests without one): callers then use RPCs.
+    fn copy_command(
+        &self,
+        _dir: &Path,
+        _name: &str,
+        _remote: &str,
+        _upload: bool,
+    ) -> Option<std::process::Command> {
+        None
+    }
+    /// The laptop folder packs are written to before `copy_command` sends them.
+    fn copy_dir(&self) -> Option<PathBuf> {
+        None
+    }
+    /// A pinned controller RPC command, so a pack copy's worker can also store
+    /// it. None stores packs one at a time through `call`.
+    fn rpc_command(&self) -> Option<std::process::Command> {
+        None
+    }
 }
 impl Rpc for transport::Transport {
     fn call(&mut self, request: Value) -> Result<Value> {
@@ -1029,6 +1050,23 @@ impl Rpc for transport::Transport {
     }
     fn route(&self) -> String {
         self.selected.clone()
+    }
+    fn copy_command(
+        &self,
+        dir: &Path,
+        name: &str,
+        remote: &str,
+        upload: bool,
+    ) -> Option<std::process::Command> {
+        self.scp_command(dir, name, remote, upload)
+    }
+    fn copy_dir(&self) -> Option<PathBuf> {
+        (self.selected == "ssh")
+            .then(|| state::root().ok().map(|root| root.join("uploads")))
+            .flatten()
+    }
+    fn rpc_command(&self) -> Option<std::process::Command> {
+        transport::Transport::rpc_command(self)
     }
     fn connection_enabled(&self) -> bool {
         state::config().is_ok_and(|config| config.connection_enabled)
@@ -1043,6 +1081,15 @@ const SYNC_ROUNDS: usize = 3;
 const RETRY_DELAYS: [u64; 5] = [2, 4, 8, 16, 30];
 const POLL_DELAY: Duration = Duration::from_secs(2);
 const STALL_LIMIT: Duration = Duration::from_secs(600);
+/// Pack copies in flight at once, each storing its own pack. One Windows OpenSSH
+/// connection carries about 110 Mbit/s through stdin but copies files at the
+/// link rate. Measured on a wired 1 Gbps LAN: 4 reach 605 Mbit/s, 6 reach 652.
+const PACK_COPIES: usize = 6;
+/// One pack copy's deadline while it shares the link with the others. A dead
+/// connection ends sooner, through ServerAliveInterval.
+const PACK_COPY_TIMEOUT: Duration = Duration::from_secs(300);
+/// One put_pack's deadline: verifying and storing 64 MiB of chunks.
+const PACK_STORE_TIMEOUT: Duration = Duration::from_secs(120);
 /// The limits one sync works under: advertised by the controller, or legacy.
 #[derive(Clone, Debug, PartialEq)]
 struct SparkLimits {
@@ -1055,6 +1102,9 @@ struct SparkLimits {
     max_request: u64,
     put_many_body: u64,
     missing_batch: usize,
+    /// Largest pack and its chunk count; zero from controllers without put_pack.
+    pack_bytes: u64,
+    pack_chunks: usize,
 }
 impl SparkLimits {
     fn legacy() -> Self {
@@ -1068,6 +1118,8 @@ impl SparkLimits {
             max_request: inventory::MAX_REQUEST,
             put_many_body: inventory::LEGACY_BATCH_BODY,
             missing_batch: inventory::LEGACY_MISSING_BATCH,
+            pack_bytes: 0,
+            pack_chunks: 0,
         }
     }
     /// Read the `missing []` probe. No `limits` means a controller from before this
@@ -1104,6 +1156,8 @@ impl SparkLimits {
             max_request: field("max_request")?.min(inventory::MAX_REQUEST),
             put_many_body: field("put_many_body")?,
             missing_batch: field("missing_batch")?.min(MISSING_BATCH as u64) as usize,
+            pack_bytes: field("pack_bytes").unwrap_or(0),
+            pack_chunks: field("pack_chunks").unwrap_or(0).min(4096) as usize,
         })
     }
     fn view(&self) -> Value {
@@ -1255,6 +1309,8 @@ struct Session<'a> {
     succeeded: bool,
     retries: u64,
     uploaded: u64,
+    /// The Spark folder packs are copied into, when this route can copy files.
+    incoming: Option<String>,
 }
 impl Session<'_> {
     /// Only an ambiguous transport failure is retried, and only after this sync
@@ -1323,8 +1379,9 @@ impl Session<'_> {
         }
         Ok(absent)
     }
-    /// Upload `hashes` in order. Each batch is sized for the route at that moment
-    /// and halves after a batch proves too slow for the link; one chunk always fits.
+    /// Upload `hashes`: as pack files where this route copies files, and the rest
+    /// by RPC in order. Each RPC batch is sized for the route at that moment and
+    /// halves after a batch proves too slow for the link; one chunk always fits.
     fn upload(
         &mut self,
         inv: &inventory::Inventory,
@@ -1332,6 +1389,8 @@ impl Session<'_> {
         limits: &SparkLimits,
         retry: bool,
     ) -> Result<()> {
+        let rest = self.upload_packs(inv, hashes, limits)?;
+        let hashes = &rest[..];
         let (mut next, mut halvings, mut attempt) = (0usize, 0u32, 0usize);
         while next < hashes.len() {
             self.owner_allows()?;
@@ -1394,6 +1453,185 @@ impl Session<'_> {
         Ok(())
     }
 }
+impl Session<'_> {
+    /// Send what it can of `hashes` as pack files: a few pinned scp copies at a
+    /// time, each stored by put_pack once the Spark has verified every chunk.
+    /// Where this route runs a controller RPC off-thread, each copy's worker
+    /// stores its own pack, so the Spark verifies several at once.
+    /// Returns the hashes left for put_many: all of them without a file-copy
+    /// route, and every unsent one once a copy or a pack fails.
+    fn upload_packs(
+        &mut self,
+        inv: &inventory::Inventory,
+        hashes: &[String],
+        limits: &SparkLimits,
+    ) -> Result<Vec<String>> {
+        let Some(remote) = self.incoming.clone() else {
+            return Ok(hashes.to_vec());
+        };
+        if limits.pack_bytes == 0 || limits.pack_chunks == 0 || hashes.len() < 2 {
+            return Ok(hashes.to_vec());
+        }
+        let Some(local) = self.rpc.copy_dir() else {
+            return Ok(hashes.to_vec());
+        };
+        fs::create_dir_all(&local)?;
+        // Packs an interrupted sync left behind.
+        for item in fs::read_dir(&local)?.flatten() {
+            let stale = item
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .is_some_and(|at| {
+                    at.elapsed()
+                        .is_ok_and(|age| age > Duration::from_secs(3600))
+                });
+            if stale && item.file_name().to_string_lossy().ends_with(".pack") {
+                let _ = fs::remove_file(item.path());
+            }
+        }
+        let mut packs: Vec<&[String]> = Vec::new();
+        let (mut start, mut size) = (0usize, 0u64);
+        for (index, hash) in hashes.iter().enumerate() {
+            let len = inv.sources.get(hash).map_or(inventory::MIB, |s| s.len);
+            if index > start
+                && (index - start >= limits.pack_chunks || size + len > limits.pack_bytes)
+            {
+                packs.push(&hashes[start..index]);
+                (start, size) = (index, 0);
+            }
+            size += len;
+        }
+        packs.push(&hashes[start..]);
+        let (done, finished) = std::sync::mpsc::channel();
+        let mut lists: Vec<Option<(String, Vec<Value>, u64)>> = vec![None; packs.len()];
+        let mut left = Vec::new();
+        let (mut next, mut running, mut copying, mut stopped) = (0usize, 0usize, true, None);
+        loop {
+            if copying && next < packs.len() && running < PACK_COPIES {
+                if let Err(error) = self.owner_allows() {
+                    (copying, stopped) = (false, Some(error));
+                    continue;
+                }
+                let name = format!("{}.pack", uuid::Uuid::new_v4().simple());
+                let path = local.join(&name);
+                let written = write_pack(inv, packs[next], &path);
+                let command =
+                    self.rpc
+                        .copy_command(&local, &name, &format!("{remote}/{name}"), true);
+                match (written, command) {
+                    (Ok((list, bytes)), Some(command)) => {
+                        let store = self.rpc.rpc_command().map(|command| {
+                            let request = json!({"v":1,"op":"put_pack","pack":name,"chunks":list});
+                            (command, serde_json::to_vec(&request).unwrap_or_default())
+                        });
+                        let hashes = packs[next].to_vec();
+                        lists[next] = Some((name, list, bytes));
+                        let done = done.clone();
+                        let index = next;
+                        std::thread::spawn(move || {
+                            let copied = matches!(
+                                transport::run_process(command, &[], PACK_COPY_TIMEOUT),
+                                Ok(transport::Ran::Exited((Some(0), _, _)))
+                            );
+                            let stored = store.map(|(command, request)| {
+                                copied
+                                    && match transport::run_process(
+                                        command,
+                                        &request,
+                                        PACK_STORE_TIMEOUT,
+                                    ) {
+                                        Ok(transport::Ran::Exited((Some(0), out, _))) => {
+                                            transport::Transport::decode(&out).is_ok_and(
+                                                |response| pack_receipt(&response, &hashes),
+                                            )
+                                        }
+                                        _ => false,
+                                    }
+                            });
+                            let _ = done.send((index, copied, stored));
+                        });
+                        running += 1;
+                    }
+                    _ => {
+                        let _ = fs::remove_file(&path);
+                        copying = false;
+                        left.extend_from_slice(packs[next]);
+                    }
+                }
+                next += 1;
+                continue;
+            }
+            if running == 0 {
+                break;
+            }
+            let (index, copied, stored) = finished
+                .recv_timeout(PACK_COPY_TIMEOUT + PACK_STORE_TIMEOUT + Duration::from_secs(30))
+                .map_err(|_| AppError::new(4, "A pack copy stopped responding"))?;
+            running -= 1;
+            let (name, list, bytes) = lists[index].take().expect("a running pack has its list");
+            let stored = match stored {
+                Some(stored) => {
+                    self.succeeded |= stored;
+                    stored
+                }
+                None => copied && self.store_pack(&name, list, packs[index]),
+            };
+            let _ = fs::remove_file(local.join(&name));
+            if stored {
+                self.uploaded += bytes;
+            } else {
+                copying = false;
+                left.extend_from_slice(packs[index]);
+            }
+        }
+        if let Some(error) = stopped {
+            return Err(error);
+        }
+        for pack in &packs[next..] {
+            left.extend_from_slice(pack);
+        }
+        Ok(left)
+    }
+    /// Ask the Spark to verify and store one copied pack. Any refusal leaves its
+    /// chunks to put_many, which reports a lasting problem in its own words.
+    fn store_pack(&mut self, name: &str, list: Vec<Value>, hashes: &[String]) -> bool {
+        let request = json!({"v":1,"op":"put_pack","pack":name,"chunks":list});
+        self.call(&request, false)
+            .is_ok_and(|response| pack_receipt(&response, hashes))
+    }
+}
+/// Whether put_pack stored exactly `hashes`, in order.
+fn pack_receipt(response: &Value, hashes: &[String]) -> bool {
+    response["accepted"].as_array().is_some_and(|accepted| {
+        accepted.len() == hashes.len()
+            && accepted
+                .iter()
+                .zip(hashes)
+                .all(|(receipt, hash)| receipt["sha256"] == hash.as_str())
+    })
+}
+/// Write one pack: its chunks back to back, in order. Returns the chunk list
+/// put_pack checks and the bytes written.
+fn write_pack(
+    inv: &inventory::Inventory,
+    hashes: &[String],
+    path: &Path,
+) -> Result<(Vec<Value>, u64)> {
+    let mut out = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    let (mut list, mut bytes) = (Vec::with_capacity(hashes.len()), 0u64);
+    for hash in hashes {
+        let data = chunk_data(inv, hash)?;
+        out.write_all(&data)?;
+        bytes += data.len() as u64;
+        list.push(json!({"sha256":hash,"size":data.len()}));
+    }
+    out.sync_all()?;
+    Ok((list, bytes))
+}
 fn preflight(body: u64, limits: &SparkLimits, route: &str) -> Result<()> {
     let limit = limits.request_limit(route);
     if body > limit {
@@ -1442,9 +1680,14 @@ pub fn sync_with(
         succeeded: false,
         retries: 0,
         uploaded: 0,
+        incoming: None,
     };
     let probe = session.call(&json!({"v":1,"op":"missing","hashes":[]}), false)?;
     let limits = SparkLimits::from_probe(&probe)?;
+    session.incoming = probe["incoming"]
+        .as_str()
+        .filter(|_| limits.pack_bytes > 0)
+        .map(String::from);
     limits.check(inv)?;
     let request = json!({"v":1,"op":"sync","project":inv.project,"manifest":inv.manifest});
     let body = serde_json::to_vec(&request)?.len() as u64;
@@ -2035,6 +2278,9 @@ mod sync_tests {
         storage: Value,
         /// The owner disconnects once this many requests have been made.
         disable_after: Option<usize>,
+        /// A file-copy route: the laptop pack folder, the Spark's incoming
+        /// folder, and whether a copy succeeds.
+        packs: Option<(tempfile::TempDir, tempfile::TempDir, bool)>,
     }
     impl Fake {
         fn new(limits: Option<Value>) -> Self {
@@ -2052,7 +2298,24 @@ mod sync_tests {
                 fail_calls: BTreeMap::new(),
                 storage: json!({"free_bytes":100*GIB,"reserve_bytes":64*GIB}),
                 disable_after: None,
+                packs: None,
             }
+        }
+        /// Advertise packs and copy them with a local file copy.
+        fn copying(mut self, works: bool) -> Self {
+            self.packs = Some((
+                tempfile::tempdir().unwrap(),
+                tempfile::tempdir().unwrap(),
+                works,
+            ));
+            if let Some(limits) = &mut self.limits {
+                limits["pack_bytes"] = json!(3 * MIB);
+                limits["pack_chunks"] = json!(128);
+            }
+            self
+        }
+        fn count(&self, op: &str) -> usize {
+            self.calls.iter().filter(|c| c["op"] == op).count()
         }
         fn holding(mut self, inv: &Inventory) -> Self {
             self.objects = inv.sources.keys().cloned().collect();
@@ -2112,7 +2375,32 @@ mod sync_tests {
                         out["limits"] = limits.clone();
                         out["storage"] = self.storage.clone();
                     }
+                    if self.packs.is_some() {
+                        out["incoming"] = json!("/spark/incoming");
+                    }
                     Ok(out)
+                }
+                "put_pack" => {
+                    let (_, incoming, _) = self.packs.as_ref().unwrap();
+                    let path = incoming.path().join(request["pack"].as_str().unwrap());
+                    let body = fs::read(&path).map_err(|_| {
+                        AppError::new(6, "pack_missing: The pack file did not arrive")
+                    })?;
+                    fs::remove_file(&path).unwrap();
+                    let (mut offset, mut accepted) = (0usize, Vec::new());
+                    for chunk in request["chunks"].as_array().unwrap() {
+                        let size = chunk["size"].as_u64().unwrap() as usize;
+                        let data = &body[offset..offset + size];
+                        assert_eq!(inventory::hash(data), chunk["sha256"]);
+                        offset += size;
+                        accepted.push(json!({"sha256":chunk["sha256"],"size":size}));
+                    }
+                    assert_eq!(offset, body.len());
+                    for chunk in &accepted {
+                        self.objects
+                            .insert(chunk["sha256"].as_str().unwrap().into());
+                    }
+                    Ok(json!({"ok":true,"accepted":accepted}))
                 }
                 "put_many" => {
                     let mut accepted = Vec::new();
@@ -2174,6 +2462,37 @@ mod sync_tests {
         }
         fn connection_enabled(&self) -> bool {
             self.enabled
+        }
+        fn copy_dir(&self) -> Option<PathBuf> {
+            self.packs.as_ref().map(|(local, _, _)| local.path().into())
+        }
+        fn copy_command(
+            &self,
+            dir: &Path,
+            name: &str,
+            remote: &str,
+            upload: bool,
+        ) -> Option<std::process::Command> {
+            let (_, incoming, works) = self.packs.as_ref()?;
+            assert!(upload && remote == format!("/spark/incoming/{name}"));
+            let target = incoming.path().join(name);
+            let mut command = if !works {
+                let mut c = std::process::Command::new(if cfg!(windows) { "cmd" } else { "false" });
+                if cfg!(windows) {
+                    c.args(["/C", "exit 1"]);
+                }
+                c
+            } else if cfg!(windows) {
+                let mut c = std::process::Command::new("cmd");
+                c.args(["/C", "copy", "/Y", name]).arg(&target);
+                c
+            } else {
+                let mut c = std::process::Command::new("cp");
+                c.arg(name).arg(&target);
+                c
+            };
+            command.current_dir(dir);
+            Some(command)
         }
     }
     struct Tree {
@@ -2361,6 +2680,46 @@ mod sync_tests {
                 && error.message.contains("run the same command again")
         );
         assert_eq!(sleeps.iter().sum::<Duration>(), Duration::from_secs(600));
+    }
+    #[test]
+    fn missing_chunks_travel_as_verified_packs_where_the_route_copies_files() {
+        // Seven distinct chunks in 3 MiB packs: three copies, no put_many.
+        let t = tree(&[("big.bin", chunks(7))], inventory::LARGE_FILE);
+        let mut fake = Fake::new(Some(advertised())).copying(true);
+        let (out, _) = run(&t.inv, &mut fake);
+        let out = out.unwrap();
+        assert_eq!((fake.count("put_pack"), fake.count("put_many")), (3, 0));
+        assert_eq!(out["uploaded_bytes"], 7 * MIB as u64);
+        let (local, incoming, _) = fake.packs.as_ref().unwrap();
+        assert_eq!(fs::read_dir(local.path()).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(incoming.path()).unwrap().count(), 0);
+        // Without the advertised pack limits the same route keeps put_many.
+        let mut fake = Fake::new(Some(advertised())).copying(true);
+        fake.limits = Some(advertised());
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(fake.count("put_pack"), 0);
+        assert!(fake.count("put_many") > 0);
+    }
+    #[test]
+    fn a_failed_pack_copy_or_refused_pack_falls_back_to_put_many() {
+        let t = tree(&[("big.bin", chunks(7))], inventory::LARGE_FILE);
+        let mut fake = Fake::new(Some(advertised())).copying(false);
+        run(&t.inv, &mut fake).0.unwrap();
+        assert_eq!(fake.count("put_pack"), 0);
+        let mut sent = fake.uploaded();
+        sent.sort();
+        sent.dedup();
+        assert_eq!(sent.len(), 7);
+        // The Spark refuses the first pack: its chunks and every unsent one use put_many.
+        let mut fake = Fake::new(Some(advertised())).copying(true);
+        fake.inject.push_back((
+            "put_pack",
+            AppError::new(6, "hash_mismatch: Chunk hash or length does not match"),
+        ));
+        run(&t.inv, &mut fake).0.unwrap();
+        assert!(fake.count("put_many") > 0);
+        let (local, _, _) = fake.packs.as_ref().unwrap();
+        assert_eq!(fs::read_dir(local.path()).unwrap().count(), 0);
     }
     #[test]
     fn retries_are_bounded_and_never_override_owner_intent() {

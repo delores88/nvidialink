@@ -102,6 +102,22 @@ class OutputTests(unittest.TestCase):
         invalid = self.c.rpc({"v": 1, "op": "output_chunk", "job": job, "scope": "output", "path": "large.bin", "index": 3})
         self.assertEqual(invalid["error"]["code"], "invalid_offset")
 
+    def test_located_result_file_is_the_verified_saved_copy(self):
+        job, _, output = self.setup_job()
+        content = b"a" * outputs.CHUNK + b"tail"
+        (output / "large.bin").write_bytes(content)
+        saved = self.collect(job)
+        located = self.rpc("output_locate", job=job, scope="output", path="large.bin")
+        self.assertEqual(Path(located["file"]).read_bytes(), content)
+        self.assertTrue(Path(located["file"]).is_absolute())
+        self.assertEqual((located["bytes"], located["sha256"]), (len(content), saved["manifest"]["entries"][0]["sha256"]))
+        missing = self.c.rpc({"v": 1, "op": "output_locate", "job": job, "scope": "output", "path": "other.bin"})
+        self.assertEqual(missing["error"]["code"], "output_not_found")
+        Path(located["file"]).chmod(0o600)
+        Path(located["file"]).write_bytes(b"fake")
+        bad = self.c.rpc({"v": 1, "op": "output_locate", "job": job, "scope": "output", "path": "large.bin"})
+        self.assertEqual(bad["error"]["code"], "outputs_corrupt")
+
     def test_large_result_streams_without_loading_file_into_memory(self):
         job, _, output = self.setup_job()
         block = b"video fixture\0" * (outputs.CHUNK // 14)

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc,
     thread,
@@ -147,8 +147,8 @@ pub fn repeat_for(request: &Value) -> Repeat {
     match request["op"].as_str() {
         Some(
             "missing" | "put" | "put_many" | "sync" | "status" | "logs" | "wait" | "doctor"
-            | "cancel" | "heartbeat" | "release" | "lan_routes" | "reply"
-            | "outputs" | "output_chunk" | "outputs_ack",
+            | "cancel" | "heartbeat" | "release" | "lan_routes" | "reply" | "outputs"
+            | "output_chunk" | "output_locate" | "outputs_ack" | "put_pack",
         ) => Repeat::Idempotent,
         Some("resources")
             if request.get("limits").is_none() && request.get("internet").is_none() =>
@@ -1164,7 +1164,97 @@ impl Transport {
             .arg(remote);
         command
     }
-    fn decode(bytes: &[u8]) -> Result<Value> {
+    /// Pinned scp between `dir/name` and the Spark path `remote`, to the host
+    /// the latest LAN SSH exchange authenticated, with `dial_command`'s pin and
+    /// options. None off that route, or for a name, path or alias that is not
+    /// plain: nothing here is ever quoted or read as an option.
+    pub fn scp_command(
+        &self,
+        dir: &Path,
+        name: &str,
+        remote: &str,
+        upload: bool,
+    ) -> Option<Command> {
+        let plain = |text: &str| {
+            !text.is_empty()
+                && !text.starts_with(['-', '.'])
+                && text
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+        };
+        let host = self.host.as_deref().filter(|_| self.selected == "ssh")?;
+        let path_plain = remote.starts_with('/') && remote[1..].split('/').all(plain);
+        if !plain(name) || !path_plain || !plain(&self.config.ssh_alias) {
+            return None;
+        }
+        let mut command = Command::new("scp");
+        command.current_dir(dir).args([
+            "-q",
+            "-B",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "LogLevel=ERROR",
+        ]);
+        command
+            .arg("-o")
+            .arg(format!("ConnectTimeout={CONNECT_TIMEOUT_SECS}"));
+        command.args([
+            "-o",
+            "ConnectionAttempts=1",
+            "-o",
+            "ServerAliveInterval=5",
+            "-o",
+            "ServerAliveCountMax=2",
+            "-o",
+            "PasswordAuthentication=no",
+            "-o",
+            "KbdInteractiveAuthentication=no",
+            "-o",
+            "ForwardAgent=no",
+            "-o",
+            "ClearAllForwardings=yes",
+            "-o",
+            "ControlMaster=no",
+            "-o",
+            "ControlPath=none",
+            "-o",
+            "Compression=no",
+        ]);
+        command
+            .arg("-o")
+            .arg(format!("HostKeyAlias={}", self.config.host_key_alias))
+            .arg("-o")
+            .arg(format!("HostName={host}"));
+        if let Some(key) = &self.config.identity_file {
+            command
+                .arg("-i")
+                .arg(key)
+                .args(["-o", "IdentitiesOnly=yes"]);
+        }
+        if let Some(user) = &self.config.user {
+            command.arg("-o").arg(format!("User={user}"));
+        }
+        command.arg("-P").arg(self.config.port.to_string());
+        let spark = format!("{}:{remote}", self.config.ssh_alias);
+        if upload {
+            command.arg(name).arg(spark);
+        } else {
+            command.arg(spark).arg(name);
+        }
+        Some(command)
+    }
+    /// The pinned controller RPC to the host the latest LAN SSH exchange
+    /// authenticated, for one request run off this thread. None off that route.
+    pub fn rpc_command(&self) -> Option<Command> {
+        let host = self.host.as_deref().filter(|_| self.selected == "ssh")?;
+        Some(self.dial_command(
+            Some(host),
+            "python3 ~/sparkdev/controller.py rpc",
+            CONNECT_TIMEOUT_SECS,
+        ))
+    }
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Value> {
         let value: Value = serde_json::from_slice(bytes)
             .map_err(|_| AppError::new(6, "Remote returned an invalid JSON response"))?;
         if value["ok"] == false {
