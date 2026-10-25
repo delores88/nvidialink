@@ -524,7 +524,7 @@ pub fn save_request(id: &str, value: &Value) -> Result<()> {
         if read_json(&path)? != *value {
             return Err(AppError::new(
                 2,
-                "Request ID already belongs to different content",
+                "That request ID was already used with different files or arguments, so nothing new was submitted. Use a new request ID to run this version; the earlier request is unchanged",
             ));
         }
     } else {
