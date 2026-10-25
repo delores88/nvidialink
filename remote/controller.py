@@ -325,8 +325,28 @@ def read_only_mode(entry):
 # sibling modules at load time. The launcher restores exactly that one directory.
 ISOLATED_LAUNCHER = ("import pathlib,runpy,sys;p=sys.argv.pop(1);sys.argv[0]=p;"
                      "sys.path.insert(0,str(pathlib.Path(p).parent));runpy.run_path(p,run_name='__main__')")
-MATERIALIZER_LOG = ".materializer.stderr"  # In snapshots/, beside .materialize.lock.
-MATERIALIZER_LOG_TAIL = 4096
+MATERIALIZER_HEALTH = ".materializer.json"  # In snapshots/, beside .materialize.lock.
+# The detached builder runs under this wrapper, which needs nothing from this bundle, so it
+# reports even a builder that dies on import. It records a small, credential-free health
+# file (start, pid, finish, exit code, error kind) and keeps no stderr, so nothing grows.
+MATERIALIZER_SUPERVISOR = (
+    "import json,os,pathlib,runpy,sys,time\n"
+    "p=sys.argv.pop(1);sys.argv[0]=p;sys.path.insert(0,str(pathlib.Path(p).parent))\n"
+    "h=os.path.join(sys.argv[sys.argv.index('--state')+1],'snapshots','" + MATERIALIZER_HEALTH + "')\n"
+    "def w(v):\n"
+    " try:\n"
+    "  t=h+'.tmp';f=os.open(t,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|getattr(os,'O_NOFOLLOW',0),0o600)\n"
+    "  os.write(f,json.dumps(v).encode());os.close(f);os.replace(t,h)\n"
+    " except OSError:\n"
+    "  pass\n"
+    "s={'started':time.time(),'pid':os.getpid()};w(s);c,k=1,None\n"
+    "try:\n"
+    " runpy.run_path(p,run_name='__main__');c=0\n"
+    "except SystemExit as e:\n"
+    " c=e.code if type(e.code) is int else 0 if e.code is None else 1\n"
+    "except BaseException as e:\n"
+    " k=type(e).__name__\n"
+    "w({**s,'finished':time.time(),'exit_code':c,'error':k});sys.exit(c)\n")
 
 
 def isolated_argv(script, *args):
@@ -339,17 +359,13 @@ def spawn_materializer(root):
 
     A new session is not a new cgroup: the child stays in the unit of whatever process
     spawned it, so syncs leave spawning to the scheduler while it is alive (see wake()).
-    Its stderr replaces the previous builder's, so a builder that dies is visible in status.
-    Callers never wait on the returned process; tests do.
+    It runs under MATERIALIZER_SUPERVISOR, whose health file status reads. Callers never
+    wait on the returned process; tests do.
     """
-    fd = os.open(Path(root) / "snapshots" / MATERIALIZER_LOG,
-                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    try:
-        return subprocess.Popen(isolated_argv(Path(__file__).resolve(), "materialize", "--state", str(root)),
-                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=fd,
-                                start_new_session=True, close_fds=True, env=dict(TOOL_ENV), cwd=str(root))
-    finally:
-        os.close(fd)
+    return subprocess.Popen([sys.executable, "-I", "-c", MATERIALIZER_SUPERVISOR, str(Path(__file__).resolve()),
+                             "materialize", "--state", str(root)],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True, close_fds=True, env=dict(TOOL_ENV), cwd=str(root))
 
 
 def available_gb():
@@ -1705,34 +1721,45 @@ class Controller:
         return free
 
     def materializer_health(self, queued):
-        """Whether a background builder is running, and the error kind a stopped one printed.
+        """Whether a background builder is running, and how the latest one ended.
 
-        Each spawn truncates the log, so a non-empty log with no builder running means the
-        most recent builder died, and queued snapshots will not progress until that is fixed.
+        A builder that finished nonzero, raised, or vanished without reporting (killed)
+        leaves an error; with uploads queued and no builder running they will not progress.
         """
         with self.materialize_lock() as free:
             pass
-        started, error = None, None
+        record = {}
         try:
-            fd = safe_open(self.snapshots / MATERIALIZER_LOG)
-        except (OSError, Rejected):
-            fd = None
-        if fd is not None:
+            fd = safe_open(self.snapshots / MATERIALIZER_HEALTH)
             try:
-                info = os.fstat(fd)
-                started = info.st_mtime
-                os.lseek(fd, max(0, info.st_size - MATERIALIZER_LOG_TAIL), os.SEEK_SET)
-                lines = [line.strip() for line in os.read(fd, MATERIALIZER_LOG_TAIL).decode(errors="replace").splitlines()]
-                last = next((line for line in reversed(lines) if line), None)
-                if last is not None:
-                    # Only the error kind, like the scheduler's own reports: never paths or input.
-                    kind = re.match(r"([A-Za-z_][A-Za-z0-9_.]{0,79})(?::|$)", last)
-                    error = kind.group(1) if kind else "unknown"
+                value = json.loads(os.read(fd, 4096))
             finally:
                 os.close(fd)
+            record = value if isinstance(value, dict) else {}
+        except (OSError, ValueError, Rejected):
+            pass
+        number = lambda key: record[key] if type(record.get(key)) in (int, float) else None
+        started, finished = number("started"), number("finished")
+        code = record.get("exit_code") if type(record.get("exit_code")) is int else None
+        kind = record.get("error") if isinstance(record.get("error"), str) and IDENTIFIER.fullmatch(record["error"]) else None
+        error = None
+        if finished is not None:
+            error = kind or (f"exit {code}" if code else None)
+        elif started is not None:
+            pid = record.get("pid")
+            try:
+                if type(pid) is not int or pid <= 1:
+                    raise ProcessLookupError()
+                os.kill(pid, 0)  # Still starting: alive, the lock not yet taken.
+            except ProcessLookupError:
+                error = "stopped without reporting"
+            except OSError:
+                pass
         running = not free
-        return {"running": running, "last_started": started, "last_error": None if running else error,
-                "stalled": bool(queued) and not running and error is not None}
+        if running:
+            error = None
+        return {"running": running, "last_started": started, "last_finished": finished, "last_exit_code": code,
+                "last_error": error, "stalled": bool(queued) and not running and error is not None}
 
     def scheduler_alive(self):
         last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()

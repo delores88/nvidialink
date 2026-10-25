@@ -1022,8 +1022,9 @@ pub trait Rpc {
     fn route(&self) -> String;
     /// Owner intent, read again from saved state before every retry.
     fn connection_enabled(&self) -> bool;
-    /// A pinned scp of `name` in `dir` to the Spark path `remote` (`upload`) or
-    /// back, over the LAN route just authenticated. None when this route copies
+    /// A pinned copy of `name` in `dir` to the Spark path `remote` (`upload`) or
+    /// back, over the LAN route just authenticated, with the stdin it reads.
+    /// A copy back continues a partial local file. None when this route copies
     /// no files (the paired link, tests without one): callers then use RPCs.
     fn copy_command(
         &self,
@@ -1031,7 +1032,7 @@ pub trait Rpc {
         _name: &str,
         _remote: &str,
         _upload: bool,
-    ) -> Option<std::process::Command> {
+    ) -> Option<(std::process::Command, Vec<u8>)> {
         None
     }
     /// The laptop folder packs are written to before `copy_command` sends them.
@@ -1057,8 +1058,8 @@ impl Rpc for transport::Transport {
         name: &str,
         remote: &str,
         upload: bool,
-    ) -> Option<std::process::Command> {
-        self.scp_command(dir, name, remote, upload)
+    ) -> Option<(std::process::Command, Vec<u8>)> {
+        self.file_copy_command(dir, name, remote, upload)
     }
     fn copy_dir(&self) -> Option<PathBuf> {
         (self.selected == "ssh")
@@ -1520,7 +1521,7 @@ impl Session<'_> {
                     self.rpc
                         .copy_command(&local, &name, &format!("{remote}/{name}"), true);
                 match (written, command) {
-                    (Ok((list, bytes)), Some(command)) => {
+                    (Ok((list, bytes)), Some((command, input))) => {
                         let store = self.rpc.rpc_command().map(|command| {
                             let request = json!({"v":1,"op":"put_pack","pack":name,"chunks":list});
                             (command, serde_json::to_vec(&request).unwrap_or_default())
@@ -1531,7 +1532,7 @@ impl Session<'_> {
                         let index = next;
                         std::thread::spawn(move || {
                             let copied = matches!(
-                                transport::run_process(command, &[], PACK_COPY_TIMEOUT),
+                                transport::run_process(command, &input, PACK_COPY_TIMEOUT),
                                 Ok(transport::Ran::Exited((Some(0), _, _)))
                             );
                             let stored = store.map(|(command, request)| {
@@ -2472,7 +2473,7 @@ mod sync_tests {
             name: &str,
             remote: &str,
             upload: bool,
-        ) -> Option<std::process::Command> {
+        ) -> Option<(std::process::Command, Vec<u8>)> {
             let (_, incoming, works) = self.packs.as_ref()?;
             assert!(upload && remote == format!("/spark/incoming/{name}"));
             let target = incoming.path().join(name);
@@ -2492,7 +2493,7 @@ mod sync_tests {
                 c
             };
             command.current_dir(dir);
-            Some(command)
+            Some((command, Vec::new()))
         }
     }
     struct Tree {

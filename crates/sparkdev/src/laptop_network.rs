@@ -25,13 +25,8 @@ fn report(interfaces: Option<Vec<Interface>>, selected: Option<u32>) -> Value {
     let description = interface.map(|i| i.description.to_ascii_lowercase());
     let usb = description.as_ref().is_some_and(|d| d.contains("usb"))
         || interface.is_some_and(|i| i.usb_bus.is_some());
-    // The hub's answer wins. Without one, only an adapter that names itself USB 2.0 is flagged.
-    let usb_bus = interface.and_then(|i| i.usb_bus).or_else(|| {
-        description
-            .as_ref()
-            .filter(|d| d.contains("usb 2.0") || d.contains("usb2.0"))
-            .map(|_| "usb2_device")
-    });
+    // Only the hub's answer: an unobserved bus stays unknown, whatever the name says.
+    let usb_bus = interface.and_then(|i| i.usb_bus);
     let usb_advice = match usb_bus {
         Some("usb2_port") => Some(USB2_PORT_ADVICE),
         Some("usb2_device") => Some(USB2_DEVICE_ADVICE),
@@ -402,17 +397,13 @@ mod tests {
                 .unwrap()
                 .contains("USB 3 or USB-C port")
         );
-        // A USB 2.0-only adapter, reported by its hub or, unasked, by its own name.
+        // A USB 2.0-only adapter its hub reports. Unasked, even a name saying
+        // USB 2.0 asserts nothing about the hardware.
         let old = pick(adapter(1, "USB adapter", "wired", Some("usb2_device")));
         assert!(old["usb_advice"].as_str().unwrap().contains("USB 2.0 only"));
         let named = pick(adapter(1, "USB2.0 Ethernet Adapter", "wired", None));
-        assert_eq!(named["interface"]["usb_bus"], "usb2_device");
-        assert!(
-            named["usb_advice"]
-                .as_str()
-                .unwrap()
-                .contains("USB 2.0 only")
-        );
+        assert_eq!(named["interface"]["usb_bus"], "unknown");
+        assert!(named["usb_advice"].is_null());
         // Not USB at all.
         let pci = pick(adapter(
             1,

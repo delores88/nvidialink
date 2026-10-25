@@ -402,23 +402,36 @@ impl Directory {
 }
 /// Result files smaller than this come back by RPC alone.
 const COPY_MIN: u64 = 4 * inventory::MIB;
-/// On the LAN route, bring a whole result file into `stage` with one pinned scp,
-/// at the link rate. Best effort: `download` then verifies every chunk and the
-/// whole file against the manifest, and fetches anything that differs by RPC.
-fn copy_whole(rpc: &mut dyn Rpc, job: &str, entry: &Entry, stage: &Path) {
+/// A copy slice shorter than this would spend most of it connecting.
+const COPY_SLICE_MIN: Duration = Duration::from_secs(1);
+/// On the LAN route, continue a result file into `stage` with one pinned copy
+/// at the link rate. Each copy ends with the pump's budget, so this one worker
+/// still serves submissions and other returns between slices; the next pass
+/// continues from the bytes already staged and never starts over. Best effort:
+/// `download` then verifies every chunk and the whole file against the
+/// manifest, and fetches anything that differs by RPC.
+fn copy_whole(rpc: &mut dyn Rpc, job: &str, entry: &Entry, stage: &Path, until: Instant) {
     if entry.bytes < COPY_MIN || rpc.route() != "ssh" {
         return;
     }
-    // A stage already at full size was copied before; a link is never written through.
-    if fs::symlink_metadata(stage)
-        .is_ok_and(|m| m.len() == entry.bytes || m.file_type().is_symlink() || reparse(&m))
-    {
+    // A link is never written through; a full-size stage needs only verifying.
+    let staged = match fs::symlink_metadata(stage) {
+        Ok(m) if m.file_type().is_symlink() || reparse(&m) || !m.is_file() => return,
+        Ok(m) => m.len(),
+        Err(_) => 0,
+    };
+    let left = until.saturating_duration_since(Instant::now());
+    if staged >= entry.bytes || left < COPY_SLICE_MIN {
         return;
     }
     let (Some(dir), Some(name)) = (stage.parent(), stage.file_name().and_then(|n| n.to_str()))
     else {
         return;
     };
+    // The same free-space reserve as an RPC download, checked before any byte lands.
+    if require_space(dir, entry.bytes - staged).is_err() {
+        return;
+    }
     let Ok(found) = rpc
         .call(json!({"v":1,"op":"output_locate","job":job,"scope":entry.scope,"path":entry.path}))
     else {
@@ -430,9 +443,9 @@ fn copy_whole(rpc: &mut dyn Rpc, job: &str, entry: &Entry, stage: &Path) {
     else {
         return;
     };
-    if let Some(command) = rpc.copy_command(dir, name, file, false) {
-        let timeout = Duration::from_secs(60 + entry.bytes / (4 * inventory::MIB));
-        let _ = transport::run_process(command, &[], timeout);
+    if let Some((command, input)) = rpc.copy_command(dir, name, file, false) {
+        let left = until.saturating_duration_since(Instant::now());
+        let _ = transport::run_process(command, &input, left.max(COPY_SLICE_MIN));
     }
 }
 fn download(
@@ -442,7 +455,7 @@ fn download(
     stage: &Path,
     until: Instant,
 ) -> Result<bool> {
-    copy_whole(rpc, job, entry, stage);
+    copy_whole(rpc, job, entry, stage, until);
     let mut opts = fs::OpenOptions::new();
     opts.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -1299,6 +1312,162 @@ mod tests {
         fn connection_enabled(&self) -> bool {
             true
         }
+    }
+    /// A LAN controller double for result copies: answers the submission and
+    /// return RPCs, and hands out `copy` as the file-copy command, recording
+    /// how much was already staged each time a copy started.
+    struct LanRpc {
+        bytes: Vec<u8>,
+        ops: Vec<String>,
+        chunks: Vec<usize>,
+        submitted: Vec<String>,
+        copy: fn() -> std::process::Command,
+        staged_at_copy: std::cell::RefCell<Vec<Option<u64>>>,
+    }
+    impl LanRpc {
+        fn new(bytes: Vec<u8>, copy: fn() -> std::process::Command) -> Self {
+            Self {
+                bytes,
+                ops: vec![],
+                chunks: vec![],
+                submitted: vec![],
+                copy,
+                staged_at_copy: Default::default(),
+            }
+        }
+    }
+    impl Rpc for LanRpc {
+        fn call(&mut self, v: Value) -> Result<Value> {
+            let op = v["op"].as_str().unwrap().to_string();
+            self.ops.push(op.clone());
+            Ok(match op.as_str() {
+                "run" => {
+                    let id = v["request_id"].as_str().unwrap().to_string();
+                    self.submitted.push(id.clone());
+                    json!({"ok":true,"job":format!("job-{id}"),"state":"queued"})
+                }
+                "outputs" => {
+                    let mut out = manifest(&[entry("render.mp4", &self.bytes, None)]);
+                    out["state"] = json!("ready");
+                    out
+                }
+                "output_locate" => {
+                    json!({"file":"/spark/results/job/0","bytes":self.bytes.len(),"sha256":inventory::hash(&self.bytes)})
+                }
+                "output_chunk" => {
+                    let i = v["index"].as_u64().unwrap() as usize;
+                    self.chunks.push(i);
+                    let bytes = self.bytes.chunks(inventory::CHUNK).nth(i).unwrap();
+                    json!({"index":i,"bytes":bytes.len(),"data":STANDARD.encode(bytes),"sha256":inventory::hash(bytes)})
+                }
+                "outputs_ack" => {
+                    json!({"acknowledged":true,"manifest_sha256":v["manifest_sha256"]})
+                }
+                other => panic!("unexpected {other}"),
+            })
+        }
+        fn route(&self) -> String {
+            "ssh".into()
+        }
+        fn connection_enabled(&self) -> bool {
+            true
+        }
+        fn copy_command(
+            &self,
+            dir: &Path,
+            name: &str,
+            remote: &str,
+            upload: bool,
+        ) -> Option<(std::process::Command, Vec<u8>)> {
+            assert!(!upload && remote == "/spark/results/job/0");
+            self.staged_at_copy
+                .borrow_mut()
+                .push(fs::metadata(dir.join(name)).ok().map(|m| m.len()));
+            let mut command = (self.copy)();
+            command.current_dir(dir);
+            Some((command, Vec::new()))
+        }
+    }
+    /// A copy that brings nothing and succeeds.
+    fn idle_copy() -> std::process::Command {
+        if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/C", "exit 0"]);
+            command
+        } else {
+            std::process::Command::new("true")
+        }
+    }
+    /// A copy that would take a minute.
+    fn slow_copy() -> std::process::Command {
+        let mut command = std::process::Command::new(if cfg!(windows) { "ping" } else { "sleep" });
+        if cfg!(windows) {
+            command.args(["-n", "61", "127.0.0.1"]);
+        } else {
+            command.arg("60");
+        }
+        command
+    }
+    #[test]
+    fn a_copied_result_continues_its_staged_prefix_and_never_starts_over() {
+        let temp = tempdir().unwrap();
+        let stage = temp.path().join("part");
+        let bytes: Vec<u8> = (0..5 * inventory::CHUNK + 7)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        fs::write(&stage, &bytes[..3 * inventory::CHUNK]).unwrap();
+        let mut rpc = LanRpc::new(bytes.clone(), idle_copy);
+        let item = entry("render.mp4", &bytes, None);
+        let until = Instant::now() + Duration::from_secs(30);
+        assert!(download(&mut rpc, "job1", &item, &stage, until).unwrap());
+        // The copy started on the 3 MiB already staged, and RPC repaired only the rest.
+        assert_eq!(
+            *rpc.staged_at_copy.borrow(),
+            vec![Some(3 * inventory::CHUNK as u64)]
+        );
+        assert_eq!(rpc.chunks, vec![3, 4, 5]);
+        assert_eq!(fs::read(&stage).unwrap(), bytes);
+        // A full-size stage is only verified, never copied again.
+        assert!(download(&mut rpc, "job1", &item, &stage, until).unwrap());
+        assert_eq!(rpc.staged_at_copy.borrow().len(), 1);
+    }
+    #[test]
+    fn a_result_copy_checks_the_free_space_reserve_before_any_byte_lands() {
+        let temp = tempdir().unwrap();
+        let stage = temp.path().join("part");
+        let mut rpc = LanRpc::new(vec![], idle_copy);
+        let mut huge = entry("render.mp4", &[0; 8], None);
+        huge.bytes = 1 << 60;
+        let until = Instant::now() + Duration::from_secs(30);
+        copy_whole(&mut rpc, "job1", &huge, &stage, until);
+        assert!(rpc.ops.is_empty());
+        assert!(rpc.staged_at_copy.borrow().is_empty());
+        assert!(!stage.exists());
+    }
+    #[test]
+    fn a_slow_result_copy_never_holds_a_pending_submission_past_one_pump() {
+        let home = state::TestHome::new();
+        let (inv, mut render) = queued(&home.path);
+        render["request_id"] = json!("render");
+        register(&inv, &render, false).unwrap();
+        let mut rpc = LanRpc::new(vec![7; 5 * inventory::CHUNK], slow_copy);
+        // The first pass submits the render and starts its return over a copy
+        // that would take a minute; the pass still ends with its budget.
+        let started = Instant::now();
+        pump(&mut rpc, Duration::from_secs(2)).unwrap();
+        let held = started.elapsed();
+        assert!(held < Duration::from_secs(6), "one pump held for {held:?}");
+        assert_eq!(rpc.staged_at_copy.borrow().len(), 1);
+        // Another agent's job arrives meanwhile: the very next pass submits it.
+        let (_, mut other) = queued(&home.path);
+        other["request_id"] = json!("other");
+        register(&inv, &other, true).unwrap();
+        pump(&mut rpc, Duration::from_secs(2)).unwrap();
+        assert_eq!(rpc.submitted, vec!["render", "other"]);
+        assert_eq!(
+            submission("other", Duration::ZERO).unwrap()["job"],
+            "job-other"
+        );
     }
     #[test]
     fn resume_keeps_verified_prefix_and_repairs_torn_chunk() {
