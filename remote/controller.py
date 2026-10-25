@@ -58,6 +58,11 @@ INLINE_BYTES = 512 * CHUNK  # Snapshots needing at most this many new bytes asse
 MATERIALIZE_WAIT = 8
 MATERIALIZE_POLL = 0.25
 MAX_PENDING = 4
+# Queued uploads that will never be used stop holding queue slots and disk: one a newer upload
+# of the same project replaced an hour ago, or any upload no builder finished within a day.
+PENDING_SUPERSEDED_AGE = 3600
+PENDING_MAX_AGE = 24 * 3600
+PRUNE_INTERVAL = 60
 SCHEDULER_FRESH = 15  # Seconds since its last heartbeat for the scheduler to count as alive.
 MISSING_BATCH = 10000
 PROGRESS_INTERVAL = 1.0
@@ -308,15 +313,35 @@ def read_only_mode(entry):
     return 0o555 if entry["mode"] == 0o755 else 0o444
 
 
+# `python -I script.py` leaves the script's directory off sys.path, and this file imports its
+# sibling modules at load time. The launcher restores exactly that one directory.
+ISOLATED_LAUNCHER = ("import pathlib,runpy,sys;p=sys.argv.pop(1);sys.argv[0]=p;"
+                     "sys.path.insert(0,str(pathlib.Path(p).parent));runpy.run_path(p,run_name='__main__')")
+MATERIALIZER_LOG = ".materializer.stderr"  # In snapshots/, beside .materialize.lock.
+MATERIALIZER_LOG_TAIL = 4096
+
+
+def isolated_argv(script, *args):
+    """Argv running a script of this bundle under isolated Python with its siblings importable."""
+    return [sys.executable, "-I", "-c", ISOLATED_LAUNCHER, str(script), *args]
+
+
 def spawn_materializer(root):
     """Start one detached background materializer; it outlives this RPC and the SSH session.
 
     A new session is not a new cgroup: the child stays in the unit of whatever process
     spawned it, so syncs leave spawning to the scheduler while it is alive (see wake()).
+    Its stderr replaces the previous builder's, so a builder that dies is visible in status.
+    Callers never wait on the returned process; tests do.
     """
-    subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve()), "materialize", "--state", str(root)],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True, close_fds=True, env=dict(TOOL_ENV), cwd=str(root))
+    fd = os.open(Path(root) / "snapshots" / MATERIALIZER_LOG,
+                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        return subprocess.Popen(isolated_argv(Path(__file__).resolve(), "materialize", "--state", str(root)),
+                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=fd,
+                                start_new_session=True, close_fds=True, env=dict(TOOL_ENV), cwd=str(root))
+    finally:
+        os.close(fd)
 
 
 def available_gb():
@@ -1103,6 +1128,7 @@ class Controller:
         self.sleep = sleep or time.sleep
         self.started = self.clock()
         self._shapes = {}
+        self._pruned = -math.inf
         self.db = sqlite3.connect(self.root / "state.sqlite3", timeout=30, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -1370,6 +1396,42 @@ class Controller:
     def partial_dir(self, manifest_id):
         return self.snapshots / (".partial-" + manifest_id)
 
+    def drop_pending(self, manifest_id):
+        """Forget one queued upload. Call only while holding its record lock.
+
+        The content store keeps its chunks, so the same sync later simply queues it again.
+        """
+        remove_tree(self.pending_tree(manifest_id))
+        remove_tree(self.partial_dir(manifest_id))
+        unlink_quietly(self.pending / (manifest_id + ".progress"))
+        unlink_quietly(self.pending / (manifest_id + ".failed"))
+        unlink_quietly(self.pending / (manifest_id + ".json"))
+        with self.transaction():
+            self.audit("snapshot_dropped", manifest=manifest_id)
+
+    def prune_pending(self, now=None):
+        """Drop stale queued uploads no builder holds; return the dropped manifest IDs."""
+        now = time.time() if now is None else now
+        records = []
+        for manifest_id in self.pending_ids():
+            try:
+                created = os.lstat(self.pending / (manifest_id + ".json")).st_mtime
+                records.append((manifest_id, self.read_pending(manifest_id)["project"], created))
+            except (OSError, ValueError, TypeError, KeyError, Rejected):
+                continue
+        newest = {}
+        for _, project, created in records:
+            newest[project] = max(created, newest.get(project, created))
+        dropped = []
+        for manifest_id, project, created in records:
+            age = now - created
+            if age >= PENDING_MAX_AGE or (newest[project] > created and age >= PENDING_SUPERSEDED_AGE):
+                with self.record_lock(manifest_id) as held:
+                    if held:
+                        self.drop_pending(manifest_id)
+                        dropped.append(manifest_id)
+        return dropped
+
     def take_failure(self, manifest_id):
         """Return a background failure exactly once, then forget it."""
         marker = self.pending / (manifest_id + ".failed")
@@ -1570,6 +1632,36 @@ class Controller:
             self.spawn()
         return free
 
+    def materializer_health(self, queued):
+        """Whether a background builder is running, and the error kind a stopped one printed.
+
+        Each spawn truncates the log, so a non-empty log with no builder running means the
+        most recent builder died, and queued snapshots will not progress until that is fixed.
+        """
+        with self.materialize_lock() as free:
+            pass
+        started, error = None, None
+        try:
+            fd = safe_open(self.snapshots / MATERIALIZER_LOG)
+        except (OSError, Rejected):
+            fd = None
+        if fd is not None:
+            try:
+                info = os.fstat(fd)
+                started = info.st_mtime
+                os.lseek(fd, max(0, info.st_size - MATERIALIZER_LOG_TAIL), os.SEEK_SET)
+                lines = [line.strip() for line in os.read(fd, MATERIALIZER_LOG_TAIL).decode(errors="replace").splitlines()]
+                last = next((line for line in reversed(lines) if line), None)
+                if last is not None:
+                    # Only the error kind, like the scheduler's own reports: never paths or input.
+                    kind = re.match(r"([A-Za-z_][A-Za-z0-9_.]{0,79})(?::|$)", last)
+                    error = kind.group(1) if kind else "unknown"
+            finally:
+                os.close(fd)
+        running = not free
+        return {"running": running, "last_started": started, "last_error": None if running else error,
+                "stalled": bool(queued) and not running and error is not None}
+
     def scheduler_alive(self):
         last = self.db.execute("SELECT value FROM settings WHERE key='scheduler_heartbeat'").fetchone()
         try:
@@ -1633,6 +1725,11 @@ class Controller:
                 break
             self.sleep(MATERIALIZE_POLL)
         progress = self.progress(manifest_id) or {"done_bytes": 0, "total_bytes": total}
+        health = self.materializer_health(os.path.lexists(record))
+        if health["stalled"]:
+            # Retrying cannot help while every builder dies at startup; say so at once.
+            reject("materializer_stopped", "The Spark's background builder for large uploads stopped "
+                                           f"({health['last_error']}), so this upload cannot finish. Update the Spark setup, then run the same command again")
         reject("materializing", f"Spark is assembling this snapshot: {progress['done_bytes'] // CHUNK} of "
                                 f"{-(-progress['total_bytes'] // CHUNK)} MiB; run the same command again to continue")
 
@@ -2111,6 +2208,7 @@ class Controller:
                 **policy, "dependency_preparation": "isolated_allowlist_proxy", "network": network,
                 # `limits` above is the resource policy; transfer limits use their own key.
                 "storage": storage, "sync_limits": sync_limits(), "materializing": queue,
+                "materializer": self.materializer_health(bool(queue)),
                 "gpu_video": media_probe.cached_gpu_video(self.root.parent, registry.get("cuda", {}).get("image")),
                 "downloads": self.download_cache.status(storage)}
 
@@ -2630,6 +2728,12 @@ class Controller:
                         self.finish(row, "failed", 137, "disk_full")
                 except (Rejected, OSError, subprocess.SubprocessError) as error:
                     self.scheduler_error("disk floor", error)
+        if self.clock() - self._pruned >= PRUNE_INTERVAL:
+            self._pruned = self.clock()
+            try:
+                self.prune_pending()
+            except (Rejected, OSError, sqlite3.Error) as error:
+                self.scheduler_error("prune", error)
         # Backstop: a materializer that died, or one never spawned, restarts from the queue.
         try:
             self.kick()

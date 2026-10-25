@@ -836,6 +836,10 @@ fn devices() -> Result<Value> {
             // Absent (null) from a controller that predates disk reporting.
             spark["storage"] = status.get("storage").cloned().unwrap_or(Value::Null);
             spark["sync_limits"] = status.get("sync_limits").cloned().unwrap_or(Value::Null);
+            // Large-upload assembly: the queue and whether its builder is alive. Null from
+            // controllers that predate them.
+            spark["materializing"] = status.get("materializing").cloned().unwrap_or(Value::Null);
+            spark["materializer"] = status.get("materializer").cloned().unwrap_or(Value::Null);
             spark["capacity_note"] = json!(
                 "Scheduler limits and recorded jobs are observations, not free hardware capacity or a reservation."
             );

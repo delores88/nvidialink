@@ -70,10 +70,8 @@ class OutputManager:
         """)
 
     def _spawn(self, job):
-        script = str(Path(self.api.__file__).resolve())
         # Isolated Python with exactly the installed script directory enabled.
-        launcher = "import pathlib,runpy,sys;p=sys.argv.pop(1);sys.argv[0]=p;sys.path.insert(0,str(pathlib.Path(p).parent));runpy.run_path(p,run_name='__main__')"
-        subprocess.Popen([sys.executable, "-I", "-c", launcher, script, "collect-outputs", "--state", str(self.c.root), "--job", job],
+        subprocess.Popen(self.api.isolated_argv(Path(self.api.__file__).resolve(), "collect-outputs", "--state", str(self.c.root), "--job", job),
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True, close_fds=True, env=dict(self.api.TOOL_ENV), cwd=str(self.c.root))
 

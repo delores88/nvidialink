@@ -423,13 +423,87 @@ class SizeLimitTests(unittest.TestCase):
             controller.spawn_materializer(self.root)
         argv, options = popen.call_args
         self.assertEqual(argv[0][-3:], ["materialize", "--state", str(self.root)])
-        self.assertEqual(argv[0][1], "-I")
-        self.assertEqual(Path(argv[0][2]).name, "controller.py")
-        for name in ("stdin", "stdout", "stderr"):
+        self.assertEqual(argv[0][1:4], ["-I", "-c", controller.ISOLATED_LAUNCHER])
+        self.assertEqual(Path(argv[0][4]).name, "controller.py")
+        for name in ("stdin", "stdout"):
             self.assertIs(options[name], subprocess.DEVNULL)
+        self.assertIsInstance(options["stderr"], int)
+        self.assertTrue((self.root / "snapshots" / controller.MATERIALIZER_LOG).is_file())
         self.assertTrue(options["start_new_session"] and options["close_fds"])
         self.assertEqual(options["env"], controller.TOOL_ENV)
         self.assertEqual(self.error("materialize")["code"], "unknown_operation")
+
+    def test_real_spawned_builder_imports_its_siblings_and_exits_cleanly(self):
+        # Unmocked: 0.5.0 spawned `python -I controller.py`, which cannot import its sibling
+        # modules, so every builder died before reading the queue and large syncs never finished.
+        process = controller.spawn_materializer(self.root)
+        self.assertEqual(process.wait(timeout=60), 0)
+        self.assertEqual((self.root / "snapshots" / controller.MATERIALIZER_LOG).read_bytes(), b"")
+        health = self.rpc("status")["materializer"]
+        self.assertEqual((health["running"], health["last_error"], health["stalled"]), (False, None, False))
+
+    def queue(self, seed, name="big.bin"):
+        content = large(seed)
+        self.upload(content)
+        self.assertEqual(self.sync(entry(name, content))["error"]["code"], "materializing")
+        manifest_id = self.c.pending_ids()[-1]
+        return manifest_id, content
+
+    def age(self, manifest_id, seconds):
+        when = time.time() - seconds
+        os.utime(self.root / "pending" / (manifest_id + ".json"), (when, when))
+
+    def test_stale_queued_uploads_are_dropped_and_can_be_queued_again(self):
+        old, content = self.queue(7)
+        new, _ = self.queue(8)
+        # Superseded by a newer upload of the same project, but only for a minute: kept.
+        self.age(old, 60)
+        self.assertEqual(self.c.prune_pending(), [])
+        # Superseded for over an hour: dropped, with no trace left in the queue.
+        self.age(old, controller.PENDING_SUPERSEDED_AGE + 1)
+        self.assertEqual(self.c.prune_pending(), [old])
+        self.assertEqual(self.c.pending_ids(), [new])
+        self.assertEqual([item["manifest_id"] for item in self.rpc("status")["materializing"]], [new])
+        self.assertFalse(os.path.lexists(self.c.pending_tree(old)))
+        # The newest upload of a project stays until a day has passed.
+        self.age(new, controller.PENDING_MAX_AGE - 60)
+        self.assertEqual(self.c.prune_pending(), [])
+        self.age(new, controller.PENDING_MAX_AGE + 1)
+        self.assertEqual(self.c.prune_pending(), [new])
+        # Its chunks were kept: the same sync queues it again without another upload.
+        self.assertEqual(self.sync(entry("big.bin", content))["error"]["code"], "materializing")
+        self.assertEqual(self.c.pending_ids(), [old])
+
+    @unittest.skipUnless(os.name == "posix", "flock is posix-only")
+    def test_a_queued_upload_being_built_is_never_dropped(self):
+        manifest_id, _ = self.queue(9)
+        self.age(manifest_id, controller.PENDING_MAX_AGE + 1)
+        with self.c.record_lock(manifest_id) as held:
+            self.assertTrue(held)
+            self.assertEqual(self.c.prune_pending(), [])
+        self.assertEqual(self.c.prune_pending(), [manifest_id])
+
+    def test_status_reports_a_builder_that_died(self):
+        big = large(6)
+        self.upload(big)
+        self.assertEqual(self.sync(entry("big.bin", big))["error"]["code"], "materializing")
+        # A real builder that fails at startup: its state root is not a directory.
+        blocker = Path(self.tmp.name) / "not-a-directory"
+        blocker.write_bytes(b"")
+        argv = controller.isolated_argv(Path(controller.__file__).resolve(), "materialize", "--state", str(blocker))
+        with open(self.root / "snapshots" / controller.MATERIALIZER_LOG, "wb") as log:
+            self.assertNotEqual(subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log,
+                                               env=dict(controller.TOOL_ENV), timeout=60).returncode, 0)
+        health = self.rpc("status")["materializer"]
+        self.assertFalse(health["running"])
+        self.assertTrue(health["stalled"])
+        # The error kind only, never the path the traceback names.
+        self.assertIn(health["last_error"], ("FileExistsError", "NotADirectoryError"))
+        # The same sync now fails at once with the reason instead of polling for ten minutes.
+        error = self.sync(entry("big.bin", big))["error"]
+        self.assertEqual(error["code"], "materializer_stopped")
+        self.assertIn(health["last_error"], error["message"])
+        self.assertNotIn(str(blocker), json.dumps(error))
 
     # Crash, resume and per-chunk checks.
 
