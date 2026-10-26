@@ -356,10 +356,25 @@ class UnmetTests(Sandbox):
         self.assertEqual(self.unmet(), ([], []))
 
     def test_unevaluable_marker_is_a_fixed_refusal(self):
-        import platform
-        dist(self.staging, "lib-f", "1.0", ['foo; platform_release >= "5"', 'bar; python_version ~= "abc"'])
-        with mock.patch.object(platform, "release", return_value="6.8.0-1015-nvidia"):
-            self.assertEqual(self.unmet(), (["sparkdev: refused: lib-f has an unevaluable requirement marker"] * 2, []))
+        dist(self.staging, "lib-f", "1.0", ['bar; python_version ~= "abc"'])
+        self.assertEqual(self.unmet(), (["sparkdev: refused: lib-f has an unevaluable requirement marker"], []))
+
+    def test_marker_evaluation_errors_are_fixed_refusals_without_details(self):
+        from pip._vendor.packaging.markers import Marker
+        from pip._vendor.packaging.version import InvalidVersion
+
+        # Packaging versions differ on invalid kernel versions: some raise,
+        # others evaluate False. Exercise our exception handling directly.
+        dist(self.staging, "lib-f", "1.0", ['foo; python_version >= "3"'])
+        for error in (InvalidVersion, TypeError):
+            with self.subTest(error=error.__name__):
+                output = io.StringIO()
+                with mock.patch.object(Marker, "evaluate", side_effect=error("private marker detail")) as evaluate, \
+                        contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                    result = self.unmet()
+                evaluate.assert_called_once_with({"extra": ""})
+                self.assertEqual(result, (["sparkdev: refused: lib-f has an unevaluable requirement marker"], []))
+                self.assertEqual(output.getvalue(), "")
 
 
 class CrossLockTests(Sandbox):
