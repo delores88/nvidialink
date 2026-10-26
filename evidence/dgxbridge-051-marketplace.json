@@ -1,0 +1,100 @@
+{
+  "version": "0.5.1",
+  "observed_at": "2026-10-25T19:02:12.2642851-06:00",
+  "marketplace_release_id": "yitYwLpsPxP_EgUjTApME295",
+  "marketplace_attempt_id": "FjkDmmHF6ZJBWhen_jZjaKQE",
+  "native_decision": {
+    "method": "Signed-in Developer tools > Release decisions > DGXBridge 0.5.1 findings",
+    "status": "accepted",
+    "checks_failed": 0,
+    "checks_passed": 5,
+    "checks_incomplete": 0,
+    "accepted_at": "2026-10-26T00:57:24.402Z"
+  },
+  "artifact": {
+    "verificationLevel": "release-baseline",
+    "acceptancePolicy": "immutable-release",
+    "acceptedAt": "2026-10-26T00:57:24.402Z",
+    "revoked": false,
+    "sha256": "2d679b6ec34ea9c504e40d71f1839f966b6e804dc5ff0b081f9dcc01eb45b8be",
+    "manifestSha256": "2ea4c1f41bab37e738515091d02bd5f28a709bed15a674ab477de6b753020213",
+    "releaseId": 423757479,
+    "assetId": 676554753,
+    "version": "0.5.1",
+    "appId": "dgxbridge",
+    "size": 13100202,
+    "status": "accepted",
+    "expiresAt": "2026-11-02T00:57:24.402Z",
+    "id": "BoqA_T93fAhuZq_-dyIVutwH",
+    "sourceCommit": "ddc2b7921b1e5ded6be460c6f7e8aaf4158c6fd9"
+  },
+  "published_manifest_asset_id": 676557378,
+  "published_manifest_raw_sha256": "542b20b0b53de4549f6c13db7101dea7248ae46902c959d4440dea645fa28f6f",
+  "marketplace_download": {
+    "verified_at": "2026-10-25T19:01:00.5137836-06:00",
+    "version": "0.5.1",
+    "bytes": 13100202,
+    "sha256": "2d679b6ec34ea9c504e40d71f1839f966b6e804dc5ff0b081f9dcc01eb45b8be",
+    "method": "Signed-in native Marketplace Download for Windows, Verified Download, Save installer as",
+    "expected_github_release_id": 423757479,
+    "expected_github_asset_id": 676554753,
+    "marketplace_artifact_id": "BoqA_T93fAhuZq_-dyIVutwH",
+    "matches_installed_release_installer": true,
+    "installed_again": false
+  },
+  "dependency_findings": {
+    "remaining_advisory": "GHSA-wrw7-89jp-8q8g: glib 0.18.5 in source src-tauri/Cargo.lock; fixed in 0.20.0",
+    "medium": 1,
+    "high": 0,
+    "critical": 0,
+    "low": 0
+  },
+  "scanner_findings": [
+    {
+      "source_dependencies": 887,
+      "status": "pass",
+      "packaged_dependencies": 839,
+      "id": "artifact.sbom"
+    },
+    {
+      "status": "pass",
+      "scope": "Installer, source, and four payload groups; no application execution",
+      "id": "malware.scan"
+    },
+    {
+      "status": "pass",
+      "scope": "No critical/high findings; medium advisory retained",
+      "id": "source.dependencies"
+    },
+    {
+      "status": "pass",
+      "supplied_inputs": 1187,
+      "original_matches": 0,
+      "id": "source.secrets",
+      "unreviewed_matches": 0
+    },
+    {
+      "status": "pass",
+      "id": "source.dependencies",
+      "advisory": "GHSA-wrw7-89jp-8q8g"
+    }
+  ],
+  "installation_receipt": "dgxbridge-051-installed.json",
+  "native_decision_receipt_sha256": "857c9494caf2a2daca060cbe784e6c4682b6b74d5dbd7b0d3286cd2aaf01c15a",
+  "native_download_receipt_sha256": "d5cd8830183e4f7860a1d704ef02fe7d320bcd80215c709d35e885fa73a17712",
+  "findings_export": {
+    "handed_to": "Marketplace maintainer",
+    "status": "unavailable",
+    "scope": "Separate normal report-export failure; native findings and accepted eligible artifact retained independently",
+    "message": "The retained report could not be verified for this submission. Contact marketplace support.",
+    "observed_at": "2026-10-26T00:57:47.884Z",
+    "cause": "Marketplace exporter omitted the optional resourceProfile field when reconstructing the retained scanner request fingerprint; actual retained report and identity guards otherwise verified.",
+    "acceptance_unchanged": true
+  },
+  "scope": "Native acceptance findings, independent exact public catalog eligibility, and normal signed-in Marketplace download with independent saved-file hash. Installed Windows and physical Spark evidence remain separate.",
+  "limits": "Static admission does not establish comprehensive application security or lifecycle behavior. Installer unsigned; medium dependency advisory disclosed. No hotspot, physical network-loss, sleep, sign-in, fresh updater-cycle or cold optional Blender fallback claim.",
+  "featured": false,
+  "phaseforge_remains_featured": true,
+  "immutable_prior_releases_preserved": true,
+  "automations_restarted": false
+}

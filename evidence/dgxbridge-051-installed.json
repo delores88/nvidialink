@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "product": "DGXBridge",
+  "version": "0.5.1",
+  "receipt_type": "sanitized-physical-installation-and-bounded-acceptance",
+  "prepared_at_utc": "2026-10-26T00:57:58.043821Z",
+  "scope": "Retained physical Windows installation, separate Spark controller deployment, and installed-CLI transfer acceptance. Marketplace admission is a separate evidence layer.",
+  "source_provenance": {
+    "build_source_commit": "85fd9bd0a02fd2dbff7d6689b29daa8c2b45f170",
+    "release_source_commit": "ddc2b7921b1e5ded6be460c6f7e8aaf4158c6fd9",
+    "relationship": "test-only-difference",
+    "changed_paths": [
+      "remote/test_prepare.py"
+    ],
+    "unchanged_tracked_paths": 317,
+    "all_shipped_production_and_tracked_build_inputs_identical": true,
+    "rebuilt_for_test_only_change": false,
+    "checked_scope": "Entire Git tree, with rename detection disabled; all other tracked paths, modes and blob contents are unchanged, including production, Cargo locks, build scripts and runtime inputs."
+  },
+  "windows_installation": {
+    "recorded_at": "2026-10-25T18:03:02.3757693-06:00",
+    "method": "Normal Windows Explorer-launched NSIS upgrade of the existing physical owner installation; no uninstall.",
+    "installer": {
+      "filename": "DGXBridge_0.5.1_x64-setup.exe",
+      "bytes": 13100202,
+      "sha256": "2d679b6ec34ea9c504e40d71f1839f966b6e804dc5ff0b081f9dcc01eb45b8be"
+    },
+    "native_installer_result": "Installation Complete; Setup was completed successfully",
+    "installed_cli_version": "sparkdev 0.5.1",
+    "native_gui_version_observed": "0.5.1",
+    "native_gui_version_pending": false,
+    "installed_executables": [
+      {
+        "filename": "dgxbridge.exe",
+        "sha256": "24a5cf2ba5eee27e034f586f45586c02ed95e6685322808366557d9ebd29ad2f",
+        "bytes": 13430272,
+        "matches": true
+      },
+      {
+        "filename": "sparkdev.exe",
+        "sha256": "519f05a02f6200c2a19cbdcb3fd94fbe369bb04be4d803abecf17439e7291ef8",
+        "bytes": 4367360,
+        "matches": true
+      },
+      {
+        "filename": "sparkdev-return.exe",
+        "sha256": "63ff3e71eae682a8415c040bea50e5e7061f232db2e5d8e58a99d7f7309e6089",
+        "bytes": 1574912,
+        "matches": true
+      },
+      {
+        "filename": "sparkdev-link.exe",
+        "sha256": "c926245ce6b44715207abf6fc5859a24dd321859b0bd797e1c8b526a201efe59",
+        "bytes": 13842944,
+        "matches": true
+      }
+    ],
+    "owner_configuration_and_pairing_preserved": true
+  },
+  "spark_controller_deployment": {
+    "ok": true,
+    "installation_started": true,
+    "receipt_ok": true,
+    "controller_content_revision": "482b705a19c94d4f4217574ed9ebb296426236788e054cd8850fec8df60d3dd0",
+    "installed_at_utc": "2026-10-25T23:55:48.425960Z",
+    "services_in_deployment_receipt": [
+      "sparkdev-controller.service"
+    ],
+    "controller_active_after": true,
+    "controller_running_after": true,
+    "policy_preserved": true,
+    "retained_state_comparison_matched": true,
+    "existing_link_service_and_unit_unchanged": true,
+    "runtime_and_cuda_builder_service_observations_unchanged": true
+  },
+  "fresh_lan_sync": {
+    "ok": true,
+    "route": "lan_ssh",
+    "authenticated": true,
+    "files": 3,
+    "inventory_bytes": 2147485103,
+    "fresh_uploaded_bytes_this_attempt": 2147485103,
+    "full_fresh_upload_in_one_attempt_proven": true,
+    "transfer_retries": 0,
+    "sync_seconds_reported_by_cli": 29.6766201,
+    "wall_seconds_including_inventory_materialization": 34.51599999999962,
+    "fresh_upload_wall_mbit_s": 497.736725692438,
+    "target_mbit_s": 600,
+    "separate_wire_only_upload_timing": "not observed; do not infer from raw scp",
+    "materializer_after": {
+      "last_error": null,
+      "last_exit_code": 0,
+      "running": false,
+      "stalled": false
+    },
+    "target_scope": "The 600 Mbit/s target applies to the payload-transfer phase only. That phase was not separately measured in this receipt; the target is not a release gate."
+  },
+  "lan_automatic_return_and_fairness": {
+    "verified_at_utc": "2026-10-26T00:25:35.681267Z",
+    "bulk_job": {
+      "job": "5bb1cd781838432f9ae5f13cc366119f",
+      "state": "succeeded",
+      "exit_code": 0,
+      "client": "codex",
+      "cache_hit": false
+    },
+    "fair_job": {
+      "job": "36529a654ae648558962448668d5c451",
+      "state": "succeeded",
+      "exit_code": 0,
+      "client": "codex",
+      "cache_hit": false
+    },
+    "input_sha256_verified_on_spark": "29a8257cd4ea325ebf0ea362fe971c84e2ee7ed6d4515150b4f03e094c75b5dd",
+    "returned_file": {
+      "sha256": "7fa66518e270f6eaabf10f26248066ebaf8b448cc50e006aad3ee9a85478e256",
+      "bytes": 2147483648
+    },
+    "remote_generated_output_sha256": "7fa66518e270f6eaabf10f26248066ebaf8b448cc50e006aad3ee9a85478e256",
+    "remote_generated_output_bytes": 2147483648,
+    "automatic_return_completion_observed": true,
+    "no_manual_fetch_used": true,
+    "no_duplicate_execution_observed_in_logs": true,
+    "owner_preservation_comparison_matched": true,
+    "fairness": {
+      "seconds_from_observed_partial_to_submission": 25.393834829330444,
+      "accepted_within_90_seconds": true,
+      "bulk_still_partial_after_fair_acceptance": true
+    },
+    "observed_return_interval": {
+      "observed_byte_delta": 2115911680,
+      "seconds": 26.64072585105896,
+      "mbit_s": 635.3916006131321,
+      "scope": "Observed staging-size growth, not in-flight hash verification; includes pump gaps, observer IO and interruptions; excludes first/last unobserved bytes"
+    }
+  },
+  "paired_automatic_return": {
+    "verified_at_utc": "2026-10-26T00:23:51.302139Z",
+    "job": {
+      "job": "f2a326b380604042b167c6df0e582bb4",
+      "state": "succeeded",
+      "exit_code": 0,
+      "client": "codex",
+      "cache_hit": false
+    },
+    "recorded_state": "succeeded",
+    "recorded_exit_code": 0,
+    "return_status": "complete",
+    "route": "paired_iroh",
+    "authenticated": true,
+    "relay_or_hotspot_proven": false,
+    "submitting_cli_exited": true,
+    "verified_files": [
+      {
+        "file_index": 1,
+        "scope": "work",
+        "bytes": 38,
+        "sha256": "ccb1d5e51ef47c36e67e342a856d0ce4e0e8f0acfb70db07866dd644468088c9",
+        "status": "written"
+      },
+      {
+        "file_index": 2,
+        "scope": "work",
+        "bytes": 42,
+        "sha256": "636a269f3c83f883e7161c0c7647ee2e1f2a17c3e0ae416701bc2071f3d78e46",
+        "status": "conflict"
+      },
+      {
+        "file_index": 3,
+        "scope": "work",
+        "bytes": 28,
+        "sha256": "1838a068595e0efc8ee0e9cb2642a367b62c17c702615dc10044d235eac96ce5",
+        "status": "written"
+      },
+      {
+        "file_index": 4,
+        "scope": "output",
+        "bytes": 136314880,
+        "sha256": "b0099ba6760d739684ca1ff8ba4f8369cff5216af01e90b4020453caec1cf05a",
+        "status": "written"
+      }
+    ],
+    "partial_chunk_checkpoint_observed": false,
+    "transport_failure_after_partial_observed": false,
+    "owner_connection_and_identity_comparison_matched_after_restoration": true
+  },
+  "interrupted_automatic_return": {
+    "verified_at_utc": "2026-10-26T00:41:14.244733Z",
+    "bulk_job": {
+      "job": "cb4349e855304387bf69ebc078729206",
+      "state": "succeeded",
+      "exit_code": 0,
+      "client": "codex",
+      "cache_hit": false
+    },
+    "fair_job": {
+      "job": "538a50362ae74ef78b156e6bed8a4666",
+      "state": "succeeded",
+      "exit_code": 0,
+      "client": "codex",
+      "cache_hit": false
+    },
+    "input_sha256_verified_on_spark": "61a8125525f4828f8c51d8fae5299079cbab83d6bb398534b6ef9fe8699a9658",
+    "returned_file": {
+      "sha256": "944b413fb9d1eafbcafe88417576fe6265f2da6af93421996508ea28f621d69e",
+      "bytes": 2147483648
+    },
+    "remote_generated_output_sha256": "944b413fb9d1eafbcafe88417576fe6265f2da6af93421996508ea28f621d69e",
+    "remote_generated_output_bytes": 2147483648,
+    "automatic_return_completion_observed": true,
+    "no_manual_fetch_used": true,
+    "no_duplicate_execution_observed_in_logs": true,
+    "owner_preservation_comparison_matched": true,
+    "fairness": {
+      "seconds_from_observed_partial_to_submission": 22.55488681793213,
+      "accepted_within_90_seconds": true,
+      "bulk_still_partial_after_fair_acceptance": true
+    },
+    "observed_return_interval": {
+      "observed_byte_delta": 2143500288,
+      "seconds": 260.7385845184326,
+      "mbit_s": 65.76702997629314,
+      "scope": "Observed staging-size growth, not in-flight hash verification; includes pump gaps, observer IO and interruptions; excludes first/last unobserved bytes"
+    },
+    "actual_dropped_connections": 2,
+    "cycles": [
+      {
+        "number": 1,
+        "matched_aborted_connection_count": 1,
+        "returned_bytes_on_matched_connections_before_drop": [
+          66742831
+        ],
+        "paused_prefix_bytes": 270532608,
+        "paused_prefix_sha256": "eaae2794e7a6c627ea3ce2327ab497b31f0b6e36fa150c15a06aac746a6432d8",
+        "previous_prefixes_match": true,
+        "observed_staging_bytes_after_resume": 288288768,
+        "resumed_growth_observed": true,
+        "fair_job_while_partial": "538a50362ae74ef78b156e6bed8a4666"
+      },
+      {
+        "number": 2,
+        "matched_aborted_connection_count": 1,
+        "returned_bytes_on_matched_connections_before_drop": [
+          124284899
+        ],
+        "paused_prefix_bytes": 807403520,
+        "paused_prefix_sha256": "623a30231fb5f60d077dde5db94a68a987f8a61bdb92c7b40401ed2869ebbba2",
+        "previous_prefixes_match": true,
+        "observed_staging_bytes_after_resume": 824637440,
+        "resumed_growth_observed": true,
+        "fair_job_while_partial": "538a50362ae74ef78b156e6bed8a4666"
+      }
+    ],
+    "all_paused_prefixes_match_final": true,
+    "automatic_return_complete": true,
+    "final_bytes": 2147483648,
+    "final_sha256": "944b413fb9d1eafbcafe88417576fe6265f2da6af93421996508ea28f621d69e",
+    "sampled_resume_observed": true,
+    "scope": "Two isolated pinned-LAN proxy drops with verified paused prefixes and resumed growth; 250ms observations do not exclude instantaneous transitions or retransmission. No hotspot, laptop sleep or global network-disconnect claim.",
+    "cleanup": {
+      "startup_registry_run_value_modified": false,
+      "other_startup_entries_preserved_count": 3,
+      "fixture_files_preserved": true,
+      "fixture_startup_entries_removed_count": 1,
+      "fixture_workers_stopped_count": 1,
+      "isolated_proxy_stopped": true,
+      "owner_state_modified": false
+    }
+  },
+  "final_installed_health": {
+    "ok": true,
+    "scheduler_healthy": true,
+    "scheduler_heartbeat_at_utc": "2026-10-26T00:42:55.856895Z",
+    "route": "lan_ssh",
+    "authenticated": true,
+    "materializer": {
+      "last_error": null,
+      "last_exit_code": 0,
+      "running": false,
+      "stalled": false
+    }
+  },
+  "evidence_limits": [
+    "The full fresh LAN sync measured about 498 Mbit/s including inventory and materialization. The separate 600 Mbit/s payload-only target remains unmeasured by this receipt and is not a release gate; the full-sync wall rate is not directly comparable to that target.",
+    "The separate LAN return interval measured about 635 Mbit/s from staging-size observations. It excludes first and last unobserved bytes and is not an end-to-end throughput measurement or in-flight hash verification; final full-file hashes were verified separately.",
+    "The interrupted return used two controlled, data-bearing drops in an isolated pinned-SSH proxy. Verified paused prefixes and later growth support recovery; 250 ms samples cannot exclude every instantaneous transition or retransmission.",
+    "The paired route authenticated and returned four verified files, including a conflict sidecar. This does not establish relay routing, a phone-hotspot path, or paired-transfer interruption recovery.",
+    "All recorded acceptance callers here are Codex. These receipts do not establish an actual Claude Code invocation, MCP use from both real agents, laptop sleep recovery, global network-loss recovery, sign-in behavior, updater execution, or cold Blender fallback.",
+    "The transfer harness did not fill owner disks; low-disk physical acceptance is not claimed. The installer was launched through Explorer; no updater-path installation claim is made.",
+    "Final health is a recorded observation, not a continuous availability guarantee. Marketplace admission and served-download identity require their own receipts."
+  ],
+  "sanitization": {
+    "owner_absolute_paths_omitted": true,
+    "owner_configuration_values_omitted": true,
+    "network_addresses_omitted": true,
+    "credentials_and_key_contents_omitted": true,
+    "identity_and_pairing_fingerprints_omitted": true,
+    "raw_private_receipts_retained_separately": true
+  },
+  "evidence_inputs": [
+    "physical-install",
+    "controller-deployment-result",
+    "lan-sync-complete",
+    "lan-observed-verified",
+    "lan-observed-summary",
+    "paired-result",
+    "paired-restored",
+    "interruption-verified",
+    "interruption-summary",
+    "interruption-prefix-continuity",
+    "interruption-cleanup",
+    "final-installed-status",
+    "source-equivalence"
+  ]
+}
