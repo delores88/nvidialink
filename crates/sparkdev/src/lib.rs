@@ -4,6 +4,7 @@ pub mod lan_learn;
 pub mod laptop_network;
 pub mod local;
 pub mod mcp;
+pub mod nodes;
 pub mod returns;
 mod servers;
 pub mod state;

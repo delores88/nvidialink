@@ -1,8 +1,11 @@
 use crate::{
     AppError, Result,
     lan_learn::{self, Learned, Route},
+    nodes::{self, Endpoint, EndpointSettings},
     state::{self, Config},
 };
+#[cfg(test)]
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
@@ -16,6 +19,7 @@ use std::{
 
 pub struct Transport {
     pub config: Config,
+    endpoint: EndpointSettings,
     pub selected: String,
     pub reason: String,
     pub host: Option<String>,
@@ -511,7 +515,13 @@ pub fn parse_ssh_g(output: &str, alias: &str) -> AliasRoute {
 /// `ssh -G` only evaluates local OpenSSH configuration; it opens no network
 /// connection and never touches known_hosts.
 pub fn alias_lookup_command(config: &Config) -> Command {
+    alias_lookup_command_with(config, None)
+}
+fn alias_lookup_command_with(config: &Config, ssh_config: Option<&Path>) -> Command {
     let mut command = Command::new("ssh");
+    if let Some(path) = ssh_config {
+        command.arg("-F").arg(path);
+    }
     command.arg("-G").arg("-p").arg(config.port.to_string());
     if let Some(user) = &config.user {
         command.arg("-l").arg(user);
@@ -523,7 +533,14 @@ pub fn alias_lookup_command(config: &Config) -> Command {
 /// candidate is prechecked and OpenSSH dials each one as before prechecks.
 /// The `-G` output may describe private configuration and is never logged.
 pub fn alias_route(config: &Config) -> AliasRoute {
-    match process(alias_lookup_command(config), &[], Duration::from_secs(3)) {
+    alias_route_with(config, None)
+}
+fn alias_route_with(config: &Config, ssh_config: Option<&Path>) -> AliasRoute {
+    match process(
+        alias_lookup_command_with(config, ssh_config),
+        &[],
+        Duration::from_secs(3),
+    ) {
         Ok((Some(0), out, _)) => parse_ssh_g(&String::from_utf8_lossy(&out), &config.ssh_alias),
         _ => AliasRoute::default(),
     }
@@ -936,6 +953,113 @@ pub enum Ran {
     TimedOut(Option<Vec<u8>>),
 }
 const STDERR_GRACE: Duration = Duration::from_millis(500);
+const SSH_STDOUT_LIMIT: u64 = 8 * 1024 * 1024;
+const LOCAL_CLI_STDOUT_LIMIT: usize = 40 * 1024 * 1024;
+pub(crate) const LOCAL_METADATA_LIMIT: &str = "local_metadata_limit";
+
+/// Local CLI responses include return receipts after the bounded SSH response
+/// has been decoded. Keep this separate from the unchanged SSH wire limit.
+pub(crate) fn process_local_cli(
+    command: Command,
+    input: &[u8],
+    timeout: Duration,
+) -> Result<Finished> {
+    process_local_cli_with_limit(command, input, timeout, LOCAL_CLI_STDOUT_LIMIT)
+}
+
+fn drain_local_pipe(
+    mut pipe: impl Read,
+    limit: usize,
+    overflow: &std::sync::atomic::AtomicBool,
+) -> std::io::Result<Vec<u8>> {
+    let mut retained = Vec::new();
+    let mut chunk = [0; 8192];
+    loop {
+        let count = pipe.read(&mut chunk)?;
+        if count == 0 {
+            return Ok(retained);
+        }
+        let keep = count.min(limit.saturating_sub(retained.len()));
+        retained.extend_from_slice(&chunk[..keep]);
+        if keep != count {
+            overflow.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+fn process_local_cli_with_limit(
+    mut command: Command,
+    input: &[u8],
+    timeout: Duration,
+    limit: usize,
+) -> Result<Finished> {
+    quiet(&mut command);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|_| AppError::new(4, "Local CLI process could not be started"))?;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let bytes = input.to_vec();
+    thread::spawn(move || {
+        let _ = stdin.write_all(&bytes);
+    });
+    let overflow = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let read_overflow = overflow.clone();
+    let (output, output_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = output.send(drain_local_pipe(stdout, limit, &read_overflow));
+    });
+    let (errors, errors_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let ignored_overflow = std::sync::atomic::AtomicBool::new(false);
+        let _ = errors.send(drain_local_pipe(stderr, 64 * 1024, &ignored_overflow));
+    });
+    let limited = || {
+        AppError::new(
+            6,
+            format!(
+                "{LOCAL_METADATA_LIMIT}: local device metadata exceeds the bounded CLI response limit; reachability is unknown"
+            ),
+        )
+    };
+    let started = Instant::now();
+    let code = loop {
+        if overflow.load(std::sync::atomic::Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(limited());
+        }
+        if let Some(status) = child.try_wait()? {
+            break status.code();
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::new(4, TRANSPORT_TIMEOUT));
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    // Descendants can retain a pipe after their parent exits. Never join a
+    // pipe reader indefinitely; a complete bounded response is required.
+    let stdout = output_rx
+        .recv_timeout(STDERR_GRACE)
+        .map_err(|_| AppError::new(4, TRANSPORT_TIMEOUT))??;
+    if overflow.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(limited());
+    }
+    let stderr = errors_rx
+        .recv_timeout(STDERR_GRACE)
+        .ok()
+        .and_then(std::result::Result::ok)
+        .unwrap_or_default();
+    Ok((code, stdout, stderr))
+}
+
 pub fn process(command: Command, input: &[u8], timeout: Duration) -> Result<Finished> {
     match run_process(command, input, timeout)? {
         Ran::Exited(finished) => Ok(finished),
@@ -958,7 +1082,7 @@ pub fn run_process(mut command: Command, input: &[u8], timeout: Duration) -> Res
     let writer = thread::spawn(move || stdin.write_all(&bytes));
     let reader = thread::spawn(move || {
         let mut b = Vec::new();
-        let _ = stdout.by_ref().take(8 * 1024 * 1024).read_to_end(&mut b);
+        let _ = stdout.by_ref().take(SSH_STDOUT_LIMIT).read_to_end(&mut b);
         b
     });
     let (errors, error_output) = mpsc::channel();
@@ -1002,11 +1126,20 @@ pub fn sidecar() -> Result<PathBuf> {
 }
 impl Transport {
     pub fn new() -> Result<Self> {
-        Ok(Self::from_config(state::config()?))
+        Self::with_endpoint(state::config()?, nodes::load_endpoint()?)
+    }
+    /// Build a profile transport without changing this process's environment.
+    /// Endpoint metadata is validated before it can affect SSH arguments.
+    pub fn with_endpoint(config: Config, endpoint: EndpointSettings) -> Result<Self> {
+        nodes::validate_endpoint(&endpoint)?;
+        let mut transport = Self::from_config(config);
+        transport.endpoint = endpoint;
+        Ok(transport)
     }
     pub fn from_config(config: Config) -> Self {
         Self {
             config,
+            endpoint: EndpointSettings::default(),
             selected: "unselected".into(),
             reason: "No authenticated request yet".into(),
             host: None,
@@ -1110,6 +1243,9 @@ impl Transport {
     /// that is read for classification and never shown or stored.
     fn dial_command(&self, host: Option<&str>, remote: &str, connect_timeout: u64) -> Command {
         let mut command = Command::new("ssh");
+        if let Some(path) = &self.endpoint.ssh_config {
+            command.arg("-F").arg(path);
+        }
         command.args([
             "-T",
             "-o",
@@ -1177,6 +1313,12 @@ impl Transport {
         remote: &str,
         upload: bool,
     ) -> Option<(Command, Vec<u8>)> {
+        // Windows OpenSSH's SFTP namespace is Windows storage, while this
+        // controller and its content-addressed objects live inside WSL. Keep
+        // transfers on the existing hash-verified RPC chunk path instead.
+        if matches!(&self.endpoint.endpoint, Endpoint::WindowsWsl { .. }) {
+            return None;
+        }
         let plain = |text: &str| {
             !text.is_empty()
                 && !text.starts_with(['-', '.'])
@@ -1190,6 +1332,9 @@ impl Transport {
             return None;
         }
         let mut command = Command::new(if upload { "scp" } else { "sftp" });
+        if let Some(path) = &self.endpoint.ssh_config {
+            command.arg("-F").arg(path);
+        }
         command.current_dir(dir).args([
             "-q",
             "-o",
@@ -1254,11 +1399,64 @@ impl Transport {
     /// authenticated, for one request run off this thread. None off that route.
     pub fn rpc_command(&self) -> Option<Command> {
         let host = self.host.as_deref().filter(|_| self.selected == "ssh")?;
-        Some(self.dial_command(
-            Some(host),
-            "python3 ~/sparkdev/controller.py rpc",
-            CONNECT_TIMEOUT_SECS,
-        ))
+        Some(self.dial_command(Some(host), &self.controller_command(), CONNECT_TIMEOUT_SECS))
+    }
+    fn controller_command(&self) -> String {
+        match &self.endpoint.endpoint {
+            Endpoint::LinuxSsh => "python3 ~/sparkdev/controller.py rpc".into(),
+            Endpoint::WindowsWsl {
+                distribution,
+                user,
+                controller_path,
+            } => format!(
+                "wsl.exe --distribution {distribution} --user {user} --exec python3 {controller_path} rpc"
+            ),
+        }
+    }
+    /// Build a short, hash-bound loader for bootstrap.py from the validated
+    /// bundle on stdin. Windows OpenSSH may use cmd.exe's 8191-byte limit, so
+    /// neither source nor bundle data may enter the remote command line.
+    pub fn bootstrap_command(&self, script: &[u8]) -> Result<String> {
+        nodes::validate_endpoint(&self.endpoint)?;
+        if script.is_empty() || script.len() as u64 > crate::inventory::MIB {
+            return Err(AppError::new(
+                2,
+                "The bootstrap program is empty or exceeds its size limit",
+            ));
+        }
+        let interpreter = match &self.endpoint.endpoint {
+            Endpoint::LinuxSsh => "python3".into(),
+            Endpoint::WindowsWsl {
+                distribution, user, ..
+            } => format!("wsl.exe --distribution {distribution} --user {user} --exec python3"),
+        };
+        let hash = crate::inventory::hash(script);
+        // All shell-visible text is fixed code, validated endpoint components,
+        // or this lowercase hexadecimal hash. Explicit guards remain active
+        // even when Python assertions are disabled. The installed bootstrap
+        // receives the original bounded envelope, just as on the legacy path.
+        let loader = format!(
+            concat!(
+                "import base64,hashlib,io,json,sys;",
+                "raw=sys.stdin.buffer.read(201326593);",
+                "len(raw)<=201326592 or sys.exit('Bootstrap bundle exceeds its size limit');",
+                "bundle=json.loads(raw);",
+                "isinstance(bundle,dict) or sys.exit('Invalid bootstrap bundle');",
+                "files=bundle.get('files');",
+                "isinstance(files,dict) or sys.exit('Invalid bootstrap files');",
+                "entry=files.get('bootstrap.py');",
+                "isinstance(entry,dict) or sys.exit('Invalid bootstrap program');",
+                "data=entry.get('data');",
+                "isinstance(data,str) and 0<len(data)<=1398104 or sys.exit('Invalid bootstrap data');",
+                "script=base64.b64decode(data,validate=True);",
+                "0<len(script)<=1048576 or sys.exit('Invalid bootstrap program size');",
+                "entry.get('sha256')=='{hash}' and hashlib.sha256(script).hexdigest()=='{hash}' or sys.exit('Bootstrap program hash mismatch');",
+                "sys.stdin=io.TextIOWrapper(io.BytesIO(raw),encoding='utf-8');",
+                "exec(compile(script,'<dgxbridge-bootstrap>','exec'),{{'__name__':'__main__'}})"
+            ),
+            hash = hash
+        );
+        Ok(format!("{interpreter} -c \"{loader}\""))
     }
     pub(crate) fn decode(bytes: &[u8]) -> Result<Value> {
         let value: Value = serde_json::from_slice(bytes)
@@ -1323,7 +1521,8 @@ impl Transport {
         }
         let sticky = self.host.is_some();
         for replanned in [false, true] {
-            let plan = self.lan_plan(alias_route);
+            let ssh_config = self.endpoint.ssh_config.clone();
+            let plan = self.lan_plan(|config| alias_route_with(config, ssh_config.as_deref()));
             let hosts = self.precheck_targets(&plan);
             let port = self.config.port;
             let has_learned = plan
@@ -1800,8 +1999,9 @@ impl Transport {
         // request bytes are the same on every dial.
         let retry = Retry::rpc(&request, timeout);
         if self.config.allows_lan() && (self.selected != "iroh" || !self.config.allows_remote()) {
+            let remote = self.controller_command();
             match self.exchange(
-                "python3 ~/sparkdev/controller.py rpc",
+                &remote,
                 timeout,
                 retry,
                 |command, window| run_process(command, &input, window),
@@ -1955,11 +2155,360 @@ mod tests {
     use super::*;
     use Reach::{Closed, Open, Unchecked, Unresolved};
     use std::{ffi::OsStr, net::TcpListener};
+    #[test]
+    fn local_cli_accepts_nine_mib_json_without_expanding_the_ssh_bound() {
+        assert_eq!(SSH_STDOUT_LIMIT, 8 * 1024 * 1024);
+        assert_eq!(LOCAL_CLI_STDOUT_LIMIT, 40 * 1024 * 1024);
+        let mut response = b"{\"receipt\":\"".to_vec();
+        response.resize(9 * 1024 * 1024, b'x');
+        response.extend_from_slice(b"\"}");
+        let overflow = std::sync::atomic::AtomicBool::new(false);
+        let retained = drain_local_pipe(
+            std::io::Cursor::new(&response),
+            LOCAL_CLI_STDOUT_LIMIT,
+            &overflow,
+        )
+        .unwrap();
+        assert_eq!(retained, response);
+        assert!(!overflow.load(std::sync::atomic::Ordering::Acquire));
+        assert!(serde_json::from_slice::<Value>(&retained).is_ok());
+    }
+
+    #[test]
+    fn local_cli_reader_drains_over_forty_mib_but_retains_only_the_bound() {
+        let overflow = std::sync::atomic::AtomicBool::new(false);
+        let retained = drain_local_pipe(
+            std::io::repeat(b'x').take((LOCAL_CLI_STDOUT_LIMIT + 8192) as u64),
+            LOCAL_CLI_STDOUT_LIMIT,
+            &overflow,
+        )
+        .unwrap();
+        assert_eq!(retained.len(), LOCAL_CLI_STDOUT_LIMIT);
+        assert!(overflow.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn local_cli_overflow_kills_a_writing_child_without_waiting_for_timeout() {
+        #[cfg(windows)]
+        let command = {
+            use std::os::windows::process::CommandExt;
+            let mut command = Command::new("cmd");
+            command.raw_arg("/D /C \"for /L %i in (0,0,1) do @echo bounded-local-output-fixture\"");
+            command
+        };
+        #[cfg(not(windows))]
+        let command = {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "while :; do printf 'bounded-local-output-fixture\\n'; done",
+            ]);
+            command
+        };
+        let started = Instant::now();
+        let error =
+            process_local_cli_with_limit(command, b"", Duration::from_secs(10), 4096).unwrap_err();
+        assert_eq!(error.code, 6);
+        assert!(error.message.starts_with(LOCAL_METADATA_LIMIT));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
     fn configured(mode: &str, enabled: bool) -> Transport {
         Transport::from_config(serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":[],"host_key_alias":"test-pin","connection_mode":mode,"connection_enabled":enabled,"auto_addresses":false})).unwrap())
     }
     fn fixture(hosts: &[&str], mode: &str) -> Transport {
         Transport::from_config(serde_json::from_value(json!({"ssh_alias":"unreachable-test-fixture","hosts":hosts,"host_key_alias":"test-pin","user":"owner","connection_mode":mode,"auto_addresses":false})).unwrap())
+    }
+    fn wsl_endpoint() -> EndpointSettings {
+        EndpointSettings {
+            endpoint: Endpoint::WindowsWsl {
+                distribution: "Ubuntu-20.04".into(),
+                user: "owner".into(),
+                controller_path: "/home/owner/sparkdev/controller.py".into(),
+            },
+            ssh_config: Some(std::env::temp_dir().join("endpoint pin configuration")),
+        }
+    }
+    #[test]
+    fn legacy_transport_keeps_linux_rpc_and_direct_file_copy() {
+        let mut tr = fixture(&["192.0.2.1"], "lan-only");
+        assert_eq!(
+            tr.controller_command(),
+            "python3 ~/sparkdev/controller.py rpc"
+        );
+        tr.selected = "ssh".into();
+        tr.host = Some("192.0.2.1".into());
+        let command = tr.rpc_command().unwrap();
+        assert_eq!(
+            arguments(&command).last().map(String::as_str),
+            Some("python3 ~/sparkdev/controller.py rpc")
+        );
+        assert!(!arguments(&command).iter().any(|a| a == "-F"));
+        let (copy, _) = tr
+            .file_copy_command(
+                Path::new("."),
+                "chunk",
+                "/home/owner/sparkdev/content/chunk",
+                true,
+            )
+            .unwrap();
+        assert_eq!(copy.get_program(), OsStr::new("scp"));
+        assert!(!arguments(&copy).iter().any(|a| a == "-F"));
+    }
+    #[test]
+    fn wsl_rpc_and_alias_lookup_use_the_explicit_profile_and_strict_pin() {
+        let settings = wsl_endpoint();
+        let path = settings.ssh_config.clone().unwrap();
+        let mut config = fixture(&["192.0.2.1"], "lan-only").config;
+        config.identity_file = Some(std::env::temp_dir().join("fixture-key"));
+        let mut tr = Transport::with_endpoint(config, settings).unwrap();
+        let expected = "wsl.exe --distribution Ubuntu-20.04 --user owner --exec python3 /home/owner/sparkdev/controller.py rpc";
+        assert_eq!(tr.controller_command(), expected);
+        for host in [Some("192.0.2.1"), None] {
+            let command = tr.command(host, &tr.controller_command());
+            assert_pinned(&command, "test-pin");
+            let args = arguments(&command);
+            assert_eq!(&args[..2], ["-F", path.to_string_lossy().as_ref()]);
+            assert_eq!(args.iter().filter(|a| a.as_str() == "-F").count(), 1);
+            assert_eq!(args.last().map(String::as_str), Some(expected));
+            assert_eq!(hostname_of(&command).as_deref(), host);
+        }
+        let lookup = alias_lookup_command_with(&tr.config, Some(&path));
+        let args = arguments(&lookup);
+        assert_eq!(&args[..3], ["-F", path.to_string_lossy().as_ref(), "-G"]);
+        tr.selected = "ssh".into();
+        tr.host = Some("192.0.2.1".into());
+        let command = tr.rpc_command().unwrap();
+        assert_eq!(
+            arguments(&command).last().map(String::as_str),
+            Some(expected)
+        );
+        assert_pinned(&command, "test-pin");
+    }
+    #[test]
+    fn wsl_disables_windows_sftp_for_both_upload_and_download() {
+        let mut tr =
+            Transport::with_endpoint(fixture(&["192.0.2.1"], "lan-only").config, wsl_endpoint())
+                .unwrap();
+        tr.selected = "ssh".into();
+        tr.host = Some("192.0.2.1".into());
+        for upload in [false, true] {
+            assert!(
+                tr.file_copy_command(
+                    Path::new("."),
+                    "chunk",
+                    "/home/owner/sparkdev/content/chunk",
+                    upload,
+                )
+                .is_none()
+            );
+        }
+    }
+    #[test]
+    fn custom_linux_profile_keeps_pinned_bulk_copy() {
+        let path = std::env::temp_dir().join("linux profile with spaces");
+        let mut tr = Transport::with_endpoint(
+            fixture(&["192.0.2.1"], "lan-only").config,
+            EndpointSettings {
+                endpoint: Endpoint::LinuxSsh,
+                ssh_config: Some(path.clone()),
+            },
+        )
+        .unwrap();
+        tr.selected = "ssh".into();
+        tr.host = Some("192.0.2.1".into());
+        for upload in [false, true] {
+            let (copy, input) = tr
+                .file_copy_command(
+                    Path::new("."),
+                    "chunk",
+                    "/home/owner/sparkdev/content/chunk",
+                    upload,
+                )
+                .unwrap();
+            assert_eq!(
+                &arguments(&copy)[..2],
+                ["-F", path.to_string_lossy().as_ref()]
+            );
+            assert!(
+                arguments(&copy)
+                    .windows(2)
+                    .any(|a| a == ["-o", "StrictHostKeyChecking=yes"])
+            );
+            if !upload {
+                assert_eq!(input, b"reget /home/owner/sparkdev/content/chunk chunk\n");
+            }
+        }
+    }
+    #[test]
+    fn endpoint_shell_injection_is_rejected_before_an_ssh_command_exists() {
+        for endpoint in [
+            json!({"kind":"windows-wsl","distribution":"Ubuntu & calc.exe","user":"owner","controller_path":"/home/owner/sparkdev/controller.py"}),
+            json!({"kind":"windows-wsl","distribution":"Ubuntu-20.04","user":"owner;id","controller_path":"/home/owner/sparkdev/controller.py"}),
+            json!({"kind":"windows-wsl","distribution":"Ubuntu-20.04","user":"owner","controller_path":"/home/owner/sparkdev/controller.py;id"}),
+            json!({"kind":"windows-wsl","distribution":"Ubuntu-20.04","user":"owner","controller_path":"/home/owner/../sparkdev/controller.py"}),
+        ] {
+            let settings: EndpointSettings = serde_json::from_value(json!({
+                "endpoint":endpoint,
+                "ssh_config":null,
+            }))
+            .unwrap();
+            assert!(
+                Transport::with_endpoint(fixture(&["192.0.2.1"], "lan-only").config, settings,)
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn new_transport_defaults_only_when_endpoint_metadata_is_absent() {
+        let home = state::TestHome::new();
+        state::atomic_json(
+            &home.path.join("config.json"),
+            &fixture(&[], "lan-only").config,
+        )
+        .unwrap();
+        assert_eq!(
+            Transport::new().unwrap().controller_command(),
+            "python3 ~/sparkdev/controller.py rpc"
+        );
+        for malformed in [
+            b"not json".as_slice(),
+            br#"{"endpoint":{"kind":"unrecognized"}}"#.as_slice(),
+            br#"{"endpoint":{"kind":"linux-ssh"},"unknown":true}"#.as_slice(),
+        ] {
+            std::fs::write(home.path.join("endpoint.json"), malformed).unwrap();
+            assert!(Transport::new().is_err());
+        }
+    }
+    #[test]
+    fn validated_bootstrap_uses_a_short_hash_bound_stdin_loader() {
+        let script = b"print('fixture'); # \"quoted\" & shell text stays in the payload\n";
+        let linux = fixture(&[], "lan-only");
+        let command = linux.bootstrap_command(script).unwrap();
+        assert!(command.starts_with("python3 -c \"import base64,hashlib,io,json,sys;"));
+        assert!(command.contains(&crate::inventory::hash(script)));
+        assert!(command.contains("sys.stdin.buffer.read(201326593)"));
+        assert!(command.contains("len(raw)<=201326592 or sys.exit("));
+        assert!(command.contains("base64.b64decode(data,validate=True)"));
+        assert!(command.contains("0<len(script)<=1048576 or sys.exit("));
+        assert!(!command.contains(&STANDARD.encode(script)));
+        assert!(!command.contains("shell text"));
+        let wsl =
+            Transport::with_endpoint(fixture(&[], "lan-only").config, wsl_endpoint()).unwrap();
+        let wsl_command = wsl.bootstrap_command(script).unwrap();
+        assert_eq!(
+            wsl_command,
+            format!("wsl.exe --distribution Ubuntu-20.04 --user owner --exec {command}")
+        );
+        let largest = vec![b'x'; crate::inventory::MIB as usize];
+        let largest_command = wsl.bootstrap_command(&largest).unwrap();
+        assert_eq!(largest_command.len(), wsl_command.len());
+        assert!(largest_command.len() < 8191);
+        assert!(!largest_command.contains(&STANDARD.encode(&largest)));
+        assert!(linux.bootstrap_command(&[]).is_err());
+        assert!(
+            wsl.bootstrap_command(&vec![b'x'; crate::inventory::MIB as usize + 1])
+                .is_err()
+        );
+    }
+
+    fn bootstrap_loader_source(command: &str) -> &str {
+        command
+            .split_once(" -c \"")
+            .unwrap()
+            .1
+            .strip_suffix('"')
+            .unwrap()
+    }
+
+    fn run_bootstrap_loader(command: &str, input: &[u8]) -> Finished {
+        let mut python = Command::new(if cfg!(windows) { "python" } else { "python3" });
+        python.args(["-I", "-c", bootstrap_loader_source(command)]);
+        process(python, input, Duration::from_secs(10)).unwrap()
+    }
+
+    #[test]
+    fn bootstrap_loader_executes_only_the_pinned_script_and_restores_bundle_stdin() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("installed-fixture.txt");
+        let script = b"import json,pathlib,sys\nif __name__ != '__main__': raise RuntimeError('Wrong entrypoint')\nbundle=json.load(sys.stdin)\npathlib.Path(bundle['test_marker']).write_text('verified',encoding='utf-8')\nprint(bundle['test_value'])\n";
+        let transport = fixture(&[], "lan-only");
+        let command = transport.bootstrap_command(script).unwrap();
+        let bundle = json!({"v":1,"test_marker":marker,"test_value":"stdin restored","files":{"bootstrap.py":{"data":STANDARD.encode(script),"sha256":crate::inventory::hash(script)}}});
+        let (code, out, err) =
+            run_bootstrap_loader(&command, &serde_json::to_vec(&bundle).unwrap());
+        assert_eq!(code, Some(0), "{}", String::from_utf8_lossy(&err));
+        assert_eq!(String::from_utf8_lossy(&out).trim(), "stdin restored");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "verified");
+    }
+
+    #[test]
+    fn bootstrap_loader_refuses_tampered_and_malformed_bundles_before_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("must-not-exist.txt");
+        let script = b"import json,pathlib,sys\nbundle=json.load(sys.stdin)\npathlib.Path(bundle['test_marker']).write_text('unexpected',encoding='utf-8')\n";
+        let command = fixture(&[], "lan-only").bootstrap_command(script).unwrap();
+        let original = json!({"v":1,"test_marker":marker,"files":{"bootstrap.py":{"data":STANDARD.encode(script),"sha256":crate::inventory::hash(script)}}});
+        let mut invalid = vec![
+            b"{not json".to_vec(),
+            b"[]".to_vec(),
+            b"{}".to_vec(),
+            br#"{"files":[]}"#.to_vec(),
+            br#"{"files":{"bootstrap.py":[]}}"#.to_vec(),
+        ];
+        for data in [
+            json!(42),
+            json!(""),
+            json!("not strict base64"),
+            json!(format!("{}\n", STANDARD.encode(script))),
+            json!(STANDARD.encode(vec![b'x'; crate::inventory::MIB as usize + 1])),
+        ] {
+            let mut changed = original.clone();
+            changed["files"]["bootstrap.py"]["data"] = data;
+            invalid.push(serde_json::to_vec(&changed).unwrap());
+        }
+        let mut changed = original.clone();
+        changed["files"]["bootstrap.py"]["sha256"] = json!("different");
+        invalid.push(serde_json::to_vec(&changed).unwrap());
+        let tampered = [script.as_slice(), b"# tampered but self-consistent\n"].concat();
+        let mut changed = original;
+        changed["files"]["bootstrap.py"]["data"] = json!(STANDARD.encode(&tampered));
+        changed["files"]["bootstrap.py"]["sha256"] = json!(crate::inventory::hash(&tampered));
+        invalid.push(serde_json::to_vec(&changed).unwrap());
+        for input in invalid {
+            let (code, out, _) = run_bootstrap_loader(&command, &input);
+            assert_ne!(code, Some(0));
+            assert!(out.is_empty());
+            assert!(!marker.exists(), "Unverified bootstrap program ran");
+        }
+    }
+
+    #[test]
+    fn bootstrap_loader_bounds_the_envelope_before_json_or_script_execution() {
+        let command = fixture(&[], "lan-only")
+            .bootstrap_command(b"raise RuntimeError('Unverified script ran')\n")
+            .unwrap();
+        // Exercise the real guard without allocating a 192 MiB test payload.
+        // The fake buffer also rejects an accidental unbounded read.
+        let prefix = concat!(
+            "import sys\n",
+            "class Oversize:\n def __len__(self): return 201326593\n",
+            "class Buffer:\n def read(self,n):\n",
+            "  if n != 201326593: raise RuntimeError('Unbounded bundle read')\n",
+            "  return Oversize()\n",
+            "class Input:\n buffer=Buffer()\n",
+            "sys.stdin=Input()\n"
+        );
+        let loader = format!("{prefix}{}", bootstrap_loader_source(&command));
+        let mut python = Command::new(if cfg!(windows) { "python" } else { "python3" });
+        python.args(["-I", "-c", &loader]);
+        let (code, out, err) = process(python, &[], Duration::from_secs(10)).unwrap();
+        assert_ne!(code, Some(0));
+        assert!(out.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&err).trim(),
+            "Bootstrap bundle exceeds its size limit"
+        );
     }
     fn candidate(source: Source, host: Option<&str>) -> Candidate {
         Candidate {
