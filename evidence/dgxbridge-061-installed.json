@@ -1,0 +1,169 @@
+{
+  "ok": true,
+  "version": "0.6.1",
+  "recordedAt": "2026-10-27T13:49:58.839888+00:00",
+  "scope": "Installed Windows upgrade, preserved owner state, retained cross-context job routing, fresh CPU/CUDA execution, automatic returned-file verification and startup dispatcher. Native visual inspection and actual sign-out/reboot remain unverified.",
+  "installer": {
+    "filename": "DGXBridge_0.6.1_x64-setup.exe",
+    "bytes": 13304465,
+    "sha256": "e11f01c281c82b1f37bbd01baffaa72dd705bd43f8986e3eb33fa3144f943775",
+    "exitCode": 0,
+    "installerLaunches": 1,
+    "currentUser": true,
+    "elevated": false,
+    "unpackagedBroker": true,
+    "physicalPathsVerified": true,
+    "mode": "silent /S"
+  },
+  "installedPayload": {
+    "dgxbridge.exe": {
+      "sha256": "810cbdb74420c0765b44495bb4fcdccb19a24b0a5d43bef1e137f7d47723c1a7",
+      "bytes": 13626880
+    },
+    "bin/sparkdev.exe": {
+      "sha256": "e305a1d5e2720be79f8b8ac0e17954d27511f11bad637740c0b02f0cf7983eae",
+      "bytes": 5108736
+    },
+    "bin/sparkdev-link.exe": {
+      "sha256": "85b4fdc54b19bf82979efdc2c50664e1150a9f9af36216c13f8e2163ce8cd2e4",
+      "bytes": 13842944
+    },
+    "bin/sparkdev-return.exe": {
+      "sha256": "34b39423d41a50bcd2c5cce60c76de0fc1eca21cc672deef9f45b0ac5a7fa4fd",
+      "bytes": 1602048
+    }
+  },
+  "installedVersions": {
+    "cli": "sparkdev 0.6.1",
+    "windowsDisplayVersion": "0.6.1"
+  },
+  "preservation": {
+    "sparkConfigurationUnchanged": true,
+    "pairingIdentityUnchanged": true,
+    "namedNodesAndProfilesUnchanged": true,
+    "fleetJournalPreservedByInstaller": true,
+    "retainedRequestPathAndIdentityNotRewritten": true,
+    "sshConfigurationUnchanged": true,
+    "approvedPublicHostKeyUnchanged": true,
+    "publicHostKeyRestoreNeeded": false,
+    "sshPrivateKeysCopied": false
+  },
+  "retainedJobCompatibility": {
+    "contexts": [
+      "ordinary local-drive owner state",
+      "packaged caller using explicit literal-loopback owner state"
+    ],
+    "retainedJobs": 3,
+    "qualifiedWaitChecksPassed": 6,
+    "incrementalLogChecksPassed": 6,
+    "allPriorOutputHashesUnchanged": true,
+    "journalRewrites": false,
+    "jobs": [
+      {
+        "kind": "cpu",
+        "job": "antonpc:a892f948fe8a4bf6943050f23623c402",
+        "state": "succeeded",
+        "workloadExitCode": 0,
+        "automaticReturn": "complete",
+        "logsNextOffset": 153,
+        "returnedFileSha256": "543e086d6fc4ac9f2fe06056cffb6cfd8e9b3666db0c9456297195a168ec5071"
+      },
+      {
+        "kind": "gpu",
+        "job": "antonpc:1f3dd0a5e09749e3a57f601dce2a72a9",
+        "state": "succeeded",
+        "workloadExitCode": 0,
+        "automaticReturn": "complete",
+        "logsNextOffset": 659,
+        "returnedFileSha256": "d265637d0b7d6819a57a07c20479f3343e1510e598f0407e9e3a1363f3191dc8"
+      },
+      {
+        "kind": "ordinary_cpu",
+        "job": "antonpc:a9239e152fcd4bc8b39d51d716b8cf35",
+        "state": "succeeded",
+        "workloadExitCode": 0,
+        "automaticReturn": "complete",
+        "logsNextOffset": 125,
+        "returnedFileSha256": "7d95c843bb461846fd4bf401cbd0a6e409be2556824b755d2317df7de2d36845"
+      }
+    ]
+  },
+  "freshJobs": [
+    {
+      "kind": "cpu",
+      "job": "antonpc:eae512537c754e69b4e062190cb35c14",
+      "requestId": "061-installed-cpu-96a018fbfa2a49bc9ce2d83d2ccb245d",
+      "cacheHit": false,
+      "reservedCpu": 4,
+      "reservedMemoryGb": 8,
+      "state": "succeeded",
+      "workloadExitCode": 0,
+      "automaticReturn": "complete",
+      "returnedFileSha256": "936dc3e83570e0566e1e1bf8801224e683947d7e83205a7bf031f9bbaf817af8",
+      "logsNextOffset": 153,
+      "observed": {
+        "system": "Linux",
+        "architecture": "x86_64",
+        "verifiedSumSquares": 333328333350000
+      }
+    },
+    {
+      "kind": "gpu",
+      "job": "antonpc:198173a56a954eb3a25221c1e4c84ca2",
+      "requestId": "061-installed-gpu-d1dc14d71e354ff5b330cee95f486f4e",
+      "cacheHit": false,
+      "reservedCpu": 4,
+      "reservedMemoryGb": 8,
+      "state": "succeeded",
+      "workloadExitCode": 0,
+      "automaticReturn": "complete",
+      "returnedFileSha256": "49829ae9041a0c7b6609dcd62d0da63ed91e0bc7a49a99b4b1fb7f58da3a85c9",
+      "logsNextOffset": 658,
+      "observed": {
+        "gpu": "NVIDIA GeForce RTX 4090",
+        "device": "cuda:0",
+        "cudaVersion": "13.0",
+        "torchVersion": "2.9.0a0+50eac811a6.nv25.09",
+        "matrixShape": [
+          256,
+          256
+        ],
+        "verifiedValue": 0.001294463872909546,
+        "peakGpuBytes": 9502720
+      }
+    }
+  ],
+  "freshJobsAlsoReadableFromLoopbackCaller": true,
+  "startup": {
+    "ordinaryDispatcherExitCode": 0,
+    "loopbackDispatcherExitCode": 0,
+    "equivalentNamedStateRegistrations": 1,
+    "actualSignOutSignInOrRebootTested": false
+  },
+  "finalState": {
+    "requestsComplete": 5,
+    "activeClaims": 0
+  },
+  "installedGuiProcess": {
+    "startedFromOrdinaryLimitedContext": true,
+    "binarySha256": "810cbdb74420c0765b44495bb4fcdccb19a24b0a5d43bef1e137f7d47723c1a7",
+    "aliveAfterStartup": true,
+    "mainWindowHandleNonzero": true,
+    "responding": true,
+    "windowCheckSource": "Parent process metadata observation",
+    "nativeVisualInspection": false,
+    "currentNativeScreenshotCaptured": false,
+    "screenInputOrScreensaverChanges": false
+  },
+  "dependencyLoadChecks": {
+    "cliExitCode": 0,
+    "returnWorkerStateExitCode": 0,
+    "linkExpectedUsageExitCode": 70,
+    "missingDllReported": false
+  },
+  "limitations": [
+    "Current-version native GUI screenshot and visual/interaction acceptance were not obtained while the host screen saver remained present.",
+    "The logon dispatcher was invoked in both contexts; no physical sign-out/sign-in or reboot was performed.",
+    "These network acceptance runs used pinned LAN SSH. No new hotspot or off-LAN acceptance is claimed."
+  ]
+}
