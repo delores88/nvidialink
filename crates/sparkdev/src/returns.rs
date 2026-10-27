@@ -768,6 +768,10 @@ fn reconcile(path: &Path, record: &mut Record, rpc: &mut dyn Rpc, until: Instant
             "Spark did not acknowledge the verified result delivery",
         ));
     }
+    // An agent's commits go into its repository once, as soon as they are here.
+    if let Err(error) = crate::agents::import_result(&record.request, &record.returned) {
+        record.error = Some(error.message);
+    }
     record.complete = true;
     record.error = None;
     state::atomic_json(path, record)
@@ -805,6 +809,9 @@ pub fn decorate(value: &mut Value) -> Result<()> {
             .find(|(_, r)| r.job.as_deref() == Some(id.as_str()))
         {
             value["returned"] = json!(r.returned);
+            if let Some(agent) = r.request["request_id"].as_str().and_then(crate::agents::outcome) {
+                value["agent"] = agent;
+            }
             value["results_folder"] = json!(state::root().ok().map(|p| p.join("results").join(id)));
             value["return_status"] = json!(if r.disabled {
                 "disabled"

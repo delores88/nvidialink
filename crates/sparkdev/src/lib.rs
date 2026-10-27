@@ -1,3 +1,4 @@
+pub mod agents;
 pub mod discover;
 mod enroll;
 pub mod inventory;
@@ -159,6 +160,11 @@ enum Commands {
         #[command(subcommand)]
         command: NodeCommands,
     },
+    /// Run Claude Code or Codex on the Spark; see docs/AGENT-HOST.md.
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
     Setup {
         #[arg(long)]
         ssh_alias: String,
@@ -316,6 +322,80 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum AgentCommands {
+    /// Send one branch and a prompt to an agent on the Spark. Its commits come
+    /// back to this repository as refs/remotes/rtx/agent/<id>.
+    Run {
+        repo: PathBuf,
+        #[arg(long)]
+        tool: String,
+        #[arg(long)]
+        prompt_file: PathBuf,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long)]
+        detach: bool,
+    },
+    /// Sign a tool in on the Spark. Claude Code reads a token from stdin;
+    /// Codex starts its device sign-in as a job whose log shows the code.
+    Login { tool: String },
+    /// Which tools are signed in on the Spark.
+    Status,
+    /// Remove a tool's sign-in from the Spark.
+    Signout { tool: String },
+}
+
+/// Agent commands reuse `run` for everything that moves files or waits.
+fn agent_command(cli: &Cli, command: &AgentCommands, events: &mut dyn FnMut(&Value)) -> Result<Value> {
+    if cli.device.as_deref().is_some_and(|device| device != "spark") {
+        return Err(AppError::new(2, "Agents run on the Spark in this version"));
+    }
+    let submit = |dir: &Path, argv: Vec<String>, request_id: &str, detach: bool, events: &mut dyn FnMut(&Value)| {
+        let mut args: Vec<String> = ["--client", cli.client.name(), "--json", "run"].map(String::from).to_vec();
+        args.extend([dir.to_string_lossy().into_owned(), "--where".into(), "spark".into(), "--runtime".into(), "agent".into(),
+                     "--request-id".into(), request_id.into()]);
+        if detach {
+            args.push("--detach".into());
+        }
+        args.push("--".into());
+        args.extend(argv);
+        execute_with_events(args, events)
+    };
+    match command {
+        AgentCommands::Run { repo, tool, prompt_file, branch, request_id, detach } => {
+            let request_id = request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let staged = agents::stage(repo, tool, prompt_file, branch.as_deref(), &request_id)?;
+            let mut value = submit(&staged.dir, staged.argv, &request_id, *detach, events)?;
+            let id = agents::agent_id(&request_id);
+            value["agent"] = agents::outcome(&request_id).unwrap_or_else(|| {
+                json!({"tool":tool,"ref":format!("refs/remotes/rtx/agent/{id}"),"message":"The agent's commits are added to this repository when its results return"})
+            });
+            Ok(value)
+        }
+        AgentCommands::Login { tool } if tool == "claude" => {
+            let token = agents::read_token()?;
+            transport::Transport::new()?.rpc(json!({"v":1,"op":"agent_token","tool":"claude","token":token}))
+        }
+        AgentCommands::Login { tool } if tool == "codex" => {
+            let request_id = format!("codex-login-{}", uuid::Uuid::new_v4().simple());
+            let mut value = submit(&agents::login_dir()?, agents::argv("login", "codex"), &request_id, true, events)?;
+            value["message"] = json!("Codex's sign-in link and code appear in this job's log; approve them in a browser");
+            Ok(value)
+        }
+        AgentCommands::Login { .. } => Err(AppError::new(2, "Choose the agent tool: claude or codex")),
+        AgentCommands::Status => transport::Transport::new()?.rpc(json!({"v":1,"op":"agent_status"})),
+        AgentCommands::Signout { tool } => {
+            if !agents::TOOLS.contains(&tool.as_str()) {
+                return Err(AppError::new(2, "Choose the agent tool: claude or codex"));
+            }
+            transport::Transport::new()?.rpc(json!({"v":1,"op":"agent_signout","tool":tool}))
+        }
+    }
+}
+
+#[derive(Subcommand)]
 enum NodeCommands {
     List,
     /// Computers on this network that answer on the SSH port. Read-only.
@@ -463,6 +543,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
     match cli.command {
         Commands::Bootstrap { bundle, cuda } => provision::bootstrap(&bundle, cuda),
         Commands::Node { .. } => Err(AppError::new(2, "Node management is unavailable inside a device worker")),
+        Commands::Agent { .. } => Err(AppError::new(2, "Agent commands are unavailable inside a device worker")),
         Commands::Setup {
             ssh_alias,
             hosts,

@@ -2066,6 +2066,14 @@ pub(crate) fn dispatch(
             "This operation manages a remote device and cannot be applied to --device laptop; use laptop run, plan, status or job inspection",
         ));
     }
+    if let Commands::Agent { command } = &cli.command {
+        if matches!(command, crate::AgentCommands::Login { .. } | crate::AgentCommands::Signout { .. })
+            && !crate::explicitly_owner(raw, cli.client)
+        {
+            return Err(error("Signing agents in or out is an owner action; run it from RTXBridge or with --client human"));
+        }
+        return crate::agent_command(cli, command, events).map(Some);
+    }
     if let Commands::Node { command } = &cli.command {
         if cli.device.is_some() || cli.min_memory_gb.is_some() || cli.min_vram_gb.is_some() {
             return Err(error(

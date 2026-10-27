@@ -91,7 +91,20 @@ HASH = re.compile(r"^[0-9a-f]{64}$")
 # A queued record is canonical JSON with sorted keys, so its outstanding bytes end it.
 RECORD_TAIL = re.compile(rb'"remaining":(\d{1,20}),"v":1\}$')
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-RUNTIME_NAMES = {"rust", "node", "python", "cuda"}
+RUNTIME_NAMES = {"rust", "node", "python", "cuda", "agent"}
+# Agent jobs run only the fixed driver, for one of these tools; see agent.py.
+AGENT_TOOLS = ("claude", "codex")
+AGENT_DRIVER = "/sparkdev-agent.py"
+# A Claude Code sign-in token: printable, no spaces, bounded.
+AGENT_TOKEN = re.compile(r"^[A-Za-z0-9._~+/=-]{20,512}$")
+
+
+def agent_tool(argv):
+    """The tool of a valid agent command line; anything else is refused."""
+    if (isinstance(argv, list) and len(argv) == 4 and argv[:2] == ["python3", AGENT_DRIVER]
+            and argv[2] in ("run", "login") and argv[3] in AGENT_TOOLS and (argv[2] == "run" or argv[3] == "codex")):
+        return argv[3]
+    reject("invalid_argv", "An agent job runs only the fixed agent driver for claude or codex")
 DENY_DIRS = {".git", "target", "node_modules", "dist", "build", "__pycache__",
              ".ssh", ".aws", ".azure", ".kube", ".gnupg", ".docker", "secrets", "credentials"}
 DENY_SUFFIX = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".ppk", ".ovpn", ".tfvars"}
@@ -2129,6 +2142,11 @@ class Controller:
             if request["runtime"] not in registry:
                 reject("runtime_unavailable", "Requested runtime has not been provisioned")
             runtime = registry[request["runtime"]]
+            agent = request["runtime"] == "agent"
+            if agent:
+                if request["op"] != "run":
+                    reject("invalid_request", "Agents are run, not prepared")
+                agent_tool(args)
             if request["op"] == "prepare" and "python" not in registry:
                 reject("runtime_unavailable", "Preparation also requires the approved Python proxy runtime")
             if not self.db.execute("SELECT 1 FROM projects WHERE project=? AND manifest=?", (project, manifest_id)).fetchone():
@@ -2167,6 +2185,8 @@ class Controller:
                 memory -= PROXY_MEMORY_GB
                 scratch_mb = min(scratch_mb, int(memory * 512))
             network = self.job_network() if request["op"] == "run" else {"egress": None, "proxy_image": registry["python"]["image"]}
+            if agent and network["egress"] != "internet":
+                reject("agent_needs_internet", "Agents need job internet to reach their model service. Turn on internet for Spark jobs, then retry")
             cache_body = {"project": project, "manifest": manifest_id, "argv": args,
                           "runtime": runtime, "worker": sha(worker), "policy": 2,
                           "network": "open" if network["egress"] == "internet" else "none",
@@ -2175,7 +2195,8 @@ class Controller:
                 cache_body["egress"] = "internet"
             cache_body["outputs_policy"] = 1 if return_outputs else 0
             cache_key = sha(canonical(cache_body))
-            cached = None if request.get("no_cache") else self.db.execute(
+            # An agent's work is never reused from an earlier run.
+            cached = None if request.get("no_cache") or agent else self.db.execute(
                 "SELECT id FROM jobs WHERE cache_key=? AND egress IS ? AND state='succeeded' AND cached_from IS NULL ORDER BY finished DESC LIMIT 1", (cache_key, network["egress"])).fetchone()
             if cached and return_outputs and not self.outputs_manager.cache_ready(cached[0]):
                 cached = None
@@ -2186,6 +2207,8 @@ class Controller:
             job_root = self.root / "jobs" / job
             job_root.mkdir(mode=0o700)
             atomic_write(job_root / "worker.py", worker, 0o444)
+            if agent:
+                atomic_write(job_root / "agent.py", Path(__file__).with_name("agent.py").read_bytes(), 0o444)
             if request["op"] == "prepare":
                 for name in ("prepare.py", "proxy.py"):
                     atomic_write(job_root / name, Path(__file__).with_name(name).read_bytes(), 0o444)
@@ -2414,6 +2437,46 @@ class Controller:
             pass
         return result
 
+    def agent_home(self, tool):
+        if tool not in AGENT_TOOLS:
+            reject("invalid_request", "Unknown agent tool")
+        base = self.root / "agents"
+        for path in (base, base / tool):
+            if path.is_symlink():
+                reject("unsafe_state", "Agent sign-in folder is a symlink")
+            path.mkdir(mode=0o700, exist_ok=True)
+            if os.name == "posix" and (path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077):
+                reject("unsafe_state", "Agent sign-in folder is not private")
+        return base / tool
+
+    def agent_signed_in(self, tool):
+        home = self.agent_home(tool)
+        return (home / "claude-oauth-token").is_file() if tool == "claude" else (home / ".codex" / "auth.json").is_file()
+
+    def agent_status(self, request):
+        fields(request, ("v", "op"))
+        return {"agents": {tool: {"signed_in": self.agent_signed_in(tool)} for tool in AGENT_TOOLS}}
+
+    def agent_token(self, request):
+        """Save Claude Code's sign-in token. It is never logged, audited or returned."""
+        fields(request, ("v", "op", "tool", "token"))
+        if request["tool"] != "claude":
+            reject("invalid_request", "Only Claude Code signs in with a pasted token; Codex signs in on the device")
+        token = request["token"]
+        if not isinstance(token, str) or not AGENT_TOKEN.match(token.strip()):
+            reject("invalid_token", "That doesn't look like a Claude Code token. Run `claude setup-token` and paste what it prints")
+        atomic_write(self.agent_home("claude") / "claude-oauth-token", token.strip().encode(), 0o600)
+        self.audit("agent_signed_in", tool="claude")
+        return {"agents": {"claude": {"signed_in": True}}}
+
+    def agent_signout(self, request):
+        fields(request, ("v", "op", "tool"))
+        home = self.agent_home(request["tool"])
+        shutil.rmtree(home)
+        self.agent_home(request["tool"])
+        self.audit("agent_signed_out", tool=request["tool"])
+        return {"agents": {request["tool"]: {"signed_in": False}}}
+
     def rpc(self, request, started=None):
         # A sync's background wait is bounded from process start when main() passes it.
         self.started = self.clock() if started is None else started
@@ -2430,7 +2493,8 @@ class Controller:
                 return {"ok": True, **self.download_cache.downloads(request)}
             if op in {"outputs", "output_chunk", "output_locate", "outputs_ack"}:
                 return {"ok": True, **getattr(self.outputs_manager, op)(request)}
-            if op not in {"put", "put_many", "put_pack", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources", "lan_routes"}:
+            if op not in {"put", "put_many", "put_pack", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources", "lan_routes",
+                          "agent_status", "agent_token", "agent_signout"}:
                 reject("unknown_operation", "Unsupported operation")
             return {"ok": True, **getattr(self, op)(request)}
         except Rejected as error:
@@ -2595,6 +2659,12 @@ class Controller:
                 args += ["--env", name + "=http://sparkdev-proxy:3128"]
             for value in ("CARGO_NET_OFFLINE=false", "npm_config_offline=false", "PIP_NO_INDEX=0", "NO_PROXY=", "no_proxy="):
                 args += ["--env", value]
+        if row["runtime"] == "agent":
+            tool = agent_tool(request["argv"])
+            home = self.agent_home(tool)
+            args += ["--mount", f"type=bind,src={root / 'agent.py'},dst={AGENT_DRIVER},readonly",
+                     "--mount", f"type=bind,src={home},dst=/sparkdev-agent-home", "--env", "HOME=/sparkdev-agent-home",
+                     "--label", "com.delores.sparkdev.agent=" + tool]
         args += self.download_cache.create_args(row, preparing=preparing, network_open=online)
         self.services.create_args(row, args)
         self.system_packages.create_args(row, args)

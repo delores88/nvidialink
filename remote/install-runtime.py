@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 
-from bootstrap import RUNTIME_SOURCES, bounded_json, ensure_runtime_idle, runtime_architecture, runtime_attempt_path, runtime_current, runtime_lock, runtime_source_digest, runtime_sources, write, write_runtime_attempt
+from bootstrap import AGENT_SOURCES, RUNTIME_SOURCES, bounded_json, ensure_runtime_idle, runtime_architecture, runtime_attempt_path, runtime_current, runtime_lock, runtime_source_digest, runtime_sources, write, write_runtime_attempt
 
 BASE = "rust:1.98.1-slim-trixie@sha256:441452f8033b93f69dce3a3ff5c821c411f0a580723e6343932fc34a1b03ba5d"
 AMD64_BASE = "rust:1.98.1-slim-trixie@sha256:fce83543909cd5409924a61ce296bdf5bab0fca37f004c0f6c8ef6f4a37bbc59"
@@ -33,7 +33,7 @@ def merge_registry(previous, updates):
         raise ValueError("Invalid existing runtime registry")
     entries = {**previous["runtimes"], **updates}
     for name, entry in entries.items():
-        if name not in ("rust", "node", "python", "cuda") or not isinstance(entry, dict):
+        if name not in ("rust", "node", "python", "cuda", "agent") or not isinstance(entry, dict):
             raise ValueError("Unknown runtime registration")
         if set(entry) - {"image", "provenance", "gpu"} or not re.fullmatch(r"sha256:[0-9a-f]{64}", entry.get("image", "")):
             raise ValueError("Runtime image must be an immutable digest")
@@ -102,6 +102,7 @@ def build_runtime(root, expected=None, attempt_id=None):
     if runtime_current(root, source_digest):
         if attempt_id:
             write_runtime_attempt(root, attempt_id, {**bounded_json(root / "runtime-build.json"), "reused": True})
+        ensure_agent(root, architecture)
         return 0
     receipt = {"started_at": time.time(), "state": "building", "base": base, "tag": "sparkdev/cpu:1.98.1-" + architecture,
                "architecture": architecture, "source_digest": source_digest}
@@ -130,6 +131,7 @@ def build_runtime(root, expected=None, attempt_id=None):
                                          "--entrypoint", "/bin/sh", image_id, "-c", "rustc --version && git --version && node --version && python3 --version && python3 -c 'import io, site, numpy, PIL; from PIL import Image; assert site.ENABLE_USER_SITE; assert PIL.__version__ == \"13.0.0\"; b=io.BytesIO(); Image.new(\"RGB\",(2,2),(1,2,3)).save(b,format=\"PNG\"); b.seek(0); im=Image.open(b); im.load(); assert im.resize((1,1)).getpixel((0,0)) == (1,2,3); print(numpy.__version__, PIL.__version__, \"PNG decode/resize verified\")'"])
         provenance = "sparkdev CPU Dockerfile; architecture " + architecture + "; source " + source_digest + "; base " + base
         register_runtimes(root, {name: {"image": image_id, "provenance": provenance} for name in ("rust", "node", "python")})
+        receipt["agent"] = ensure_agent(root, architecture)
         receipt.update(state="succeeded", image=image_id, probe=probe.decode(), probe_sha256=hashlib.sha256(probe).hexdigest(), finished_at=time.time(), exit_code=0)
         publish_runtime_status(root, receipt, attempt_id)
         print(json.dumps(receipt))
@@ -138,6 +140,53 @@ def build_runtime(root, expected=None, attempt_id=None):
         publish_runtime_status(root, receipt, attempt_id)
         return 1
     return 0
+
+
+def ensure_agent(root, architecture):
+    """The agent runtime extends the CPU image, from its own sources and digest.
+    It is built only when the bundle carries it and its sources changed, and its
+    failure (for example, the npm registry being unreachable) leaves the CPU
+    runtime untouched. Its outcome is written to runtime-agent-build.json."""
+    if not all((root / name).is_file() for name in AGENT_SOURCES):
+        return {"state": "not_in_bundle"}
+    try:
+        digest, context = runtime_inputs(root, None, AGENT_SOURCES)
+        registry = bounded_json(root / "runtimes.json") if (root / "runtimes.json").exists() else {}
+        entry = registry.get("runtimes", {}).get("agent")
+        if entry and entry.get("provenance", "").endswith("source " + digest):
+            present = subprocess.run(["docker", "image", "inspect", entry["image"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            if present.returncode == 0:
+                return {"state": "current", "image": entry["image"]}
+        env = os.environ.copy()
+        env["DOCKER_BUILDKIT"] = "0"
+        result = build_agent(root, context, "sparkdev/cpu:1.98.1-" + architecture, architecture, digest, env)
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        result = {"state": "failed", "error": "agent_runtime_inputs_unavailable"}
+    atomic(root / "runtime-agent-build.json", {**result, "finished_at": time.time()})
+    return result
+
+
+def build_agent(root, context, base_tag, architecture, source_digest, env):
+    tag = "sparkdev/agent:1.98.1-" + architecture
+    try:
+        with (root / "runtime-agent-build.log").open("wb") as log:
+            code = subprocess.run(["docker", "build", "--cpu-period", "100000", "--cpu-quota", "200000", "--memory", "2g", "--memory-swap", "2g",
+                                   "--file", str(context / "Dockerfile.agent"), "--build-arg", "BASE=" + base_tag, "--tag", tag, str(context)],
+                                  stdout=log, stderr=subprocess.STDOUT, env=env, check=False).returncode
+        if code:
+            return {"state": "failed", "exit_code": code}
+        image = json.loads(subprocess.check_output(["docker", "image", "inspect", tag]))[0]
+        image_id = image["Id"]
+        if image.get("Architecture") != architecture or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            raise ValueError("Unexpected agent image identity")
+        probe = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+                                         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000",
+                                         "--cpus", "1", "--memory", "1g", "--memory-swap", "1g", "--pids-limit", "512", "--tmpfs", "/tmp",
+                                         "--env", "HOME=/tmp", "--entrypoint", "/bin/sh", image_id, "-c", "claude --version && codex --version && git --version"])
+        register_runtimes(root, {"agent": {"image": image_id, "provenance": "sparkdev agent Dockerfile; architecture " + architecture + "; source " + source_digest}})
+        return {"state": "succeeded", "image": image_id, "probe": probe.decode(errors="replace")[:512]}
+    except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError):
+        return {"state": "failed", "error": "agent_runtime_verification_failed"}
 
 
 def main(argv=None):
