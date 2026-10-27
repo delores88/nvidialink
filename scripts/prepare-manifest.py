@@ -602,7 +602,7 @@ def release_disclosures(document, version):
         return
     document['name'] = 'RTXBridge'
     document['privacy']['telemetry'] = ('No application telemetry or embedded model calls. SSH private keys remain in owner-local OpenSSH files protected by filesystem permissions. The Windows paired-device identity uses user-scoped DPAPI; generated SSH key files are not DPAPI-encrypted by the bridge. QR tokens and approval codes are transient.')
-    document['permissions']['credentials'].extend([
+    document['permissions'].setdefault('credentials', []).extend([
         'For optional owner enrollment, pass the password via local stdin and the SSH helper environment; never save it in configuration, argv or logs.',
         'Retain generated per-computer OpenSSH private keys with owner-local file permissions, public keys, confirmed host pins and SSH profiles until removed.'
     ])
