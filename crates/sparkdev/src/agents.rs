@@ -116,6 +116,8 @@ pub fn read_token() -> Result<String> {
 }
 
 fn token_from(text: &str) -> Result<String> {
+    // PowerShell can put a byte-order mark in front of what it pipes.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let token = if text.trim_start().starts_with('{') {
         serde_json::from_str::<Value>(text)
             .ok()
@@ -182,6 +184,7 @@ mod tests {
     fn tokens_arrive_as_one_line_or_the_apps_json() {
         assert_eq!(token_from("sk-ant-oat01-abc\r\n").unwrap(), "sk-ant-oat01-abc");
         assert_eq!(token_from("{\"token\":\"sk-ant-oat01-abc\"}").unwrap(), "sk-ant-oat01-abc");
+        assert_eq!(token_from("\u{feff}sk-ant-oat01-abc\r\n").unwrap(), "sk-ant-oat01-abc");
         for bad in ["", "two words", "{\"tok\":\"x\"}", &"x".repeat(513)] {
             assert!(token_from(bad).is_err(), "{bad:?}");
         }
