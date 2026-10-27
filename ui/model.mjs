@@ -65,6 +65,17 @@ export function jobsFrom(observation) {
   const records = [...(observation?.shared_board || observation?.jobs || []), ...(Array.isArray(local) ? local : observation?.laptop_jobs || [])];
   return [...new Map(records.map(job=>[job.job || job.job_id,job])).values()].sort((a,b)=>(Number(b.created_at)||0)-(Number(a.created_at)||0));
 }
+export function reconcileObservedJobs(previous,observation) {
+  const failed=new Set((Array.isArray(observation?.devices)?observation.devices:[])
+    .filter(device=>typeof device?.id==='string'&&!['spark','laptop'].includes(device.id)&&(device.error||device.reachable!==true))
+    .map(device=>device.id));
+  const retained=(Array.isArray(previous)?previous:[])
+    .filter(job=>failed.has(jobRunner(job))&&jobId(job).startsWith(`${jobRunner(job)}:`))
+    .map(job=>({...job,ui_observation_stale:true}));
+  // Fresh records win by the full qualified ID. Successfully observed devices
+  // replace their history, so deleted jobs do not survive a healthy refresh.
+  return jobsFrom({jobs:[...retained,...jobsFrom(observation)]});
+}
 export function jobPage(jobs, requested, pageSize=6) {
   const pages = Math.max(1,Math.ceil(jobs.length/pageSize));
   const page = Math.max(0,Math.min(requested,pages-1));
@@ -119,7 +130,7 @@ export function agentConfiguration(agent, path, stateRoot='') {
   const root=cleanReference(stateRoot);
   return agent==='claude' ? JSON.stringify({mcpServers:{sparkdev:{type:'stdio',command,args:['--client','claude','mcp'],...(root?{env:{SPARKDEV_HOME:root}}:{})}}},null,2) : `[mcp_servers.sparkdev]\ncommand = ${JSON.stringify(command)}\nargs = ["--client", "codex", "mcp"]\ntool_timeout_sec = 90${root?`\n\n[mcp_servers.sparkdev.env]\nSPARKDEV_HOME = ${JSON.stringify(root)}`:''}`;
 }
-export function agentPrompt({agent,path,stateRoot,config,connection,limits}) {
+export function agentPrompt({agent,path,stateRoot,config,connection,limits,computers=[]}) {
   const client=agent==='claude'?'claude':'codex';
   const exe=cleanReference(path) || 'sparkdev';
   const references=[];
@@ -131,21 +142,23 @@ export function agentPrompt({agent,path,stateRoot,config,connection,limits}) {
   if(Number.isInteger(config?.port))references.push(`SSH port: ${config.port}`);
   if(cleanReference(stateRoot))references.push(`Set SPARKDEV_HOME explicitly to this owner-state reference: ${cleanReference(stateRoot)}. Before configuring or running work, verify returned state diagnostics resolve to this physical owner state. Packaged Codex processes may redirect AppData into Codex LocalCache; stop and report that mismatch rather than creating or migrating another identity.`);
   const resourceLines=limits ? RESOURCE_FIELDS.filter(([key])=>Number.isSafeInteger(limits[key])).map(([key,label,unit])=>`${label}: ${limits[key]} ${unit}`) : ['Spark resource policy has not been read in this app session.'];
+  const profiles=namedComputers(null,computers);
+  const computerInstructions=profiles.length?`\nCOMPUTERS: ${profiles.slice(0,4).map(node=>`${node.id}${node.enabled?'':' (disabled)'}`).join(', ')}${profiles.length>4?'; devices lists the rest':''}. Default auto placement considers compatible available computers. Use global --device ID to choose one, or --device auto. Retain node:JOB IDs exactly for wait/logs/cancel; retries stay on the original computer.\n`:'';
   return `Use DGXBridge for this project. You are ${client==='claude'?'Claude Code':'Codex'}; use client label ${client}.
 
 Installed CLI: ${exe}
 Connection policy: ${MODE_LABELS[configMode(config)]}. Enabled: ${config?.connection_enabled===false?'no':'yes'}.
 Last observed route: ${connection?.route||'not checked'}. Snapshot from when this was copied; devices shows the live state. A paired route does not prove hotspot or relay use.
-${references.join('\n')}
+${references.join('\n')}${computerInstructions}
 
-CHECK: --client ${client} --json devices, then status --all. Check reachability, job service, limits, preparable_runtimes, internet, downloads and upload_limits. Missing fields mean unavailable; old bridges without internet/upload limits use offline jobs and the old 512 MiB per-file / 8 GiB upload limits. Both managed runners need the Spark scheduler. Report failure; never bypass it.
+CHECK: --client ${client} --json devices, then status --all. Check reachability, job service, limits, preparable_runtimes, internet, downloads and upload_limits. Missing fields mean unavailable; old bridges without internet/upload limits use offline jobs and the old 512 MiB per-file / 8 GiB upload limits. ${profiles.length?'Each selected remote computer needs its own healthy scheduler. Native laptop admission still needs the Spark scheduler.':'Both managed runners need the Spark scheduler.'} Report failure; never bypass it.
 ${resourceLines.join('\n')}
 
 RUN: --client ${client} --json run PROJECT_DIR --where auto --detach --request-id RETAINED_ID -- COMMAND ARGS. Save ID and exact arguments before submitting. Reuse the same ID only to recover an uncertain submission or materializing response. Use a NEW ID to rerun a failed job. Retain job ID; poll wait JOB_ID --timeout 20 and logs JOB_ID --since OFFSET, continuing from next_offset. Inspect final workload exit_code. Use --argv-json FILE for exact arguments. --no-cache reruns work but keeps saved downloads.
 
 RESULTS: New and changed /work files return automatically to the source project; /sparkdev-output files return to results_folder. No fetch command is needed. Keep polling while state is returning; terminal wait means hash-verified local delivery. Inspect returned and return_error. Local edits stay intact and Spark conflicts land beside them. The background worker continues after this agent exits or reconnects. --no-return is the explicit opt-out. outputs JOB_ID reports quota and retention.
 
-WHERE: Offload Linux builds, media, render, ML and Python work to Spark by default; Windows/MSVC, installers and Windows tests stay on laptop. ffmpeg and blender select the Spark GPU runtime automatically; pass --runtime cuda for GPU Python. Native laptop jobs have no enforced CPU or memory cap. Local Cargo must use the saved build gate unchanged. Do not split one compile across OS/architecture.
+WHERE: Offload Linux builds, media, render, ML and Python work to ${profiles.length?'an eligible saved computer':'Spark'} by default; Windows/MSVC, installers and Windows tests stay on laptop. ffmpeg and blender select the ${profiles.length?'GPU':'Spark GPU'} runtime automatically; pass --runtime cuda for GPU Python. Native laptop jobs have no enforced CPU or memory cap. Local Cargo must use the saved build gate unchanged. Do not split one compile across OS/architecture.
 
 DEPENDENCIES: prepare PROJECT_DIR --runtime rust|node|python before offline work. Use cuda preparation only if preparable_runtimes lists it; requirements-cuda.lock excludes torch, triton and nvidia-* wheels. For system tools, resolve a sparkdev-system.lock with /sparkdev-system.py lock in a fresh scratch project using the same runtime; then prepare the target project to build its pinned derived image. See docs/CLI.md. Run remains non-root. On insufficient_disk report it and delete nothing.
 
@@ -166,8 +179,58 @@ export const isActiveJob = job => ACTIVE_STATES.includes(job?.state);
 export const jobId = job => String(job?.job || job?.job_id || '');
 export const clientLabel = client => CLIENT_LABELS[client] || (client ? String(client) : 'Unknown');
 export function jobRunner(job) {
+  if (typeof job?.device==='string' && job.device && !['spark','laptop'].includes(job.device)) return job.device;
   const where = job?.where || job?.placement;
   return where === 'laptop' || (!where && jobId(job).startsWith('laptop-')) ? 'laptop' : 'spark';
+}
+export function jobRunnerLabel(job, detail=false) {
+  const runner=jobRunner(job);
+  return runner==='laptop'?(detail?'This laptop':'Laptop'):runner==='spark'?'Spark':cleanReference(job?.device_label).trim()||runner;
+}
+export function namedComputers(observation,nodes=[],{stale=false}={}) {
+  const observed=Array.isArray(observation?.devices)?observation.devices:[];
+  const saved=Array.isArray(nodes)?nodes:[];
+  const ids=[...new Set([...saved,...observed].map(item=>item?.id).filter(id=>typeof id==='string'&&/^[a-z][a-z0-9-]{0,31}$/.test(id)&&!['spark','laptop','auto'].includes(id)))];
+  return ids.map(id=>{
+    const settings=saved.find(node=>node.id===id)||{},device=observed.find(node=>node.id===id)||{};
+    const enabled=settings.enabled??device.enabled??true,label=cleanReference(settings.label||device.label).trim()||id;
+    const detailsLimited=device.availability==='observation_limited'||device.error?.kind==='local_metadata_limit';
+    const connected=!stale&&!detailsLimited&&device.reachable===true&&device.transport?.authenticated===true;
+    const runtimeObserved=Array.isArray(device.runtimes),hasRuntime=runtimeObserved&&device.runtimes.some(runtime=>typeof runtime==='string'&&runtime.length>0);
+    const status=!enabled?'Disabled':stale?'Last seen':detailsLimited?'Details unavailable':connected?(device.scheduler?.healthy===true?(hasRuntime?'Ready for jobs':runtimeObserved?'Tools preparing':'Setup needed'):'Connected'):device.availability==='unconfigured'?'Setup needed':device.error||device.availability==='unreachable'?'Offline':'Not checked';
+    const hardware=device.hardware||{},capabilities=device.capabilities||{},endpoint=settings.endpoint||device.endpoint||{};
+    const facts=[['Connection',connected?'Verified SSH connection':status],['System',device.architecture||capabilities.architecture||hardware.architecture||'Not observed']];
+    if(Number.isFinite(hardware.cpu_count))facts.push(['CPU',`${hardware.cpu_count} logical CPUs`]);
+    if(Number.isFinite(hardware.memory_gb))facts.push(['System memory',`${hardware.memory_gb} GiB`]);
+    const gpu=capabilities.gpu,firstGpu=gpu?.observed===true&&Array.isArray(gpu.devices)?gpu.devices[0]:null;
+    if(firstGpu){facts.push(['GPU',cleanReference(firstGpu.name)||'Observed GPU']);facts.push(['GPU memory',gpu.memory_model==='unified'?'Shared system memory':Number.isFinite(firstGpu.total_memory_bytes)?`${formatGiB(firstGpu.total_memory_bytes)} dedicated`:'Not reported']);}
+    if(endpoint.kind==='windows-wsl')facts.push(['Linux environment',endpoint.distribution||'WSL']);
+    return {id,label,enabled,connected,status,facts,endpoint,error:detailsLimited?'Local job history is too large to display. This limit does not indicate a network connection failure.':cleanReference(device.error?.message),priority:settings.priority??device.priority??0};
+  });
+}
+export function nodeAddArgs(form) {
+  const get=name=>String(form.get(name)||'').trim();
+  const id=get('id'),label=get('label')||id;
+  if(!/^[a-z][a-z0-9-]{0,31}$/.test(id)||id.endsWith('-')||id.includes('--')||['spark','laptop','auto'].includes(id))throw new Error('Choose a short lowercase computer ID, starting with a letter. Spark, laptop and auto are reserved.');
+  if(label.length>96||/[\u0000-\u001f\u007f]/.test(label))throw new Error('Computer name must be at most 96 characters without control characters.');
+  const args=['node','add',id,'--label',label];
+  for(const [name,flag,required] of [['ssh_alias','--ssh-alias',true],['host_key_alias','--host-key-alias',true],['host','--host',false],['user','--user',false],['identity_file','--identity-file',false],['ssh_config','--ssh-config',false]]){
+    const value=get(name);if(required&&!value)throw new Error(name==='ssh_alias'?'Enter the saved SSH alias.':'Enter the pinned known-host alias.');
+    if(/[\u0000\r\n]/.test(value))throw new Error('Connection references must each fit on one line.');
+    if(value)args.push(flag,value);
+  }
+  const port=Number(get('port')||22),priority=Number(get('priority')||0);
+  if(!Number.isInteger(port)||port<1||port>65535)throw new Error('SSH port must be between 1 and 65535.');
+  if(!Number.isInteger(priority)||priority < -1000||priority>1000)throw new Error('Priority must be between -1000 and 1000.');
+  args.push('--port',String(port),'--priority',String(priority));
+  if(get('endpoint')==='windows-wsl'){
+    const distribution=get('distribution'),user=get('wsl_user'),path=get('controller_path');
+    if(!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(distribution))throw new Error('Enter the existing WSL distribution name.');
+    if(!/^[a-z_][a-z0-9_-]{0,31}$/.test(user))throw new Error('Enter the Linux account name inside WSL.');
+    if(!path.startsWith('/')||path.length>512||!path.endsWith('/sparkdev/controller.py')||path.slice(1).split('/').some(part=>!part||part==='.'||part==='..'||!/^[a-zA-Z0-9._-]+$/.test(part)))throw new Error('Enter the absolute Linux path ending in /sparkdev/controller.py.');
+    args.push('--wsl-distro',distribution,'--wsl-user',user,'--controller-path',path);
+  }
+  return args;
 }
 export function jobOutcome(job) {
   if (job?.cache_hit) return {kind:'cached',label:'Reused result'};
@@ -249,14 +312,15 @@ export function laptopLink(observation) {
   const note=slow?`This laptop’s network link is slow and may limit uploads. ${cleanReference(report.usb_advice)||'A faster wired adapter or Wi-Fi connection may help.'} `:'';
   return {label:`${adapter.kind==='wired'?(adapter.usb_adapter_hint?'USB Ethernet':'Wired'):adapter.kind==='wifi'?'Wi-Fi':'Network'}${rate?` · ${rate>=1000?`${rate/1000} Gbps`:`${rate} Mbps`} link rate`:''}`,slow,note:note+'This is the laptop adapter’s link rate, not measured upload speed.'};
 }
-export function filterJobs(jobs, {filter='all', query=''} = {}) {
+export function filterJobs(jobs, {filter='all', query='', device=''} = {}) {
   const needle = String(query).trim().toLowerCase();
   return jobs.filter(job => {
     if (filter === 'active' && !isActiveJob(job)) return false;
     if (filter === 'failed' && jobOutcome(job).kind !== 'fail') return false;
     if ((filter === 'spark' || filter === 'laptop') && jobRunner(job) !== filter) return false;
+    if (device && jobRunner(job)!==device) return false;
     if (!needle) return true;
-    return [jobId(job), job.client, clientLabel(job.client), job.runtime, job.name, job.kind, job.state, job.request_id, jobRunner(job)].some(value => String(value || '').toLowerCase().includes(needle));
+    return [jobId(job), job.client, clientLabel(job.client), job.runtime, job.name, job.kind, job.state, job.request_id, jobRunner(job), jobRunnerLabel(job)].some(value => String(value || '').toLowerCase().includes(needle));
   });
 }
 const total = (jobs, key, fallback) => Math.round(jobs.reduce((sum, job) => sum + (Number(job[key] ?? job[fallback]) || 0), 0) * 100) / 100;
@@ -271,6 +335,7 @@ export function boardSummary(observation, jobs) {
     sparkRunning: sparkRunning.length,
     sparkQueued: active.filter(job => jobRunner(job) === 'spark' && job.state === 'queued').length,
     laptopActive: active.filter(job => jobRunner(job) === 'laptop').length,
+    remoteActive: active.filter(job => !['spark','laptop'].includes(jobRunner(job))).length,
     laptopLimit: Number.isSafeInteger(laptop.managed_job_limit) ? laptop.managed_job_limit : null,
     laptopThreads: Number.isSafeInteger(laptop.logical_parallelism) ? laptop.logical_parallelism : null,
     reservedCpu: total(sparkRunning, 'reserved_cpu', 'cpu'),
