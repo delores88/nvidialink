@@ -185,8 +185,8 @@ function renderComputerFilter(){
   if(!options.some(([id])=>id===jobDevice))jobDevice='';select.value=jobDevice;
 }
 
-// Adding a device, or connecting the Spark: choose it, sign in once, confirm its identity.
-const wizard={mode:'device',step:1,id:'',name:'',host:'',user:'',publicKey:'',probe:null,busy:false,done:false,autoName:false};
+// Verify the host identity before a password can authorize this laptop's key.
+const wizard={mode:'device',step:1,id:'',name:'',host:'',user:'',publicKey:'',fingerprint:'',probe:null,busy:false,done:false,autoName:false};
 function wizardOs(){return document.querySelector('input[name="wizard-os"]:checked')?.value||'windows';}
 function renderWizardCommand(){
   if(!wizard.publicKey)return;const os=wizardOs();$('wizard-command').textContent=deviceSetupCommand(os,wizard.publicKey);
@@ -216,8 +216,9 @@ async function scanForDevices(){
   }catch(error){note.textContent=`Couldn't look around this network (${failure(error)}). Type the computer's name below.`;}
 }
 function openWizard(mode='device'){
-  Object.assign(wizard,{mode,step:1,id:'',name:'',host:'',user:'',publicKey:'',probe:null,busy:false,done:false,autoName:false});
+  Object.assign(wizard,{mode,step:1,id:'',name:'',host:'',user:'',publicKey:'',fingerprint:'',probe:null,busy:false,done:false,autoName:false});
   for(const id of ['wizard-host','wizard-name','wizard-user','wizard-password'])$(id).value='';
+  $('wizard-confirm-fingerprint').checked=false;$('wizard-password').disabled=true;$('wizard-signin-fingerprint').textContent='';
   const spark=mode==='spark';$('wizard-title').textContent=spark?'Connect your Spark':'Add a device';$('wizard-name-field').hidden=spark;$('wizard-manual').open=false;
   $('wizard-choose-intro').textContent=spark?'Pick your Spark from the computers RTXBridge found on your network, or type its name or address.':'Pick a computer RTXBridge found on your network, or type its name.';
   if(spark){$('wizard-name').value='Spark';$('wizard-user').value=savedConfig?.user||'';}
@@ -238,19 +239,25 @@ async function wizardNext(){
       if(!host)throw new Error("Enter the computer's name or address, or pick one above.");
       wizard.host=host;wizard.name=wizard.mode==='spark'?'your Spark':name;wizard.id=wizard.mode==='spark'?'spark':deviceSlug(name,currentDevices().map(row=>row.id));
       wizard.publicKey=(await command(['node','key',wizard.id])).public_key;renderWizardCommand();
+      const identity=await command(['node','fingerprint','--host',wizard.host]);
+      if(!identity.fingerprint)throw new Error("The device's identity could not be read; no password was sent.");
+      wizard.fingerprint=identity.fingerprint;$('wizard-signin-fingerprint').textContent=wizard.fingerprint;
+      $('wizard-confirm-fingerprint').checked=false;$('wizard-password').value='';$('wizard-password').disabled=true;
       $('wizard-signin-intro').textContent=`Sign in to ${wizard.name} once with its account and password.`;
       showWizardStep(2);$('wizard-user').focus();
     }else if(wizard.step===2||(wizard.step===3&&probeSummary(wizard.probe)?.needsWsl)){
       const user=$('wizard-user').value.trim(),password=$('wizard-password').value;
       if(!user)throw new Error(`Enter the account you sign in to ${wizard.name} with.`);
+      if(!$('wizard-confirm-fingerprint').checked||!wizard.fingerprint)throw new Error('Compare the fingerprint with the device and confirm it before sending a password or continuing.');
       if(wizard.step===2&&!password&&!$('wizard-manual').open)throw new Error(`Enter ${wizard.name}'s password, or use the setup command under "Can't use a password?".`);
       wizard.user=user;
       if(wizard.step===2&&password){
         wizardSay(`Signing in to ${wizard.name}…`);
-        try{requireOk(await invoke('sign_in',{id:wizard.id,host:wizard.host,user,port:22,password}));}finally{$('wizard-password').value='';}
+        try{requireOk(await invoke('sign_in',{id:wizard.id,host:wizard.host,user,port:22,fingerprint:wizard.fingerprint,password}));}finally{$('wizard-password').value='';}
       }
       wizardSay(`Checking ${wizard.name}…`);
       const probe=await command(['node','probe',wizard.id,'--host',wizard.host,'--user',user]);
+      if(probe.fingerprint!==wizard.fingerprint){$('wizard-confirm-fingerprint').checked=false;$('wizard-password').disabled=true;throw new Error('The device identity changed. Go back and verify its fingerprint again; the new identity was not trusted.');}
       if(probe.login!=='ok'){wizardSay(probe.message||`${wizard.name} didn't let this laptop in yet.`,true);return;}
       if(wizard.mode==='spark'&&probe.os!=='linux'){wizardSay(`That computer runs ${probe.os==='windows'?'Windows':'something other than Linux'}, so it isn't a Spark. Add it as a device instead.`,true);return;}
       wizard.probe=probe;renderWizardFound();showWizardStep(3);wizardSay('');
@@ -284,8 +291,9 @@ $('add-device').addEventListener('click',()=>openWizard('device'));
 for(const id of ['connect-spark','ssh-use-password'])$(id).addEventListener('click',()=>openWizard('spark'));
 document.querySelectorAll('input[name="wizard-os"]').forEach(input=>input.addEventListener('change',renderWizardCommand));
 $('wizard-password').addEventListener('input',()=>showWizardStep(wizard.step));$('wizard-manual').addEventListener('toggle',()=>showWizardStep(wizard.step));
+$('wizard-confirm-fingerprint').addEventListener('change',()=>{const confirmed=$('wizard-confirm-fingerprint').checked;$('wizard-password').disabled=!confirmed;if(!confirmed)$('wizard-password').value='';});
 $('wizard-password').addEventListener('keydown',event=>{if(event.key==='Enter')wizardNext();});
-$('add-device-dialog').addEventListener('close',()=>{$('wizard-password').value='';});
+$('add-device-dialog').addEventListener('close',()=>{$('wizard-password').value='';$('wizard-password').disabled=true;$('wizard-confirm-fingerprint').checked=false;});
 $('wizard-next').addEventListener('click',wizardNext);
 $('wizard-back').addEventListener('click',()=>{if(!wizard.busy&&wizard.step>1){wizardSay('');showWizardStep(wizard.step-1);}});
 $('close-wizard').addEventListener('click',()=>$('add-device-dialog').close());

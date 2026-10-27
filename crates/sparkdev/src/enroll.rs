@@ -1,9 +1,9 @@
 //! First-time trust for another computer, or the Spark, without hand-written SSH setup.
 //!
-//! The laptop makes one key per device. The owner signs in once with the
-//! device's password, which only authorizes that key (or, without a password,
-//! runs one printed command on the device). The owner then confirms the device's
-//! host-key fingerprint, and trust writes an RTXBridge-owned pin and SSH profile
+//! The laptop makes one key per device. Before a password can be sent, the owner
+//! independently verifies its host-key fingerprint. A fresh scan must match
+//! that confirmation before password sign-in can authorize the key (or the owner
+//! runs one printed setup command on the device). Trust writes an RTXBridge-owned pin and SSH profile
 //! under the state root and registers the device. Nothing in the owner's own
 //! ~/.ssh is read or changed, and a device is never trusted on first sight: the
 //! fingerprint the owner confirmed must still be the one the device presents.
@@ -214,6 +214,23 @@ pub fn fingerprint(blob: &str) -> Result<String> {
         .decode(blob)
         .map_err(|_| AppError::new(3, "The device presented an unreadable identity"))?;
     Ok(format!("SHA256:{}", STANDARD_NO_PAD.encode(Sha256::digest(&bytes))))
+}
+
+/// Preview only: no login, key authorization or saved trust precedes the
+/// owner's comparison with the host key obtained from the device itself.
+pub fn inspect_fingerprint(name: &str, port: u16) -> Result<Value> {
+    let address = resolve(name, port)?.to_string();
+    let blob = keyscan(&address, port)?;
+    Ok(json!({"ok":true,"address":address,"port":port,"fingerprint":fingerprint(&blob)?}))
+}
+
+fn with_confirmed_host<T>(blob: &str, confirmed: &str, action: impl FnOnce(&str) -> Result<T>) -> Result<T> {
+    let observed = fingerprint(blob)?;
+    if observed != confirmed {
+        return Err(AppError::new(7,
+            "The device's identity does not match the fingerprint you confirmed. No password was sent; check the identity on the device before trying again."));
+    }
+    action(&observed)
 }
 
 /// An SSH profile owned by RTXBridge: this device's key, its one pinned host key,
@@ -566,24 +583,30 @@ fn install_command(windows: bool, public: &str) -> String {
 
 /// Sign in once with the owner's password to authorize this device's key; every
 /// later login uses the key. The password goes only to the host presenting the
-/// host key scanned here, through ssh's password helper, and is never stored.
-pub fn authorize(id: &str, name: &str, user: &str, port: u16, password: &str) -> Result<Value> {
+/// independently confirmed host key, through ssh's password helper, and is never stored.
+pub fn authorize(id: &str, name: &str, user: &str, port: u16, confirmed: &str, password: &str) -> Result<Value> {
     validate_user(user)?;
     let ip = resolve(name, port)?;
     refuse_duplicate(ip, port, id)?;
+    let host = ip.to_string();
+    let blob = keyscan(&host, port)?;
+    with_confirmed_host(&blob, confirmed, |fingerprint| {
+        authorize_confirmed(id, name, &host, user, port, &blob, fingerprint, password)
+    })
+}
+
+fn authorize_confirmed(id: &str, name: &str, host: &str, user: &str, port: u16, blob: &str, fingerprint: &str, password: &str) -> Result<Value> {
     let public = public_key(id)?;
     let dir = device_dir(id, false)?;
-    let address = ip.to_string();
-    let host = address.as_str();
-    let blob = keyscan(host, port)?;
-    let fingerprint = fingerprint(&blob)?;
     let windows = windows_server(host, port);
-    let known = dir.join("candidate-known_hosts");
+    // Another probe or sign-in for this device must not replace the pin while
+    // the password SSH process is opening it. Each attempt owns its files.
+    let attempt = uuid::Uuid::new_v4().simple().to_string();
+    let known = dir.join(format!("login-{attempt}-known_hosts"));
     state::atomic_bytes(&known, format!("{} ssh-ed25519 {blob}\n", alias(id)).as_bytes())?;
-    let login = dir.join("login-ssh.conf");
+    let login = dir.join(format!("login-{attempt}-ssh.conf"));
     state::atomic_bytes(&login, login_profile(id, host, user, port, &known).as_bytes())?;
-    let marker = dir.join("password-asked");
-    let _ = fs::remove_file(&marker);
+    let marker = dir.join(format!("login-{attempt}-password-asked"));
     let mut command = Command::new("ssh");
     command
         .arg("-F")
@@ -596,6 +619,7 @@ pub fn authorize(id: &str, name: &str, user: &str, port: u16, password: &str) ->
         .env(crate::ASKPASS_MARK, &marker);
     let outcome = remote_outcome(transport::run_process(command, &[], STEP));
     let _ = fs::remove_file(&login);
+    let _ = fs::remove_file(&known);
     // Some servers close the connection after a wrong password instead of
     // refusing it; the helper's marker says a password was asked for.
     let asked = fs::remove_file(&marker).is_ok();
@@ -624,7 +648,7 @@ pub fn authorize(id: &str, name: &str, user: &str, port: u16, password: &str) ->
         }
     }
     // The key must now work on its own; the password is not used again.
-    let profile = write_profile(&dir, "candidate-", id, host, user, port, &blob)?;
+    let profile = write_profile(&dir, "candidate-", id, host, user, port, blob)?;
     match remote(&profile, id, "hostname")? {
         Remote::Ran(0, _) => Ok(json!({"ok":true,"id":id,"address":host,"port":port,"user":user,"fingerprint":fingerprint,
             "os":if windows {"windows"} else {"linux"},"authorized":true})),
@@ -744,6 +768,28 @@ mod tests {
         let blob = "AAAAC3NzaC1lZDI1NTE5AAAAIK1qY7sQ/4ABeSXU6Xmg1OkFsb1Y5x2Il2OeNwIuFn5r";
         assert_eq!(fingerprint(blob).unwrap(), "SHA256:Mp/+7chdCKA18z2Nkc1AbQBK9Y0YoxlDfw9ZkdI/cfo");
         assert!(fingerprint("not base64!").is_err());
+    }
+
+    #[test]
+    fn changed_host_key_never_starts_password_authorization_or_its_writes() {
+        let first = STANDARD.encode(b"synthetic original host public key");
+        let changed = STANDARD.encode(b"synthetic different host public key");
+        let confirmed = fingerprint(&first).unwrap();
+        let mut password_sessions = 0;
+        let rejected = with_confirmed_host(&changed, &confirmed, |_| {
+            password_sessions += 1;
+            Ok(())
+        }).unwrap_err();
+        assert_eq!(rejected.code, 7);
+        assert_eq!(password_sessions, 0);
+        assert!(rejected.message.contains("No password was sent"));
+        with_confirmed_host(&first, &confirmed, |actual| {
+            assert_eq!(actual, confirmed);
+            password_sessions += 1;
+            Ok(())
+        }).unwrap();
+        assert_eq!(password_sessions, 1);
+        assert!(with_confirmed_host(&first, "", |_| Ok(())).is_err());
     }
 
     #[test]

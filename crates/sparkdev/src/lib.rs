@@ -318,6 +318,13 @@ enum Commands {
 #[derive(Subcommand)]
 enum NodeCommands {
     List,
+    /// Read the host-key fingerprint before confirming trust or sending a password.
+    Fingerprint {
+        #[arg(long)]
+        host: String,
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+    },
     /// Computers on this network that answer on the SSH port. Read-only.
     Scan,
     /// Make a new device's key and print its public half for its setup command.
@@ -340,6 +347,9 @@ enum NodeCommands {
         host: String,
         #[arg(long)]
         user: String,
+        /// Host-key fingerprint independently confirmed on the device before sign-in.
+        #[arg(long)]
+        fingerprint: String,
         #[arg(long, default_value_t = 22)]
         port: u16,
     },

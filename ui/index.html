@@ -183,9 +183,11 @@
   </section>
   <section class="wizard-step" data-wizard="2" hidden>
     <p class="card-sub" id="wizard-signin-intro"></p>
+    <div class="wizard-identity"><span>Verify before signing in</span><code id="wizard-signin-fingerprint"></code><small>On that computer, run <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on Linux, or <code>ssh-keygen -lf C:\ProgramData\ssh\ssh_host_ed25519_key.pub</code> on Windows. Compare its SHA256 fingerprint with this one, or obtain it through another trusted channel.</small></div>
+    <label class="choice"><input id="wizard-confirm-fingerprint" type="checkbox"><span>I independently checked that this fingerprint matches the device.</span></label>
     <div class="form-grid">
       <label>Account on that computer<input id="wizard-user" autocomplete="off" spellcheck="false" placeholder="benny"></label>
-      <label>Its password<input id="wizard-password" type="password" autocomplete="off" spellcheck="false"></label>
+      <label>Its password<input id="wizard-password" type="password" autocomplete="off" spellcheck="false" disabled></label>
     </div>
     <p class="fine-print">Used once, sent only to the computer you picked, and never saved. RTXBridge sets up its own key with it and signs in with that key from then on. On Windows, the account is your folder name under C:\Users and the password is the one you sign in to Windows with (for a Microsoft account, its online password, not your PIN).</p>
     <details id="wizard-manual" class="small-details"><summary>Can't use a password?</summary>

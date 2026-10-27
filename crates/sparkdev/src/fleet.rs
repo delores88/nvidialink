@@ -692,11 +692,12 @@ pub(crate) fn register_node(registration: Registration) -> Result<Value> {
 fn node_crud(command: &NodeCommands) -> Result<Value> {
     match command {
         NodeCommands::List => Ok(json!({"ok":true,"nodes":nodes::list()?})),
+        NodeCommands::Fingerprint { host, port } => crate::enroll::inspect_fingerprint(host, *port),
         NodeCommands::Scan => crate::enroll::scan(),
         NodeCommands::Key { id } => crate::enroll::key(id),
         NodeCommands::Probe { id, host, user, port } => crate::enroll::probe(id, host, user, *port),
-        NodeCommands::Authorize { id, host, user, port } => {
-            crate::enroll::authorize(id, host, user, *port, &crate::enroll::read_password()?)
+        NodeCommands::Authorize { id, host, user, port, fingerprint } => {
+            crate::enroll::authorize(id, host, user, *port, fingerprint, &crate::enroll::read_password()?)
         }
         NodeCommands::Trust {
             id,
@@ -2635,6 +2636,20 @@ mod tests {
         );
         assert!(!home.path.join("fleet.json").exists());
         assert!(!home.path.join("nodes.json").exists());
+    }
+
+    #[test]
+    fn password_authorization_keeps_owner_gate_before_stdin_dns_or_state_writes() {
+        let home = state::TestHome::new();
+        for client in ["codex", "claude"] {
+            let args = vec!["--client",client,"node","authorize","test-device","--host","unresolved.invalid","--user","owner","--fingerprint","SHA256:synthetic-confirmed"]
+                .into_iter().map(str::to_string).collect::<Vec<_>>();
+            let cli=Cli::try_parse_from(std::iter::once("sparkdev".into()).chain(args.clone())).unwrap();
+            let error=dispatch(&cli,&args,&mut |_| {}).unwrap_err();
+            assert_eq!(error.code,2);
+            assert_eq!(error.message,crate::OWNER_SIGN_IN);
+        }
+        assert_eq!(fs::read_dir(&home.path).unwrap().count(),0);
     }
 
     #[test]

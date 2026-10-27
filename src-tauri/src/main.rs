@@ -166,7 +166,7 @@ fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
         || args.len() > if node_operation { 48 } else { 24 }
-        || (node_operation && !matches!(args.get(1).map(String::as_str), Some("list" | "add" | "enable" | "scan" | "key" | "probe" | "trust")))
+        || (node_operation && !matches!(args.get(1).map(String::as_str), Some("list" | "add" | "enable" | "scan" | "key" | "fingerprint" | "probe" | "trust")))
         || args.iter().any(|s| s.contains('\0'))
     {
         return Err("Unsupported desktop operation".into());
@@ -694,25 +694,26 @@ async fn bootstrap_node(app: tauri::AppHandle, id: String, cuda: bool) -> Result
 
 /// The sign-in that authorizes a device's new key. Only names and the account
 /// travel as arguments; the password goes to sparkdev on stdin.
-fn sign_in_args(id: &str, host: &str, user: &str, port: u16) -> Result<Vec<String>, String> {
+fn sign_in_args(id: &str, host: &str, user: &str, port: u16, fingerprint: &str) -> Result<Vec<String>, String> {
     if id != "spark" {
         sparkdev::nodes::validate_id(id).map_err(|error| error.message)?;
     }
-    if [host, user].iter().any(|value| value.is_empty() || value.len() > 253 || value.starts_with('-') || value.contains('\0')) || port == 0 {
+    if [host, user].iter().any(|value| value.is_empty() || value.len() > 253 || value.starts_with('-') || value.contains('\0')) || port == 0
+        || !fingerprint.starts_with("SHA256:") || fingerprint.len() > 128 || fingerprint.contains('\0') {
         return Err("Enter the device's name or address and the account you sign in with.".into());
     }
-    Ok(["--json", "--client", "human", "node", "authorize", id, "--host", host, "--user", user, "--port", &port.to_string()]
+    Ok(["--json", "--client", "human", "node", "authorize", id, "--host", host, "--user", user, "--port", &port.to_string(), "--fingerprint", fingerprint]
         .iter()
         .map(|value| value.to_string())
         .collect())
 }
 
 #[tauri::command]
-async fn sign_in(app: tauri::AppHandle, id: String, host: String, user: String, port: Option<u16>, password: String) -> Result<Value, String> {
+async fn sign_in(app: tauri::AppHandle, id: String, host: String, user: String, port: Option<u16>, fingerprint: String, password: String) -> Result<Value, String> {
     if password.is_empty() || password.len() > 1024 {
         return Err("Enter the password for that account.".into());
     }
-    let args = sign_in_args(&id, &host, &user, port.unwrap_or(22))?;
+    let args = sign_in_args(&id, &host, &user, port.unwrap_or(22), &fingerprint)?;
     launch(app, "sparkdev", args, Some(serde_json::json!({"password": password})), 90).await
 }
 
@@ -722,11 +723,12 @@ mod node_bootstrap_tests {
 
     #[test]
     fn sign_in_passes_names_as_arguments_and_nothing_else() {
-        let args = sign_in_args("spark", "192.0.2.9", "ben", 22).unwrap();
-        assert_eq!(args, ["--json", "--client", "human", "node", "authorize", "spark", "--host", "192.0.2.9", "--user", "ben", "--port", "22"]);
-        assert!(sign_in_args("office", "AntonPC", "ben", 2222).is_ok());
+        let args = sign_in_args("spark", "192.0.2.9", "ben", 22, "SHA256:confirmed-fixture").unwrap();
+        assert_eq!(args, ["--json", "--client", "human", "node", "authorize", "spark", "--host", "192.0.2.9", "--user", "ben", "--port", "22", "--fingerprint", "SHA256:confirmed-fixture"]);
+        assert!(sign_in_args("office", "AntonPC", "ben", 2222, "SHA256:confirmed-fixture").is_ok());
+        assert!(sign_in_args("office", "AntonPC", "ben", 22, "").is_err());
         for (id, host, user) in [("laptop", "h", "u"), ("../x", "h", "u"), ("office", "-oProxyCommand=x", "u"), ("office", "h", ""), ("office", "h", "u\0")] {
-            assert!(sign_in_args(id, host, user, 22).is_err(), "{id} {host} {user}");
+            assert!(sign_in_args(id, host, user, 22, "SHA256:confirmed-fixture").is_err(), "{id} {host} {user}");
         }
     }
 
