@@ -3,6 +3,7 @@ pub mod inventory;
 pub mod lan_learn;
 pub mod laptop_network;
 pub mod local;
+mod location;
 pub mod mcp;
 pub mod nodes;
 mod fleet;

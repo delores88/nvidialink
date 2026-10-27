@@ -3,8 +3,8 @@
 //! Each child has its own SPARKDEV_HOME and return worker. One owner-local
 //! journal atomically binds request identity, device identity and project claims.
 use crate::{
-    AppError, Cli, Commands, NodeCommands, Placement, Result, Switch, inventory, nodes, state,
-    transport,
+    AppError, Cli, Commands, NodeCommands, Placement, Result, Switch, inventory, location, nodes,
+    state, transport,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -270,7 +270,9 @@ fn same_explicit_target(selector: Option<&str>, device: &str) -> Result<()> {
 
 fn retained_target(record: &Submission) -> Result<Target> {
     let target = Target::load(&record.device)?;
-    if target.root != record.profile_root || target.identity()? != record.target_identity {
+    if !location::same_directory(&target.root, &record.profile_root)
+        || target.identity()? != record.target_identity
+    {
         return Err(error(
             "The retained device SSH identity changed; refusing to redirect its existing request or job",
         ));
@@ -284,7 +286,7 @@ fn claim_request(id: &str, record: Submission) -> Result<Submission> {
         if let Some(old) = journal.requests.get(id) {
             if old.fingerprint != record.fingerprint
                 || old.device != record.device
-                || old.profile_root != record.profile_root
+                || !location::same_directory(&old.profile_root, &record.profile_root)
                 || old.target_identity != record.target_identity
             {
                 return Err(error(
@@ -358,7 +360,9 @@ fn record_response(id: &str, target: &Target, value: &Value) -> Result<()> {
         let Some(record) = journal.requests.get_mut(id) else {
             return Err(error("Fleet submission lost its retained request identity"));
         };
-        if record.device != target.id || record.profile_root != target.root {
+        if record.device != target.id
+            || !location::same_directory(&record.profile_root, &target.root)
+        {
             return Err(error("Fleet response belongs to a different device"));
         }
         if let Some(job) = value["job"].as_str() {
@@ -408,7 +412,7 @@ fn recover_jobs(target: &Target) -> Result<()> {
         .iter()
         .filter(|(_, record)| {
             record.device == target.id
-                && record.profile_root == target.root
+                && location::same_directory(&record.profile_root, &target.root)
                 && record.job.is_none()
                 && !record.complete
         })
@@ -473,6 +477,7 @@ fn recover_jobs(target: &Target) -> Result<()> {
         for (id, job) in recovered {
             if let Some(record) = journal.requests.get_mut(&id) {
                 if record.device != target.id
+                    || !location::same_directory(&record.profile_root, &target.root)
                     || record.target_identity != identity
                     || record
                         .job
@@ -508,7 +513,9 @@ fn reconcile(target: &Target, value: &Value) -> Result<()> {
     change_journal(|journal| {
         let mut complete = Vec::new();
         for (id, record) in &journal.requests {
-            if record.device != target.id || record.profile_root != target.root {
+            if record.device != target.id
+                || !location::same_directory(&record.profile_root, &target.root)
+            {
                 continue;
             }
             if record.target_identity != identity {
@@ -2337,6 +2344,86 @@ mod tests {
         different.host_key_alias = "different-pin".into();
         state::atomic_json(&target.root.join("config.json"), &different).unwrap();
         assert!(retained_target(&request).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn physical_profile_alias_preserves_retry_recovery_and_completion_in_both_directions() {
+        let _home = state::TestHome::new();
+        nodes::add(
+            nodes::Node {
+                id: "antonpc".into(),
+                label: "Anton".into(),
+                enabled: true,
+                priority: 0,
+                endpoint: nodes::Endpoint::LinuxSsh,
+                ssh_config: None,
+            },
+            test_config(),
+        )
+        .unwrap();
+        let target = Target::load("antonpc").unwrap();
+        let alias = location::loopback_alias(&target.root, "localhost");
+        if !alias.is_dir() {
+            eprintln!(
+                "Local administrative share unavailable; profile alias fixture not exercised"
+            );
+            return;
+        }
+        let mut alternate = target.clone();
+        alternate.root = alias.clone();
+        let original = request_for(&alternate, "project-a");
+        claim_request("request-a", original.clone()).unwrap();
+        let retry = claim_request("request-a", request_for(&target, "project-a")).unwrap();
+        assert_eq!(retry.profile_root, alias); // Never rewrite the retained I/O path.
+        assert!(retained_target(&original).is_ok());
+        state::atomic_json(&target.root.join("returns/request-a.json"), &json!({
+            "v":1,"request_id":"request-a","request":{"request_id":"request-a","project":"project-a","manifest_id":"c".repeat(64)},
+            "job":"recovered-job","complete":false,
+        })).unwrap();
+        recover_jobs(&target).unwrap();
+        assert_eq!(
+            saved_request("request-a").unwrap().unwrap().job.as_deref(),
+            Some("recovered-job")
+        );
+        record_response(
+            "request-a",
+            &target,
+            &json!({"job":"recovered-job","state":"returning","return_status":"pending"}),
+        )
+        .unwrap();
+        assert!(journal().unwrap().claims.contains_key("project-a"));
+        reconcile(&target, &json!({"jobs":[{"job":"recovered-job","state":"succeeded","return_status":"complete"}]})).unwrap();
+        assert!(!journal().unwrap().claims.contains_key("project-a"));
+        assert_eq!(
+            saved_request("request-a").unwrap().unwrap().profile_root,
+            alias
+        );
+
+        claim_request("request-b", request_for(&target, "project-b")).unwrap();
+        record_response(
+            "request-b",
+            &alternate,
+            &json!({"job":"reverse-job","state":"running"}),
+        )
+        .unwrap();
+        reconcile(
+            &alternate,
+            &json!({"jobs":[{"job":"reverse-job","state":"succeeded","return_status":"complete"}]}),
+        )
+        .unwrap();
+        assert!(!journal().unwrap().claims.contains_key("project-b"));
+        assert_eq!(
+            saved_request("request-b").unwrap().unwrap().profile_root,
+            target.root
+        );
+
+        let other = target.root.join("different-state");
+        fs::create_dir(&other).unwrap();
+        let mut redirected = original;
+        redirected.profile_root = other;
+        assert!(claim_request("request-a", redirected.clone()).is_err());
+        assert!(retained_target(&redirected).is_err());
     }
 
     #[test]
