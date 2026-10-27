@@ -1,6 +1,6 @@
 # RTXBridge design
 
-Status: implementation contract including the 0.6 multi-computer candidate. Product name RTXBridge (formerly DGXBridge; the installer, install folder and Marketplace listing keep the old name until the rename release); repository nvidialink; CLI `sparkdev`.
+Status: implementation contract including the 0.6.2 Devices and enrollment release. Product name RTXBridge, formerly DGXBridge; repository nvidialink; CLI `sparkdev`. The application identifier, existing install/state folders, Marketplace slug and canonical DGXBridge installer asset name remain compatible across the rename.
 
 ## 0.6 multiple-computer extension
 
