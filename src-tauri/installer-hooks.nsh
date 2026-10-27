@@ -9,6 +9,21 @@
 !define OLD_UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\DGXBridge"
 !define RUNKEY "Software\Microsoft\Windows\CurrentVersion\Run"
 
+!macro RemoveOwnedLegacyShortcut shortcut
+  !insertmacro IsShortcutTarget "${shortcut}" "$INSTDIR\${MAINBINARYNAME}.exe"
+  Pop $4
+  ${If} $4 == 1
+    Delete "${shortcut}"
+  ${EndIf}
+!macroend
+
+!macro RemoveOwnedResultStartup name
+  ReadRegStr $5 HKCU "${RUNKEY}" "${name}"
+  ${If} $5 == '$\"$INSTDIR\bin\sparkdev-return.exe$\" --resume-autostart --state-dir $\"$LOCALAPPDATA\SparkDevBridge$\"'
+    DeleteRegValue HKCU "${RUNKEY}" "${name}"
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   nsExec::ExecToLog 'taskkill /F /IM sparkdev-return.exe'
   ; The in-app updater passes the existing folder with /D=. A setup started by
@@ -32,23 +47,26 @@
   ${EndIf}
   ReadRegStr $0 HKCU "${OLD_PRODUCTKEY}" ""
   ${If} $0 == $INSTDIR
-    DeleteRegKey HKCU "${OLD_UNINSTKEY}"
+    ReadRegStr $1 HKCU "${OLD_UNINSTKEY}" "UninstallString"
+    ${If} $1 == '$\"$INSTDIR\uninstall.exe$\"'
+      DeleteRegKey HKCU "${OLD_UNINSTKEY}"
+    ${EndIf}
     DeleteRegKey HKCU "${OLD_PRODUCTKEY}"
-    Delete "$SMPROGRAMS\DeloresAI\DGXBridge.lnk"
-    Delete "$SMPROGRAMS\DGXBridge.lnk"
-    Delete "$DESKTOP\DGXBridge.lnk"
+    !insertmacro RemoveOwnedLegacyShortcut "$SMPROGRAMS\DeloresAI\DGXBridge.lnk"
+    !insertmacro RemoveOwnedLegacyShortcut "$SMPROGRAMS\DGXBridge.lnk"
+    !insertmacro RemoveOwnedLegacyShortcut "$DESKTOP\DGXBridge.lnk"
   ${EndIf}
   ; Only this ordinary installer writes HKCU: a packaged CLI's registry can
   ; be virtualized. The dispatcher also resumes physically verified custom
   ; states recorded under the owner's profile, using explicit --state-dir.
-  DeleteRegValue HKCU "${RUNKEY}" "DGXBridge Results"
+  !insertmacro RemoveOwnedResultStartup "DGXBridge Results"
   WriteRegStr HKCU "${RUNKEY}" "RTXBridge Results" '$\"$INSTDIR\bin\sparkdev-return.exe$\" --resume-autostart --state-dir $\"$LOCALAPPDATA\SparkDevBridge$\"'
   Exec '$\"$INSTDIR\bin\sparkdev-return.exe$\" --resume-autostart --state-dir $\"$LOCALAPPDATA\SparkDevBridge$\"'
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   nsExec::ExecToLog 'taskkill /F /IM sparkdev-return.exe'
-  DeleteRegValue HKCU "${RUNKEY}" "RTXBridge Results"
-  DeleteRegValue HKCU "${RUNKEY}" "DGXBridge Results"
+  !insertmacro RemoveOwnedResultStartup "RTXBridge Results"
+  !insertmacro RemoveOwnedResultStartup "DGXBridge Results"
   ; Keep owner-state registrations and receipts for an in-place reinstall.
 !macroend
