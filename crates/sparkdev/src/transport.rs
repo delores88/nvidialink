@@ -512,6 +512,19 @@ pub fn parse_ssh_g(output: &str, alias: &str) -> AliasRoute {
             .map(str::to_owned),
     }
 }
+/// A Spark connected with a password is checked against RTXBridge's own pin
+/// file alone, which OpenSSH never rewrites; otherwise the owner's known_hosts.
+fn pin_file(command: &mut Command, config: &Config) {
+    if let Some(known) = &config.known_hosts {
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        command
+            .arg("-o")
+            .arg(format!("UserKnownHostsFile=\"{}\"", known.to_string_lossy().replace('\\', "/")))
+            .arg("-o")
+            .arg(format!("GlobalKnownHostsFile={null}"))
+            .args(["-o", "UpdateHostKeys=no"]);
+    }
+}
 /// `ssh -G` only evaluates local OpenSSH configuration; it opens no network
 /// connection and never touches known_hosts.
 pub fn alias_lookup_command(config: &Config) -> Command {
@@ -1281,6 +1294,7 @@ impl Transport {
         command
             .arg("-o")
             .arg(format!("HostKeyAlias={}", self.config.host_key_alias));
+        pin_file(&mut command, &self.config);
         if let Some(host) = host {
             command.arg("-o").arg(format!("HostName={host}"));
         }
@@ -1374,6 +1388,7 @@ impl Transport {
             .arg(format!("HostKeyAlias={}", self.config.host_key_alias))
             .arg("-o")
             .arg(format!("HostName={host}"));
+        pin_file(&mut command, &self.config);
         if let Some(key) = &self.config.identity_file {
             command
                 .arg("-i")
@@ -2155,6 +2170,17 @@ mod tests {
     use super::*;
     use Reach::{Closed, Open, Unchecked, Unresolved};
     use std::{ffi::OsStr, net::TcpListener};
+    #[test]
+    fn a_password_connected_spark_is_checked_against_its_own_pin_only() {
+        let mut config: Config = serde_json::from_value(json!({"ssh_alias":"192.0.2.7","hosts":["192.0.2.7"],"host_key_alias":"dgxbridge-spark","user":"owner"})).unwrap();
+        let plain = arguments(&Transport::from_config(config.clone()).command(Some("192.0.2.7"), "true"));
+        assert!(!plain.iter().any(|a| a.starts_with("UserKnownHostsFile")));
+        config.known_hosts = Some(PathBuf::from(r"C:\Users\Some One\State\devices\spark\known_hosts"));
+        let pinned = arguments(&Transport::from_config(config).command(Some("192.0.2.7"), "true"));
+        assert!(pinned.contains(&"UserKnownHostsFile=\"C:/Users/Some One/State/devices/spark/known_hosts\"".to_string()));
+        assert!(pinned.contains(&"UpdateHostKeys=no".to_string()));
+        assert!(pinned.contains(&"HostKeyAlias=dgxbridge-spark".to_string()));
+    }
     #[test]
     fn local_cli_accepts_nine_mib_json_without_expanding_the_ssh_bound() {
         assert_eq!(SSH_STDOUT_LIMIT, 8 * 1024 * 1024);

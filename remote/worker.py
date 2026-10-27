@@ -80,7 +80,7 @@ def forward_call(port, path, body, content_type, *, connection=http.client.HTTPC
             mime = "application/octet-stream"
         return response.status, mime, bytes(output)
     except (OSError, ValueError, http.client.HTTPException):
-        return 502, "text/plain", b"DGXBridge could not obtain a bounded response from the model server.\n"
+        return 502, "text/plain", b"RTXBridge could not obtain a bounded response from the model server.\n"
     finally:
         conn.close()
 

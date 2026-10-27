@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {connectionView,configMode,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,plainReason,internetView,downloadsView,serviceView,jobFlags,jobInternet,laptopLink,sparkLink,
-  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome,jobRunner,jobRunnerLabel,jobToolsLabel,filterJobs,boardSummary,namedComputers,nodeAddArgs} from '../ui/model.mjs';
-import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
-import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
+  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome,jobRunner,jobRunnerLabel,jobToolsLabel,filterJobs,boardSummary,namedComputers,deviceRows,fleetSummary,deviceSlug,deviceSetupCommand,probeSummary} from '../ui/model.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
 
 const lan={ok:true,devices:[{id:'spark',reachable:true,transport:{route:'lan_ssh',authenticated:true},scheduler:{healthy:true}}]};
@@ -115,12 +113,6 @@ test('copied MCP commands and prompts preserve native UNC and verbatim path synt
     assert.doesNotMatch(prompt,/\/\/\?\//);
   }
 });
-test('real motion defaults contain no measured traffic, job progress or GPU utilization',()=>{
-  const motion=linkMotion({health:'online',path:'lan'});assert.equal(motion.filament.measured,false);assert.equal(motion.packet,null);assert.equal(motion.spark.breathe,null);assert.equal(motion.message,null);assert.equal(motion.animate,true);
-  const reduced=linkMotion({health:'online',path:'lan',reduced:true});assert.equal(reduced.animate,false);
-  assert.equal(linkMotion({health:'paused'}).animate,false);
-  const dots=filamentFrame(filamentParticles(40),motion,{width:500,height:100,dt:.016});assert.equal(dots.length,40);assert.ok(dots.every(dot=>Number.isFinite(dot.x)&&Number.isFinite(dot.y)));
-});
 test('visibility lifecycle cancels hidden/offscreen animation and disposes observers',()=>{
   let callback,observer,frameId=0,cancelled=0,drawn=0,disconnected=0;const host={};
   const document={hidden:false,addEventListener(_,cb){callback=cb;},removeEventListener(){callback=null;}};
@@ -231,7 +223,7 @@ test('a conflicting saved address names a removal the page can actually do',()=>
   assert.match(removeBoth.notes.join(' '),/Remove them under Saved SSH connection/);
 });
 test('a saved address names what was removed and the Other LAN addresses field keeps every address',()=>{
-  assert.equal(discoverySaved({host:'192.0.2.40',removed:[]},'192.0.2.40'),'Saved 192.0.2.40 as the first LAN address DGXBridge tries.');
+  assert.equal(discoverySaved({host:'192.0.2.40',removed:[]},'192.0.2.40'),'Saved 192.0.2.40 as the first LAN address RTXBridge tries.');
   const text=discoverySaved({host:'192.0.2.40',removed:['192.0.2.20','192.0.2.21\nx'],warning:'You now have 5 saved LAN addresses, tried in order.'},'192.0.2.40');
   assert.match(text,/Removed 192\.0\.2\.20, which now answers as a different SSH device\./);assert.match(text,/5 saved LAN addresses/);assert.doesNotMatch(text,/\n/);
   assert.deepEqual(otherLanAddresses('192.0.2.21, 192.0.2.22 192.0.2.21;spark-b.local,,192.0.2.20','192.0.2.20'),['192.0.2.21','192.0.2.22','spark-b.local']);
@@ -339,30 +331,58 @@ test('computer cards require authenticated observations and preserve disabled pr
   const limited=namedComputers(observations,nodes)[0];assert.equal(limited.status,'Details unavailable');assert.equal(limited.connected,false);assert.match(limited.error,/job history is too large/);assert.match(limited.error,/does not indicate a network connection failure/);assert.doesNotMatch(limited.error,/local_metadata_limit/);
 });
 
-const computerForm=values=>new Map(Object.entries({id:'office',label:'Office workstation',ssh_alias:'office-trusted',host_key_alias:'office-pin',host:'192.0.2.20',user:'owner',port:'22',priority:'0',endpoint:'linux-ssh',...values}));
-test('computer registration keeps references as exact arguments and never replaces Spark setup',()=>{
-  const args=nodeAddArgs(computerForm({identity_file:'C:/Users/Example/My Keys/office',ssh_config:'C:/Users/Example/SSH Config/config'}));
-  assert.deepEqual(args.slice(0,5),['node','add','office','--label','Office workstation']);assert.equal(args.includes('setup'),false);
-  assert.equal(args[args.indexOf('--identity-file')+1],'C:/Users/Example/My Keys/office');assert.equal(args[args.indexOf('--ssh-config')+1],'C:/Users/Example/SSH Config/config');assert.ok(args.length<=48);
-  assert.equal(args.includes('--wsl-distro'),false);
+const KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKc3abcdefghijklmnopqrstuvwxyz0123456789ab dgxbridge-office';
+const fleet={devices:[
+  {id:'laptop',logical_parallelism:22},
+  {id:'spark',reachable:true,transport:{authenticated:true,route:'lan_ssh'},scheduler:{healthy:true},hardware:{cpu_count:20,memory_gb:119},capabilities:{gpu:{observed:true,memory_model:'unified',devices:[{name:'NVIDIA GB10'}]},system_memory:{total_bytes:128526278656}}},
+  {id:'office',label:'Office workstation',reachable:true,transport:{authenticated:true},scheduler:{healthy:true},runtimes:['cuda'],hardware:{cpu_count:64,memory_gb:125},capabilities:{gpu:{observed:true,memory_model:'discrete',devices:[{name:'NVIDIA GeForce RTX 4090',total_memory_bytes:25757220864}]}}},
+]};
+const officeNode=[{id:'office',label:'Office workstation',enabled:true,endpoint:{kind:'windows-wsl',distribution:'Ubuntu-20.04'}}];
+test('every device has one shape: laptop, Spark and added computers, in that order',()=>{
+  const rows=deviceRows({observation:fleet,nodes:officeNode,jobs:[],connection:{connected:true,enabled:true,state:'connected',route:'Same network'},config:{ssh_alias:'tuningspork-spark'}});
+  assert.deepEqual(rows.map(row=>[row.id,row.kind,row.status.kind]),[['laptop','laptop','ready'],['spark','spark','ready'],['office','computer','ready']]);
+  assert.match(rows[1].specs.join(' '),/GB10 GPU/);assert.match(rows[1].specs.join(' '),/shared with the GPU/);
+  assert.match(rows[2].goodFor,/fit in 24 GB/);assert.match(rows[2].specs.join(' '),/RTX 4090 · 24 GB/);assert.match(rows[2].specs.join(' '),/Linux via WSL \(Ubuntu-20\.04\)/);
+  assert.ok(rows[2].facts.some(([label])=>label==='GPU'));
+  assert.deepEqual(fleetSummary(rows),{kind:'ready',label:'3 devices ready'});
 });
-
-test('invalid and reserved computers are rejected before registration',()=>{
-  for(const id of ['spark','laptop','auto','../office','Office','office--pc','office-'])assert.throws(()=>nodeAddArgs(computerForm({id})),/computer ID/);
-  assert.throws(()=>nodeAddArgs(computerForm({port:'0'})),/port/);assert.throws(()=>nodeAddArgs(computerForm({priority:'1001'})),/Priority/);
-  assert.throws(()=>nodeAddArgs(computerForm({ssh_alias:'alias\nnext'})),/one line/);assert.throws(()=>nodeAddArgs(computerForm({host_key_alias:''})),/known-host/);
+test('device status reflects jobs, pauses, outages and a Spark that is not set up',()=>{
+  const jobs=[{job:'office:a',device:'office',state:'running'},{job:'office:b',device:'office',state:'queued'},{job:'s1',where:'spark',state:'queued'}];
+  let rows=deviceRows({observation:fleet,nodes:officeNode,jobs,connection:{connected:true,enabled:true,state:'connected'},config:{}});
+  assert.deepEqual(rows[2].status,{kind:'busy',label:'1 running · 1 queued'});assert.deepEqual(rows[1].status,{kind:'ready',label:'1 queued'});
+  rows=deviceRows({observation:fleet,nodes:[{...officeNode[0],enabled:false}],connection:{connected:false,enabled:false,state:'disconnected'},config:{}});
+  assert.equal(rows[1].status.kind,'paused');assert.equal(rows[2].status.kind,'paused');
+  rows=deviceRows({observation:fleet,nodes:officeNode,connection:{connected:false,enabled:true,state:'unavailable'},config:null});
+  assert.equal(rows[1].status.kind,'setup');assert.deepEqual(fleetSummary(rows),{kind:'setup',label:'Spark: finish setup'});
+  const offline=structuredClone(fleet);Object.assign(offline.devices[2],{reachable:false,availability:'unreachable',error:{message:'Computer is offline'}});
+  rows=deviceRows({observation:offline,nodes:officeNode,connection:{connected:true,enabled:true,state:'connected'},config:{}});
+  assert.equal(rows[2].status.kind,'offline');assert.deepEqual(fleetSummary(rows),{kind:'attention',label:'Office workstation: offline'});
 });
-
-test('Windows computer registration binds one named WSL user and controller',()=>{
-  const values={endpoint:'windows-wsl',distribution:'Ubuntu-24.04',wsl_user:'owner',controller_path:'/home/owner/sparkdev/controller.py'};
-  const args=nodeAddArgs(computerForm(values));assert.deepEqual(args.slice(-6),['--wsl-distro','Ubuntu-24.04','--wsl-user','owner','--controller-path','/home/owner/sparkdev/controller.py']);
-  for(const overrides of [{distribution:'Ubuntu & calc'},{wsl_user:'owner;id'},{controller_path:'/home/owner/../sparkdev/controller.py'},{controller_path:'/home/owner/sparkdev/controller.py;id'}])assert.throws(()=>nodeAddArgs(computerForm({...values,...overrides})));
+test('device IDs agents type come from the name and never collide with reserved ones',()=>{
+  assert.equal(deviceSlug('AntonPC'),'antonpc');assert.equal(deviceSlug('My Office PC!'),'my-office-pc');assert.equal(deviceSlug('2nd box'),'pc-2nd-box');
+  assert.equal(deviceSlug('AntonPC',['antonpc']),'antonpc-2');assert.equal(deviceSlug('Spark'),'spark-2');assert.equal(deviceSlug('***'),'device');
+  assert.ok(/^[a-z][a-z0-9-]{0,31}$/.test(deviceSlug('A'.repeat(80))));
+});
+test('the setup command authorizes exactly this device key and prints what the wizard asks for',()=>{
+  const windows=deviceSetupCommand('windows',KEY);
+  assert.match(windows,/Add-WindowsCapability -Online -Name OpenSSH\.Server/);assert.ok(windows.includes(`$k='${KEY}'`));
+  assert.match(windows,/administrators_authorized_keys/);assert.match(windows,/Account: \$env:USERNAME/);assert.match(windows,/ssh_host_ed25519_key\.pub/);
+  const linux=deviceSetupCommand('linux',KEY);assert.ok(linux.includes(`echo '${KEY}' >> ~/.ssh/authorized_keys`));assert.match(linux,/Account: \$\(whoami\)/);
+  for(const bad of ['',"ssh-ed25519 AAAA' ; rm -rf ~ dgxbridge-x",'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ dgxbridge-x',KEY+'\nmore'])assert.throws(()=>deviceSetupCommand('windows',bad),/key is not ready/);
+  assert.throws(()=>deviceSetupCommand('mac',KEY),/Windows or Linux/);
+});
+test('a device check is summarized only after this laptop could sign in',()=>{
+  assert.equal(probeSummary({login:'refused'}),null);
+  const windows=probeSummary({login:'ok',os:'windows',hostname:'ANTONPC',address:'192.0.2.9',gpus:[{name:'NVIDIA GeForce RTX 4090',memory_gib:24}],wsl:[{distribution:'Ubuntu-20.04',user:'ben'}]});
+  assert.deepEqual(windows.facts,['Windows','NVIDIA GeForce RTX 4090 · 24 GB','Linux via WSL: Ubuntu-20.04']);assert.equal(windows.needsWsl,false);assert.equal(windows.hasGpu,true);assert.deepEqual(windows.wsl,{distribution:'Ubuntu-20.04',user:'ben'});
+  assert.equal(probeSummary({login:'ok',os:'windows',wsl:[]}).needsWsl,true);
+  assert.deepEqual(probeSummary({login:'ok',os:'linux',architecture:'x86_64',name:'box'}).facts,['Linux (x86_64)']);
 });
 
 test('additional-computer agent instructions are additive and retain qualified job IDs',()=>{
   const baseline=agentPrompt({agent:'codex',config:{}});assert.doesNotMatch(baseline,/COMPUTERS:/);
   const text=agentPrompt({agent:'codex',config:{},computers:[{id:'office',label:'Office workstation',enabled:true},{id:'render',label:'Render workstation',enabled:false}]});
-  assert.match(text,/COMPUTERS: office, render \(disabled\)/);assert.match(text,/--device ID/);assert.match(text,/--device auto/);assert.match(text,/Retain node:JOB IDs exactly/);assert.match(text,/an eligible saved computer/);assert.ok(text.length<5000);
+  assert.match(text,/COMPUTERS: office, render \(disabled\)/);assert.match(text,/--device ID/);assert.match(text,/--device auto/);assert.match(text,/Retain node:JOB IDs exactly/);assert.match(text,/an eligible saved computer/);assert.match(text,/link_speed/);assert.match(text,/--min-vram-gb N/);assert.ok(text.length<5000);
 });
 
 test('named computer readiness requires installed runtime observations',()=>{

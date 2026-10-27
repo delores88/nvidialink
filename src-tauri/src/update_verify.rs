@@ -1,4 +1,4 @@
-//! DGXBridge's deliberately narrow, locally anchored Marketplace update authority.
+//! RTXBridge's deliberately narrow, locally anchored Marketplace update authority.
 //! Adapted from DeloresAI metadata.rs/review.rs; see docs/UPDATER-PROVENANCE.md.
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
@@ -28,7 +28,7 @@ const REQUIRED: [&str; 8] = [
     "source.secrets",
 ];
 const INVALID: &str =
-    "The signed Marketplace approval is invalid or does not authorize this DGXBridge installer.";
+    "The signed Marketplace approval is invalid or does not authorize this RTXBridge installer.";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -161,6 +161,8 @@ pub fn artifact(value: &Value) -> Result<Artifact> {
         )?;
     }
     let filename = text(&value["filename"])?;
+    // The published asset keeps its pre-rename name: installs from before the
+    // RTXBridge name accept only this one, so releases must use it.
     require(filename == format!("DGXBridge_{version}_x64-setup.exe"))?;
     // The upstream URL is identity evidence only. The client never fetches it.
     let expected =
@@ -196,7 +198,7 @@ fn decode(envelope: &Envelope, keys: &BTreeMap<String, String>) -> Result<Vec<u8
             && envelope.signature.len() <= 100
             && envelope.key_id.len() <= 128,
     )?;
-    let encoded=keys.get(&envelope.key_id).ok_or("Marketplace signing key is not trusted by this DGXBridge build. Install a trusted release; verification cannot be bypassed.")?;
+    let encoded=keys.get(&envelope.key_id).ok_or("Marketplace signing key is not trusted by this RTXBridge build. Install a trusted release; verification cannot be bypassed.")?;
     let key: [u8; 32] = STANDARD
         .decode(encoded)
         .map_err(|_| INVALID)?

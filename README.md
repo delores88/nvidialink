@@ -1,6 +1,10 @@
-# DGXBridge
+# RTXBridge
+
+Formerly DGXBridge. Version 0.6.2 uses the RTXBridge display name. Legacy upgrades keep their existing DGXBridge folder and agent paths; fresh installations use RTXBridge. The application identifier, Marketplace slug and canonical DGXBridge installer asset filename stay compatible.
 
 A Windows desktop app and agent CLI for running Linux builds, tests and compute on your own Spark and registered Linux or Windows-with-WSL computers, while native Windows work stays on your laptop. Claude Code, Codex and humans share job status, worktree claims and retained logs. First-party source is MIT licensed; this is an independent DeloresAI utility.
+
+**0.6.2 release candidate:** unifies computers in Devices, adds the interactive local network map and owner password-to-key enrollment with independent identity confirmation before sign-in. See [release verification and limits](docs/RELEASE-0.6.2.md).
 
 **0.6.1:** adds independent compute profiles, capability-based placement, stable job routing and automatic file returns from additional computers. The Computers screen extends the existing Spark/laptop interface. CPU and RTX 4090 jobs passed through the installed Windows copy. See [release verification and limits](docs/RELEASE-0.6.1.md) and [multi-computer setup](docs/MULTI-DEVICE.md).
 

@@ -1,9 +1,9 @@
 {
   "name":"dgxbridge-ui",
-  "version":"0.6.1",
+  "version":"0.6.2",
   "license":"MIT",
   "private":true,
   "type":"module",
-  "scripts":{"prepare-ui":"node scripts/prepare-ui.mjs","check":"node --check ui/app.js && node --check ui/connection-visual.mjs && node --test scripts/test-ui-model.mjs"},
+  "scripts":{"prepare-ui":"node scripts/prepare-ui.mjs","check":"node --check ui/app.js && node --check ui/fleet-map.mjs && node --test scripts/test-ui-model.mjs"},
   "dependencies":{"qrcode-generator":"2.0.4"}
 }

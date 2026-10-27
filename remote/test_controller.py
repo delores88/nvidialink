@@ -156,6 +156,19 @@ class ControllerTests(unittest.TestCase):
         result = self.c.rpc({"v": 1, "op": "sync", "project": PROJECT, "manifest": [{"path": "source.txt", "size": len(raw), "sha256": sha(raw), "mode": 0o644, "chunks": chunks}]})
         self.assertEqual(result["error"]["code"], "secret_detected")
 
+    def test_job_status_names_the_program_but_never_its_arguments_or_path(self):
+        created, _ = self.run_job(argv=["/opt/blender/blender", "-b", "secret-scene.blend", "--token", "abc"], request_id="render-1")
+        status = self.rpc("wait", job=created["job"], timeout=0)
+        self.assertEqual(status["program"], "blender")
+        board = self.rpc("status")
+        self.assertEqual(next(job for job in board["jobs"] if job["job"] == created["job"])["program"], "blender")
+        self.assertNotIn("secret-scene", json.dumps(board))
+        self.assertNotIn("secret-scene", json.dumps(status))
+        self.assertNotIn("/opt/blender", json.dumps(status))
+        for argv, expected in ((["python3", "train.py"], "python3"), ([r"C:\Tools\ffmpeg.exe", "-i", "a"], "ffmpeg"), (["bad name;rm"], None), ([""], None)):
+            self.assertEqual(controller.program_name(json.dumps({"argv": argv})), expected, argv)
+        self.assertIsNone(controller.program_name("not json"))
+
     def test_idempotence_and_worktree_claim(self):
         first, request = self.run_job()
         repeat = self.rpc("run", **request)

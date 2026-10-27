@@ -17,7 +17,7 @@ spec.loader.exec_module(manifest)
 
 class ReleaseIdentity(unittest.TestCase):
     def test_stable_and_historical_beta_names(self):
-        for version in ('0.2.0', '0.1.0-beta.2'):
+        for version in ('0.2.0', '0.1.0-beta.2', '0.6.2'):
             manifest.release_names(version, 'v' + version, f'DGXBridge_{version}_x64-setup.exe')
 
     def test_no_accepted_but_unusable_release_names(self):
@@ -29,6 +29,33 @@ class ReleaseIdentity(unittest.TestCase):
         for version in ('01.2.0', '0.2', '0.2.0+other', '0.2.0-beta.01', '0.2.0-'):
             with self.assertRaises(ValueError):
                 manifest.semver(version)
+
+    def test_rename_keeps_installed_updater_asset_name(self):
+        with self.assertRaises(ValueError):
+            manifest.release_names('0.6.2', 'v0.6.2', 'RTXBridge_0.6.2_x64-setup.exe')
+
+
+class EnrollmentDisclosures(unittest.TestCase):
+    def document(self):
+        return {'name': 'DGXBridge', 'appId': 'dgxbridge', 'slug': 'dgxbridge',
+                'description': 'DGXBridge connects computers.', 'privacy': {'retention': 'Existing state.'},
+                'permissions': {'filesystem': []}, 'featureNotices': []}
+
+    def test_historical_manifest_does_not_gain_new_authorization(self):
+        document = self.document()
+        before = json.dumps(document, sort_keys=True)
+        manifest.release_disclosures(document, '0.6.1')
+        self.assertEqual(json.dumps(document, sort_keys=True), before)
+
+    def test_current_release_declares_credential_and_remote_key_side_effects(self):
+        document = self.document()
+        manifest.release_disclosures(document, '0.6.2')
+        self.assertEqual((document['name'], document['appId'], document['slug']), ('RTXBridge', 'dgxbridge', 'dgxbridge'))
+        self.assertIn('independently obtained identity', document['description'])
+        self.assertIn('before any password-bearing SSH connection', document['description'])
+        self.assertIn('child-process environment', document['description'])
+        self.assertIn('known_hosts pins', document['privacy']['retention'])
+        self.assertTrue(any('selected remote account' in row for row in document['permissions']['filesystem']))
 
 
 def release_input(**changes):

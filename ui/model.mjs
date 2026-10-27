@@ -16,9 +16,9 @@ export function plainReason({spark,observation,mode='both',enabled=true}={}) {
   const raw=error.message||transport.reason||'',codes=[error.kind,error.code,...attempts.map(a=>a.status)].map(String);
   const has=(...values)=>values.some(v=>codes.includes(v));
   if(!enabled)return {text:'Paused. Choose Connect to resume.',action:'connect',raw};
-  if(has('authentication_failed')||error.code===7)return {text:"This laptop couldn't sign in, or the device answering isn't the Spark it remembers. DGXBridge stopped to keep you safe.",action:null,raw};
-  if(has('authenticated_controller_failed'))return {text:"Connected, but DGXBridge on the Spark isn't responding properly.",action:'repair',raw};
-  if(has('protocol_error'))return {text:"Your Spark's DGXBridge needs an update.",action:'repair',raw};
+  if(has('authentication_failed')||error.code===7)return {text:"This laptop couldn't sign in, or the device answering isn't the Spark it remembers. RTXBridge stopped to keep you safe.",action:null,raw};
+  if(has('authenticated_controller_failed'))return {text:"Connected, but RTXBridge on the Spark isn't responding properly.",action:'repair',raw};
+  if(has('protocol_error'))return {text:"Your Spark's RTXBridge needs an update.",action:'repair',raw};
   if(has('configuration_unavailable'))return {text:'Set up your Spark connection to start.',action:'setup',raw};
   if(mode!=='remote-only'&&lanUnreachable(transport,raw))return {text:"Your Spark isn't answering on this network."+(has('unconfigured','remote_adapter_unconfigured')?' Pair this laptop to reach it away from home.':''),action:'find',raw};
   if(has('transport_timeout')||/timed out|timeout/i.test(raw))return {text:'The Spark took too long to answer. Your request may still have gone through.',action:null,raw};
@@ -143,8 +143,8 @@ export function agentPrompt({agent,path,stateRoot,config,connection,limits,compu
   if(cleanReference(stateRoot))references.push(`Set SPARKDEV_HOME explicitly to this owner-state reference: ${cleanReference(stateRoot)}. Before configuring or running work, verify returned state diagnostics resolve to this physical owner state. Packaged Codex processes may redirect AppData into Codex LocalCache; stop and report that mismatch rather than creating or migrating another identity.`);
   const resourceLines=limits ? RESOURCE_FIELDS.filter(([key])=>Number.isSafeInteger(limits[key])).map(([key,label,unit])=>`${label}: ${limits[key]} ${unit}`) : ['Spark resource policy has not been read in this app session.'];
   const profiles=namedComputers(null,computers);
-  const computerInstructions=profiles.length?`\nCOMPUTERS: ${profiles.slice(0,4).map(node=>`${node.id}${node.enabled?'':' (disabled)'}`).join(', ')}${profiles.length>4?'; devices lists the rest':''}. Default auto placement considers compatible available computers. Use global --device ID to choose one, or --device auto. Retain node:JOB IDs exactly for wait/logs/cancel; retries stay on the original computer.\n`:'';
-  return `Use DGXBridge for this project. You are ${client==='claude'?'Claude Code':'Codex'}; use client label ${client}.
+  const computerInstructions=profiles.length?`\nCOMPUTERS: ${profiles.slice(0,4).map(node=>`${node.id}${node.enabled?'':' (disabled)'}`).join(', ')}${profiles.length>4?'; devices lists the rest':''}. Default auto placement considers compatible available computers. Use global --device ID to choose one, or --device auto. Retain node:JOB IDs exactly for wait/logs/cancel; retries stay on the original computer. PICK: devices lists each device's GPU and memory (capabilities) and link_speed, its last measured upload and return Mbit/s. Add --min-vram-gb N or --min-memory-gb N so auto picks a device that fits; send large inputs or outputs to the fastest measured link.\n`:'';
+  return `Use RTXBridge for this project. You are ${client==='claude'?'Claude Code':'Codex'}; use client label ${client}.
 
 Installed CLI: ${exe}
 Connection policy: ${MODE_LABELS[configMode(config)]}. Enabled: ${config?.connection_enabled===false?'no':'yes'}.
@@ -202,7 +202,7 @@ export function namedComputers(observation,nodes=[],{stale=false}={}) {
     const runtimeObserved=Array.isArray(device.runtimes),hasRuntime=runtimeObserved&&device.runtimes.some(runtime=>typeof runtime==='string'&&runtime.length>0);
     const status=!enabled?'Disabled':stale?'Last seen':detailsLimited?'Details unavailable':connected?(device.scheduler?.healthy===true?(hasRuntime?'Ready for jobs':runtimeObserved?'Tools preparing':'Setup needed'):'Connected'):device.availability==='unconfigured'?'Setup needed':device.error||device.availability==='unreachable'?'Offline':'Not checked';
     const hardware=device.hardware||{},capabilities=device.capabilities||{},endpoint=settings.endpoint||device.endpoint||{};
-    const facts=[['Connection',connected?'Verified SSH connection':status],['System',device.architecture||capabilities.architecture||hardware.architecture||'Not observed']];
+    const facts=[['Connection',connected?'Connected':status],['System',device.architecture||capabilities.architecture||hardware.architecture||'Not observed']];
     if(Number.isFinite(hardware.cpu_count))facts.push(['CPU',`${hardware.cpu_count} logical CPUs`]);
     if(Number.isFinite(hardware.memory_gb))facts.push(['System memory',`${hardware.memory_gb} GiB`]);
     const gpu=capabilities.gpu,firstGpu=gpu?.observed===true&&Array.isArray(gpu.devices)?gpu.devices[0]:null;
@@ -211,29 +211,137 @@ export function namedComputers(observation,nodes=[],{stale=false}={}) {
     return {id,label,enabled,connected,status,facts,endpoint,error:detailsLimited?'Local job history is too large to display. This limit does not indicate a network connection failure.':cleanReference(device.error?.message),priority:settings.priority??device.priority??0};
   });
 }
-export function nodeAddArgs(form) {
-  const get=name=>String(form.get(name)||'').trim();
-  const id=get('id'),label=get('label')||id;
-  if(!/^[a-z][a-z0-9-]{0,31}$/.test(id)||id.endsWith('-')||id.includes('--')||['spark','laptop','auto'].includes(id))throw new Error('Choose a short lowercase computer ID, starting with a letter. Spark, laptop and auto are reserved.');
-  if(label.length>96||/[\u0000-\u001f\u007f]/.test(label))throw new Error('Computer name must be at most 96 characters without control characters.');
-  const args=['node','add',id,'--label',label];
-  for(const [name,flag,required] of [['ssh_alias','--ssh-alias',true],['host_key_alias','--host-key-alias',true],['host','--host',false],['user','--user',false],['identity_file','--identity-file',false],['ssh_config','--ssh-config',false]]){
-    const value=get(name);if(required&&!value)throw new Error(name==='ssh_alias'?'Enter the saved SSH alias.':'Enter the pinned known-host alias.');
-    if(/[\u0000\r\n]/.test(value))throw new Error('Connection references must each fit on one line.');
-    if(value)args.push(flag,value);
+// What kind of work a job is, from its runtime and program name only (never its arguments).
+export const JOB_KINDS=Object.freeze({
+  build:{label:'Build & test',color:'#65d9ce'},
+  gpu:{label:'ML / GPU',color:'#b798f8'},
+  render:{label:'Blender',color:'#ffb454'},
+  video:{label:'Video',color:'#ff7eb6'},
+  server:{label:'Model server',color:'#c4ef87'},
+  windows:{label:'Windows',color:'#74acff'},
+  other:{label:'Other',color:'#9aa5a0'},
+});
+export function jobKind(job) {
+  if(job?.kind==='service')return 'server';
+  const program=String(job?.program||'').toLowerCase();
+  if(program==='blender')return 'render';
+  if(program==='ffmpeg'||program==='ffprobe')return 'video';
+  if(job?.runtime==='cuda')return 'gpu';
+  if(jobRunner(job)==='laptop')return 'windows';
+  if(['rust','node','python'].includes(job?.runtime))return 'build';
+  return 'other';
+}
+const mbpsText=value=>value>=1000?`${(value/1000).toFixed(value>=10000?0:1)} Gbit/s`:`${Math.round(value)} Mbit/s`;
+// How fast a device is to reach: its last measured upload and return speeds when there
+// are any, otherwise the slower of the two reported link rates, labelled as a link rate.
+function linkOf(device,observation) {
+  const measured=device?.link_speed&&typeof device.link_speed==='object'?device.link_speed:{};
+  const up=Number(measured.upload?.mbps),down=Number(measured.return?.mbps);
+  const hasUp=Number.isFinite(up)&&up>0,hasDown=Number.isFinite(down)&&down>0;
+  const laptopRate=Number((observation?.devices||[]).find(item=>item.id==='laptop')?.network?.interface?.transmit_link_speed_mbps);
+  const deviceRate=Number(device?.network?.active?.speed_mbps);
+  const rates=[laptopRate,deviceRate].filter(rate=>Number.isFinite(rate)&&rate>0),linkRate=rates.length?Math.min(...rates):null;
+  const remote=device?.transport?.route==='paired_iroh';
+  const mbps=hasUp||hasDown?Math.max(hasUp?up:0,hasDown?down:0):linkRate;
+  const label=remote?'Remote link':hasUp||hasDown?[hasUp&&`↑ ${mbpsText(up)}`,hasDown&&`↓ ${mbpsText(down)}`].filter(Boolean).join(' · '):linkRate?`${mbpsText(linkRate)} link`:'Speed not measured yet';
+  return {measured:hasUp||hasDown,upload:hasUp?up:null,download:hasDown?down:null,linkRate,remote,mbps:remote?null:mbps,label,
+    measuredAt:Math.max(Number(measured.upload?.measured_at)||0,Number(measured.return?.measured_at)||0)||null};
+}
+function workOf(jobs,id) {
+  const work={};
+  for(const job of (Array.isArray(jobs)?jobs:[]).filter(item=>jobRunner(item)===id&&isActiveJob(item))){
+    const phase=job.state==='running'?'running':job.state==='returning'?'returning':'waiting';
+    work[jobKind(job)]??=[];work[jobKind(job)].push(phase);
   }
-  const port=Number(get('port')||22),priority=Number(get('priority')||0);
-  if(!Number.isInteger(port)||port<1||port>65535)throw new Error('SSH port must be between 1 and 65535.');
-  if(!Number.isInteger(priority)||priority < -1000||priority>1000)throw new Error('Priority must be between -1000 and 1000.');
-  args.push('--port',String(port),'--priority',String(priority));
-  if(get('endpoint')==='windows-wsl'){
-    const distribution=get('distribution'),user=get('wsl_user'),path=get('controller_path');
-    if(!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(distribution))throw new Error('Enter the existing WSL distribution name.');
-    if(!/^[a-z_][a-z0-9_-]{0,31}$/.test(user))throw new Error('Enter the Linux account name inside WSL.');
-    if(!path.startsWith('/')||path.length>512||!path.endsWith('/sparkdev/controller.py')||path.slice(1).split('/').some(part=>!part||part==='.'||part==='..'||!/^[a-zA-Z0-9._-]+$/.test(part)))throw new Error('Enter the absolute Linux path ending in /sparkdev/controller.py.');
-    args.push('--wsl-distro',distribution,'--wsl-user',user,'--controller-path',path);
+  return work;
+}
+
+// Every device the bridge can run jobs on, in one shape: this laptop, the Spark and
+// each added computer. Rows only describe what the UI shows; nothing here schedules.
+const STATUS_LABELS = Object.freeze({ready:'Ready',busy:'Busy',attention:'Needs attention',paused:'Paused',checking:'Checking…',offline:'Offline',setup:'Finish setup',stale:'Last seen'});
+function gib(bytes) {return Number.isFinite(bytes)&&bytes>0?Math.round(bytes/1073741824):null;}
+function gpuOf(device) {
+  const gpu=device?.capabilities?.gpu,first=gpu?.observed===true&&Array.isArray(gpu.devices)?gpu.devices[0]:null;
+  if(!first)return null;
+  const name=cleanReference(first.name).replace(/^NVIDIA (GeForce )?/,'').trim()||'GPU',memory=gib(first.total_memory_bytes);
+  return {name,memory,unified:gpu.memory_model==='unified',count:gpu.devices.length};
+}
+function memoryOf(device) {
+  const total=gib(device?.capabilities?.system_memory?.total_bytes);
+  return total??(Number.isFinite(device?.hardware?.memory_gb)?Math.round(device.hardware.memory_gb):null);
+}
+function activeCounts(jobs,id) {
+  const mine=(Array.isArray(jobs)?jobs:[]).filter(job=>jobRunner(job)===id&&isActiveJob(job));
+  return {running:mine.filter(job=>job.state!=='queued').length,queued:mine.filter(job=>job.state==='queued').length};
+}
+export function deviceRows({observation,nodes=[],jobs=[],connection=null,config=null,stale=false}={}) {
+  const devices=Array.isArray(observation?.devices)?observation.devices:[];
+  const laptop=devices.find(device=>device.id==='laptop')||{},spark=devices.find(device=>device.id==='spark')||{};
+  const rows=[];
+  const threads=Number.isSafeInteger(laptop.logical_parallelism)?laptop.logical_parallelism:null,link=laptopLink(observation);
+  const agents={};for(const job of (Array.isArray(jobs)?jobs:[]).filter(isActiveJob)){const who=clientLabel(job.client);agents[who]=(agents[who]||0)+1;}
+  rows.push({id:'laptop',kind:'laptop',name:'This laptop',detail:'Windows · where agents run',status:{kind:'ready',label:STATUS_LABELS.ready},
+    goodFor:'Windows builds, installers and tests',specs:[threads&&`${threads} CPU threads`,link.label!=='Not reported'&&link.label!=='Route not identified'&&link.label].filter(Boolean),jobs:activeCounts(jobs,'laptop'),
+    work:workOf(jobs,'laptop'),agents,link:null,gpu:false,memory:null});
+  const state=connection||{};
+  const sparkStatus=!config?'setup':state.enabled===false?'paused':state.connected?(spark.scheduler&&spark.scheduler.healthy!==true?'attention':'ready'):['connecting','reconnecting'].includes(state.state)?'checking':'offline';
+  const sparkGpu=gpuOf(spark),sparkMemory=memoryOf(spark),sparkCpus=Number.isFinite(spark.hardware?.cpu_count)?spark.hardware.cpu_count:null;
+  rows.push({id:'spark',kind:'spark',name:'Spark',detail:cleanReference(config?.ssh_alias)||'DGX Spark',status:{kind:sparkStatus,label:sparkStatus==='offline'&&state.reason?STATUS_LABELS.offline:STATUS_LABELS[sparkStatus]},
+    goodFor:'Big models, Linux builds, GPU video and Blender',
+    specs:[sparkGpu&&`${sparkGpu.name} GPU`,sparkMemory&&`${sparkMemory} GB${sparkGpu?.unified?' shared with the GPU':' memory'}`,sparkCpus&&`${sparkCpus} CPU cores`,state.connected&&state.route].filter(Boolean),jobs:activeCounts(jobs,'spark'),
+    work:workOf(jobs,'spark'),link:linkOf(spark,observation),gpu:!!sparkGpu,memory:sparkMemory});
+  for(const named of namedComputers(observation,nodes,{stale})){
+    const device=devices.find(item=>item.id===named.id)||{},gpu=gpuOf(device),memory=memoryOf(device),cpus=Number.isFinite(device.hardware?.cpu_count)?device.hardware.cpu_count:null;
+    const status=!named.enabled?'paused':named.status==='Last seen'?'stale':named.status==='Details unavailable'?'attention':named.status==='Ready for jobs'||named.status==='Connected'?'ready':named.status==='Tools preparing'?'checking':named.status==='Setup needed'?'setup':named.status==='Offline'?'offline':'checking';
+    const windows=named.endpoint?.kind==='windows-wsl';
+    rows.push({id:named.id,kind:'computer',name:named.label,detail:windows?'Windows PC':'Linux computer',status:{kind:status,label:status==='checking'&&named.status==='Tools preparing'?'Setting up tools':STATUS_LABELS[status]},
+      goodFor:gpu?`GPU jobs that fit in ${gpu.memory??'its'} GB${gpu.memory?'':' memory'}`:'Linux builds and compute',
+      specs:[gpu&&`${gpu.name}${gpu.memory?` · ${gpu.memory} GB`:''}`,memory&&`${memory} GB memory`,cpus&&`${cpus} CPU threads`,windows?`Linux via WSL${named.endpoint?.distribution?` (${named.endpoint.distribution})`:''}`:null].filter(Boolean),
+      jobs:activeCounts(jobs,named.id),facts:named.facts,error:named.error||'',enabled:named.enabled,priority:named.priority,endpoint:named.endpoint,
+      work:workOf(jobs,named.id),link:linkOf(device,observation),gpu:!!gpu,memory});
   }
-  return args;
+  for(const row of rows){const {running,queued}=row.jobs,waiting=queued?`${queued} queued`:'';if(row.status.kind==='ready'&&running)row.status={kind:'busy',label:[`${running} running`,waiting].filter(Boolean).join(' · ')};else if(row.status.kind==='ready'&&queued)row.status={kind:'ready',label:waiting};}
+  return rows;
+}
+// Active work across every device, by kind, for the map legend.
+export function workSummary(rows) {
+  const totals={};
+  for(const row of rows)for(const [kind,phases] of Object.entries(row.work||{}))totals[kind]=(totals[kind]||0)+phases.length;
+  return Object.entries(JOB_KINDS).filter(([kind])=>totals[kind]).map(([kind,info])=>({kind,label:info.label,color:info.color,count:totals[kind]}));
+}
+// One-line summary for the top bar: all good, or the first thing that needs a look.
+export function fleetSummary(rows) {
+  const remote=rows.filter(row=>row.kind!=='laptop'),problem=remote.find(row=>['offline','attention','setup','stale'].includes(row.status.kind));
+  if(problem)return {kind:problem.status.kind==='setup'?'setup':'attention',label:`${problem.name}: ${problem.status.label.toLowerCase()}`};
+  const ready=rows.filter(row=>['ready','busy'].includes(row.status.kind)).length;
+  return {kind:'ready',label:`${ready} ${ready===1?'device':'devices'} ready`};
+}
+// A short ID agents type (--device antonpc) from the name the owner gives a device.
+export function deviceSlug(name,taken=[]) {
+  const base=String(name||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').replace(/^(?=[0-9])/,'pc-').slice(0,28).replace(/-+$/,'')||'device';
+  const used=new Set(['spark','laptop','auto',...taken]);
+  if(!used.has(base))return base;
+  for(let n=2;n<100;n++){if(!used.has(`${base}-${n}`))return `${base}-${n}`;}
+  throw new Error('Choose a different name for this device.');
+}
+// The one command the owner runs on the new device. It turns on that device's own
+// SSH server, authorizes only this device's key, and prints the account name and the
+// identity the wizard asks the owner to compare. The key is checked before use.
+export function deviceSetupCommand(os,publicKey) {
+  const key=String(publicKey||'').trim();
+  if(!/^ssh-ed25519 [A-Za-z0-9+/=]{40,120} dgxbridge-[a-z0-9-]{1,32}$/.test(key))throw new Error('The device key is not ready yet. Go back and try again.');
+  if(os==='windows')return `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null; Set-Service sshd -StartupType Automatic; Start-Service sshd; $k='${key}'; $f="$env:ProgramData\\ssh\\administrators_authorized_keys"; Add-Content $f $k; icacls $f /inheritance:r /grant '*S-1-5-32-544:F' /grant 'SYSTEM:F' | Out-Null; New-Item -ItemType Directory -Force "$env:USERPROFILE\\.ssh" | Out-Null; Add-Content "$env:USERPROFILE\\.ssh\\authorized_keys" $k; "Account: $env:USERNAME"; ssh-keygen -lf "$env:ProgramData\\ssh\\ssh_host_ed25519_key.pub"`;
+  if(os==='linux')return `(command -v sshd >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server)) && (sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd) && mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${key}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo "Account: $(whoami)" && ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`;
+  throw new Error('Choose whether the device runs Windows or Linux.');
+}
+// What a device check found, in plain words for the confirmation step.
+export function probeSummary(probe) {
+  if(!probe||probe.login!=='ok')return null;
+  const parts=[probe.os==='windows'?'Windows':probe.os==='linux'?`Linux${probe.architecture?` (${probe.architecture})`:''}`:'Unknown system'];
+  for(const gpu of Array.isArray(probe.gpus)?probe.gpus:[])parts.push(`${cleanReference(gpu.name)}${Number.isFinite(gpu.memory_gib)?` · ${Math.round(gpu.memory_gib)} GB`:''}`);
+  const wsl=Array.isArray(probe.wsl)?probe.wsl:[];
+  if(probe.os==='windows')parts.push(wsl.length?`Linux via WSL: ${cleanReference(wsl[0].distribution)}`:'No WSL yet');
+  return {name:cleanReference(probe.hostname)||cleanReference(probe.name)||probe.address,facts:parts,needsWsl:probe.os==='windows'&&!wsl.length,wsl:wsl[0]||null,hasGpu:(probe.gpus||[]).length>0};
 }
 export function jobOutcome(job) {
   if (job?.cache_hit) return {kind:'cached',label:'Reused result'};
@@ -425,8 +533,8 @@ export function discoveryView(result, config = null) {
   if (conflicts.length) notes.push(`Saved ${conflicts.length === 1 ? 'address' : 'addresses'} ${conflicts.join(', ')} now ${conflicts.length === 1 ? 'answers' : 'answer'} as a different SSH device. ${usable ? `Using an address below checks again and removes ${conflicts.length === 1 ? 'it' : 'them'} from your list.` : `Remove ${conflicts.length === 1 ? 'it' : 'them'} under Saved SSH connection, Other LAN addresses.`}`);
   if (loginRejected) notes.push(`${counted(loginRejected, 'address', 'addresses')} refused the SSH login. Check the SSH username and key file under Saved SSH connection.`);
   if (localKeyError) notes.push(`This laptop's SSH key or SSH settings could not be used for ${counted(localKeyError, 'address', 'addresses')}, often because of file permissions. Fix that, then search again.`);
-  if (pinHint) notes.push("The answers did not match the host key this laptop has saved for your Spark, or none is saved. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. DGXBridge never changes it for you.");
-  else if (unknownKey) notes.push(`${counted(unknownKey, 'SSH device', 'SSH devices')} answered with a host key that does not match the one this laptop has saved for your Spark${rows.length ? ` and ${unknownKey === 1 ? 'was' : 'were'} left alone.` : '. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. DGXBridge never changes it for you.'}`);
+  if (pinHint) notes.push("The answers did not match the host key this laptop has saved for your Spark, or none is saved. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. RTXBridge never changes it for you.");
+  else if (unknownKey) notes.push(`${counted(unknownKey, 'SSH device', 'SSH devices')} answered with a host key that does not match the one this laptop has saved for your Spark${rows.length ? ` and ${unknownKey === 1 ? 'was' : 'were'} left alone.` : '. If you reinstalled the Spark, update its known_hosts entry yourself, then search again. RTXBridge never changes it for you.'}`);
   if (unverified) notes.push(`${counted(unverified, 'address', 'addresses')} answered on the SSH port, but the pinned check broke off or did not finish in time. Search again.`);
   if (notDirect) notes.push(`${counted(notDirect, 'answering address', 'answering addresses')} would be reached through a proxy, jump host or bind option in your SSH settings, so Find my Spark did not check ${notDirect === 1 ? 'it' : 'them'}.`);
   if (others) notes.push(`${counted(others, 'other SSH device', 'other SSH devices')} answered and ${others === 1 ? 'was' : 'were'} left alone.`);
@@ -437,7 +545,7 @@ export function discoveryView(result, config = null) {
 export function discoverySaved(result, host = '') {
   const saved = cleanReference(result?.host) || cleanReference(host);
   const removed = (Array.isArray(result?.removed) ? result.removed : []).map(cleanReference).filter(Boolean);
-  const parts = [`Saved ${saved} as the first LAN address DGXBridge tries.`];
+  const parts = [`Saved ${saved} as the first LAN address RTXBridge tries.`];
   if (removed.length) parts.push(`Removed ${removed.join(', ')}, which now ${removed.length === 1 ? 'answers' : 'answer'} as a different SSH device.`);
   const warning = cleanReference(result?.warning);
   if (warning) parts.push(warning);

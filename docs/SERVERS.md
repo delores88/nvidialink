@@ -1,8 +1,8 @@
 # Named model services
 
-DGXBridge lets an agent load a model once on the Spark and call a named
+RTXBridge lets an agent load a model once on the Spark and call a named
 HTTP service repeatedly. It does not publish a TCP port. Calls travel over the
-authenticated DGXBridge route and a private per-service request/reply spool.
+authenticated RTXBridge route and a private per-service request/reply spool.
 This page describes the source contract, including 0.5.0 preparation integration.
 It does not establish a published 0.5.0 installer, installed update or measured
 physical Spark TTS result.
@@ -46,7 +46,7 @@ cancel cannot stop a different future service. A job-ID cancel remains durable.
 Save this 15-line example as `server.py` in the submitted project. It loads your
 project's model adapter once; implement `tts_model.load_model()` to return a
 callable that accepts text and returns complete WAV bytes. Choose and provision
-that model and its locked dependencies yourself. DGXBridge supplies neither the
+that model and its locked dependencies yourself. RTXBridge supplies neither the
 adapter nor model weights, and this example makes no model-quality/latency claim.
 
 ```python

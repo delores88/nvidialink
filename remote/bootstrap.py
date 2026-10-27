@@ -165,10 +165,10 @@ def ensure_runtime_idle(root):
         # Read-only: a failed check must never initialize a second identity or database.
         with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
             if db.execute("SELECT 1 FROM jobs WHERE state IN ('queued','starting','running') LIMIT 1").fetchone():
-                raise RuntimeRefreshError("runtime_work_active", "Finish or cancel DGXBridge jobs and model servers before refreshing its runtime")
+                raise RuntimeRefreshError("runtime_work_active", "Finish or cancel RTXBridge jobs and model servers before refreshing its runtime")
     result = subprocess.run(["docker", "ps", "-q", "--filter", "name=sparkdev-job-"], capture_output=True, check=False, timeout=10)
     if result.returncode or result.stdout.strip():
-        raise RuntimeRefreshError("runtime_idle_check_failed", "Could not establish that DGXBridge jobs and model servers are idle")
+        raise RuntimeRefreshError("runtime_idle_check_failed", "Could not establish that RTXBridge jobs and model servers are idle")
 
 
 def install(bundle):

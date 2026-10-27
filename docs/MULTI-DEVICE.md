@@ -1,6 +1,18 @@
 # Multiple compute computers
 
-DGXBridge 0.6 adds named Linux and Windows-with-WSL computers alongside the existing laptop and Spark. The existing Spark connection and its pairing, policy, jobs, and returned files keep their original state. Additional computers use independent profiles, controller state, runtimes, and return workers.
+RTXBridge 0.6 adds named Linux and Windows-with-WSL computers alongside the existing laptop and Spark. The existing Spark connection and its pairing, policy, jobs, and returned files keep their original state. Additional computers use independent profiles, controller state, runtimes, and return workers.
+
+## Add a device (guided)
+
+In the desktop app, **Devices → Add a device** does the whole setup without SSH knowledge:
+
+1. **Choose.** The app lists computers on this laptop's private networks that answer on the SSH port (`node scan`, read-only), or the owner types a name or address. Bare Windows computer names are resolved to IPv4 by RTXBridge, because Windows OpenSSH can fail to resolve them.
+2. **Allow.** Before using a password, compare the displayed ED25519 fingerprint with an independently obtained fingerprint from the computer and confirm that match. The password field stays disabled until this comparison is confirmed. Sign in once to authorize this device's dedicated ed25519 public key; a changed host key is rejected before the password connection starts. Without a password, **Can't use a password?** shows a command to run on the device as administrator in PowerShell on Windows, or in a terminal on Linux. The command enables that computer's own SSH server, authorizes only this public key and prints the account name and host-key fingerprint. Existing authorized keys are preserved.
+3. **Confirm.** `node probe ID --host H --user U` signs in with the key alone and reports what the device runs (Windows or Linux, GPUs, WSL distributions and their Linux users). It must still present the independently confirmed fingerprint. `node trust ID --label NAME --host H --user U --fingerprint SHA256:... [--wsl-distro D --wsl-user U]` reads the host key again and saves nothing unless it still matches. It writes an RTXBridge-owned pin and SSH profile under `STATE/devices/ID/` and registers the device. The owner's own `~/.ssh` is never read or changed. The app then installs the bridge, and the GPU tools when a GPU was found.
+
+The device's key never leaves this laptop. Revoke access by removing its line from the device's authorized keys.
+
+The password path is owner-only and absent from MCP. Its CLI equivalent is `sparkdev --client human node fingerprint --host H [--port P]`, independently compare that result, then `sparkdev --client human node authorize ID --host H --user U --fingerprint SHA256:... [--port P]` with the password supplied on standard input. The bridge does not save the password or put it in command arguments or logs. Enrollment retains its generated key pair, pin and profile locally. The password is available in local process memory and the SSH helper's child environment while signing in. A key-only job on an already configured device does not establish successful password enrollment.
 
 ## Register a trusted connection
 
@@ -21,7 +33,7 @@ The WSL distribution and user must already exist. The endpoint runs a fixed vali
 
 For NVIDIA GPU jobs on WSL, verify a small capped container probe as well as `nvidia-smi` on the host. Older Docker Desktop releases can omit a driver library required by newer Windows NVIDIA drivers, causing CUDA initialization error 500 even when CUDA works directly in WSL. This was reproduced on the test workstation with Docker Desktop 4.29. The upstream diagnosis and fix are tracked in [NVIDIA container-toolkit issue 520](https://github.com/NVIDIA/nvidia-container-toolkit/issues/520). Update Docker Desktop through its normal installer; do not register a runtime whose container probe failed.
 
-In the desktop app, **Computers** provides the same registration, enable/disable, and installation controls. The existing Spark connection screen remains separate. Saving a computer or refreshing the board does not install software or prepare runtimes.
+In the desktop app, **Devices** shows this laptop, the Spark and every added computer as one set of cards. The Spark's card opens its existing connection, routes and pairing controls. An added computer's card opens its details, with **Pause new jobs**, **Set up GPU tools** and **Reinstall bridge**. Refreshing never installs software or prepares runtimes.
 
 ## Install this release's controller and runtimes
 

@@ -20,6 +20,21 @@ The connection visuals use owner-authorized PhaseForge code at exact commit `7a6
 
 The drawer updater placement follows `frontend/src/components/shared/DesktopUpdate.jsx` and its stylesheet at the same pin. Native authorization and installer implementation provenance is recorded in [UPDATER-PROVENANCE.md](docs/UPDATER-PROVENANCE.md); it uses the current signed Marketplace contract and its own app identity. All first-party adaptations remain MIT under Ben Van Dorn / DeloresAI copyright.
 
+## 0.6.2 network map
+
+The Devices map uses three.js r170 (MIT, Copyright 2010-2024 three.js authors) from the npm package `three@0.170.0`, vendored under `ui/vendor/three/` with its license, which the installer ships as `notices/THREE-LICENSE.txt`. `build/three.module.min.js` is unchanged. `examples/jsm/controls/OrbitControls.js` is unchanged except that its `three` import names the local module.
+
+The exact upstream commit is `beab9e845f9e5ae11d648f55b24a0e910b56a85a`, resolved independently from the annotated `mrdoob/three.js` tag `r170` and npm's `gitHead`. The npm archive's published SHA-512 integrity was checked before comparing both modules and the license. Only the documented local import substitution differs. The source inventory is retained in [the verification receipt](evidence/three-r170-source.json). Release preparation starts from exact DGXBridge/RTXBridge source commit `f186d3ec7568b476ad1efc63e1ccee975bb9ecf3`; subsequent release corrections and version metadata are recorded separately.
+
+| Vendored file | SHA-256 |
+| --- | --- |
+| `ui/vendor/three/three.module.min.js` | `08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7` |
+| `ui/vendor/three/OrbitControls.js` | `e9c4f26866d39a36c8c9e8215e7d2a90a8a0b50ea6d44a005906e3d1fc726b8f` |
+
+The map replaces the 0.2.0 connection visual: `ui/connection-visual.mjs`, `sparkLinkParticles.mjs`, `sparkLinkMotion.mjs` and the adapted SparkLinkVisuals styles are removed. Only `visible-render-loop.mjs` from that pin remains in use.
+
+`assets/screenshots/rtxbridge-062-devices-preview.png` is an unchanged browser-fixture capture of the 0.6.2 Devices view, with explicitly labeled sample device/job data in its gallery description. It is not an installed/native screenshot or evidence of the sample hardware or link rates. The historical installed 0.5.1 Jobs image retains its original provenance below and is labeled as preceding the rename.
+
 ## 0.5.0 Blender runtime
 
 The read-only PhaseForge Blender 4.5.9 image and the owner-authorized recipe/support-file reuse, exact upstream commits, file hashes and third-party license boundaries are recorded in [PROVENANCE-REMOTE.md](PROVENANCE-REMOTE.md). DGXBridge uses a distinct runtime image and never changes the upstream image, repository or service.

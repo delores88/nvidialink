@@ -592,7 +592,20 @@ def manifest(value, downloads, runtime_evidence=None):
             'The source build can take substantial time and disk. If the exact already-present owner image ' + blender['existingLocalImage'] +
             ' is available, setup may reuse it read-only; no PhaseForge installation is required. The source pins, image-selection policy and remaining transitive download-declaration gaps are recorded in the manifest validation receipt; direct declarations do not claim a complete fallback build inventory. '
             'Blender and its dependencies have their own upstream licenses; the MIT declaration applies to DGXBridge first-party code. The Windows Cargo notice collection does not represent a complete optional Spark runtime license inventory.')
+    release_disclosures(document, value['version'])
     return document
+
+
+def release_disclosures(document, version):
+    """Keep historical manifests stable while disclosing 0.6.2 owner enrollment."""
+    if tuple(map(int, version.split('-', 1)[0].split('.'))) < (0, 6, 2):
+        return
+    document['name'] = 'RTXBridge'
+    document['description'] = document['description'].replace('DGXBridge connects', 'RTXBridge connects', 1)
+    document['description'] += ('\n\nRTXBridge was named DGXBridge. The application identity, Marketplace slug, state folders, CLI paths and canonical DGXBridge_VERSION_x64-setup.exe release asset name remain compatible with existing installations. Setup upgrades a legacy installation in place and replaces only its owned legacy registration and shortcuts. The Devices view uses a bundled, locally rendered three.js network map; it does not fetch a remote map service.\n\nOptional password enrollment is an explicit owner-only action. The owner first compares the scanned ED25519 fingerprint with an independently obtained identity for the selected computer. A fresh scan must match that confirmation before any password-bearing SSH connection begins. The password reaches OpenSSH through local standard input and the helper child-process environment; it is not written to configuration, command arguments or bridge logs. Enrollment adds a dedicated public SSH key to that selected account, preserves existing authorized keys, verifies key-only login and saves the independently confirmed pin. Agents cannot invoke enrollment through MCP; existing pinned manual SSH setup remains available.')
+    document['privacy']['retention'] += (' Enrollment retains generated per-computer SSH key pairs, confirmed known_hosts pins and SSH profiles in owner-local state until explicitly removed. The password is used in local process memory and the SSH helper environment during sign-in, not stored as a saved bridge credential.')
+    document['permissions']['filesystem'].append('On owner enrollment, retain a dedicated SSH key pair and host pin locally; add only its public key to the selected remote account, preserve existing keys and save the verified profile.')
+    document['featureNotices'].append({'name': 'RTXBridge Devices and owner enrollment', 'status': 'beta', 'description': 'The unified Devices map, independently confirmed password-to-key enrollment and legacy-name installer migration have separate source, isolated enrollment, installed and network receipts. A fresh password sign-in is not inferred from a preexisting SSH-key job.'})
 
 
 def runtime_validate(document, checkout):

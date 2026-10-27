@@ -48,7 +48,7 @@ const MANY_HOSTS: usize = 4;
 
 /// Shown when the gate refuses a caller other than the owner.
 pub const OWNER_ONLY: &str =
-    "Find my Spark is an owner action; run it from DGXBridge or with --client human";
+    "Find my Spark is an owner action; run it from RTXBridge or with --client human";
 pub const WINDOWS_ONLY: &str = "Find my Spark is available in the Windows app";
 // The same refusals ssh_raw gives.
 const DISCONNECTED: &str = "Bridge is disconnected; use sparkdev connect to enable new requests";

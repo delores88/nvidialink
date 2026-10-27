@@ -87,7 +87,7 @@ fn binary(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {
     if adjacent.is_file() {
         return Ok(adjacent);
     }
-    Err(format!("Bundled {name} is missing. Reinstall DGXBridge."))
+    Err(format!("Bundled {name} is missing. Reinstall RTXBridge."))
 }
 
 async fn launch(
@@ -153,7 +153,7 @@ async fn launch(
 fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
     let operation = args.first().map(String::as_str);
     let changes_connection = operation == Some("setup")
-        || (operation == Some("node") && matches!(args.get(1).map(String::as_str), Some("add" | "enable")))
+        || (operation == Some("node") && matches!(args.get(1).map(String::as_str), Some("add" | "enable" | "trust")))
         || (operation == Some("discover")
             && args.iter().any(|a| a == "--save" || a.starts_with("--save=")));
     if pairing && changes_connection {
@@ -166,7 +166,7 @@ fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
         || args.len() > if node_operation { 48 } else { 24 }
-        || (node_operation && !matches!(args.get(1).map(String::as_str), Some("list" | "add" | "enable")))
+        || (node_operation && !matches!(args.get(1).map(String::as_str), Some("list" | "add" | "enable" | "scan" | "key" | "fingerprint" | "probe" | "trust")))
         || args.iter().any(|s| s.contains('\0'))
     {
         return Err("Unsupported desktop operation".into());
@@ -221,6 +221,14 @@ mod desktop_args_tests {
             assert_eq!(desktop_args_allowed(&args(values), false), Ok(()));
             assert_eq!(desktop_args_allowed(&args(values), true).unwrap_err(), PAIRING);
         }
+        // Adding a device: scanning, making its key and checking it only read or
+        // prepare; trusting it changes connections, so it waits for pairing.
+        for values in [&["node", "scan"][..], &["node", "key", "office"], &["node", "probe", "office", "--host", "192.0.2.9", "--user", "ben"]] {
+            assert_eq!(desktop_args_allowed(&args(values), true), Ok(()), "{values:?}");
+        }
+        let trust = args(&["node", "trust", "office", "--label", "Office", "--host", "192.0.2.9", "--user", "ben", "--fingerprint", "SHA256:x"]);
+        assert_eq!(desktop_args_allowed(&trust, false), Ok(()));
+        assert_eq!(desktop_args_allowed(&trust, true).unwrap_err(), PAIRING);
         for values in [&["node"][..], &["node", "remove", "workstation"], &["node", "add", "bad\0"]] {
             assert!(desktop_args_allowed(&args(values), false).is_err());
         }
@@ -602,7 +610,7 @@ async fn resources(app: tauri::AppHandle, policy: Option<Value>, internet: Optio
 
 #[tauri::command]
 async fn update_action(app: tauri::AppHandle, window: tauri::Window, action: String) -> Result<Value, String> {
-    if window.label() != "main" { return Err("Updates are available only from the main DGXBridge window.".into()); }
+    if window.label() != "main" { return Err("Updates are available only from the main RTXBridge window.".into()); }
     if action == "install" {
         let state = app.state::<PairState>().inner().clone();
         let _lifecycle = state.lifecycle.lock().await;
@@ -684,9 +692,45 @@ async fn bootstrap_node(app: tauri::AppHandle, id: String, cuda: bool) -> Result
     launch(app, "sparkdev", args, None, 120).await
 }
 
+/// The sign-in that authorizes a device's new key. Only names and the account
+/// travel as arguments; the password goes to sparkdev on stdin.
+fn sign_in_args(id: &str, host: &str, user: &str, port: u16, fingerprint: &str) -> Result<Vec<String>, String> {
+    if id != "spark" {
+        sparkdev::nodes::validate_id(id).map_err(|error| error.message)?;
+    }
+    if [host, user].iter().any(|value| value.is_empty() || value.len() > 253 || value.starts_with('-') || value.contains('\0')) || port == 0
+        || !fingerprint.starts_with("SHA256:") || fingerprint.len() > 128 || fingerprint.contains('\0') {
+        return Err("Enter the device's name or address and the account you sign in with.".into());
+    }
+    Ok(["--json", "--client", "human", "node", "authorize", id, "--host", host, "--user", user, "--port", &port.to_string(), "--fingerprint", fingerprint]
+        .iter()
+        .map(|value| value.to_string())
+        .collect())
+}
+
+#[tauri::command]
+async fn sign_in(app: tauri::AppHandle, id: String, host: String, user: String, port: Option<u16>, fingerprint: String, password: String) -> Result<Value, String> {
+    if password.is_empty() || password.len() > 1024 {
+        return Err("Enter the password for that account.".into());
+    }
+    let args = sign_in_args(&id, &host, &user, port.unwrap_or(22), &fingerprint)?;
+    launch(app, "sparkdev", args, Some(serde_json::json!({"password": password})), 90).await
+}
+
 #[cfg(test)]
 mod node_bootstrap_tests {
-    use super::node_bootstrap_allowed;
+    use super::{node_bootstrap_allowed, sign_in_args};
+
+    #[test]
+    fn sign_in_passes_names_as_arguments_and_nothing_else() {
+        let args = sign_in_args("spark", "192.0.2.9", "ben", 22, "SHA256:confirmed-fixture").unwrap();
+        assert_eq!(args, ["--json", "--client", "human", "node", "authorize", "spark", "--host", "192.0.2.9", "--user", "ben", "--port", "22", "--fingerprint", "SHA256:confirmed-fixture"]);
+        assert!(sign_in_args("office", "AntonPC", "ben", 2222, "SHA256:confirmed-fixture").is_ok());
+        assert!(sign_in_args("office", "AntonPC", "ben", 22, "").is_err());
+        for (id, host, user) in [("laptop", "h", "u"), ("../x", "h", "u"), ("office", "-oProxyCommand=x", "u"), ("office", "h", ""), ("office", "h", "u\0")] {
+            assert!(sign_in_args(id, host, user, 22, "SHA256:confirmed-fixture").is_err(), "{id} {host} {user}");
+        }
+    }
 
     #[test]
     fn selected_node_setup_obeys_pairing_update_and_identity_guards() {
@@ -704,7 +748,7 @@ fn main() {
     let context = tauri::generate_context!();
     #[cfg(windows)]
     windows_taskbar::set_app_id(&context.config().identifier)
-        .expect("DGXBridge could not initialize its Windows taskbar identity");
+        .expect("RTXBridge could not initialize its Windows taskbar identity");
 
     tauri::Builder::default()
         .manage(PairState::default())
@@ -715,12 +759,12 @@ fn main() {
             {
                 let window = app
                     .get_webview_window("main")
-                    .ok_or_else(|| std::io::Error::other("DGXBridge main window is unavailable"))?;
+                    .ok_or_else(|| std::io::Error::other("RTXBridge main window is unavailable"))?;
                 windows_taskbar::set_taskbar_icon(&window)?;
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, connection, resources, update_action])
+        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, sign_in, connection, resources, update_action])
         .run(context)
-        .expect("DGXBridge could not start");
+        .expect("RTXBridge could not start");
 }
