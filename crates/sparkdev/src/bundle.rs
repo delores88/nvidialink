@@ -7,7 +7,7 @@ use std::{collections::BTreeSet, fs, io::Read, path::Path};
 
 const MAX_MANIFEST: u64 = 64 * 1024;
 const MAX_TOTAL: u64 = 192 * 1024 * 1024;
-const ALLOWED: [&str; 31] = [
+const ALLOWED: [&str; 35] = [
     "outputs.py",
     "system_packages.py",
     "media_probe.py",
@@ -21,8 +21,12 @@ const ALLOWED: [&str; 31] = [
     "runtime/blender/10_nvidia.json",
     "runtime/blender/locked_sources.py",
     "runtime/blender/inputs.lock.json",
+    "runtime/Dockerfile.agent",
+    "runtime/agent/package.json",
+    "runtime/agent/package-lock.json",
     "controller.py",
     "worker.py",
+    "agent.py",
     "proxy.py",
     "prepare.py",
     "model_cache.py",

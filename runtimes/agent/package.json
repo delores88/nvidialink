@@ -1,0 +1,9 @@
+{
+  "name": "sparkdev-agent-tools",
+  "private": true,
+  "description": "The agent CLIs in the RTXBridge agent runtime. Exact versions; integrity is in package-lock.json.",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.311",
+    "@openai/codex": "0.164.0"
+  }
+}

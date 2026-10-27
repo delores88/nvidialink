@@ -1,0 +1,13 @@
+# RTXBridge agent runtime: the bridge's own CPU runtime (Rust 1.98.1, Node, Python,
+# git) plus the Claude Code and Codex CLIs at exact versions from package-lock.json.
+# Built on the device by install-runtime.py right after the CPU runtime it extends.
+ARG BASE
+FROM ${BASE}
+COPY package.json package-lock.json /opt/sparkdev-agent/
+# Install scripts stay off; each CLI finds its platform binary package at run time.
+RUN cd /opt/sparkdev-agent \
+ && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --cache /tmp/npm-build-cache \
+ && rm -rf /tmp/npm-build-cache \
+ && ln -s /opt/sparkdev-agent/node_modules/.bin/claude /usr/local/bin/claude \
+ && ln -s /opt/sparkdev-agent/node_modules/.bin/codex /usr/local/bin/codex
+ENV DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
