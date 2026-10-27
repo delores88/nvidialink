@@ -1,0 +1,9 @@
+# DGXBridge 0.6.1
+
+This release includes the [multiple-computer extension](MULTI-DEVICE.md) and corrects a Windows integration issue found during installed acceptance of the unpublished 0.6.0 candidate. A packaged coding agent can reach the owner's real state through a loopback administrative share while the ordinary desktop app uses its drive path. The candidate treated those spellings as different retained computers and refused cross-context job inspection even though the SSH identity, jobs and returned files were unchanged.
+
+The correction compares actual volume and file identifiers for eligible local Windows aliases. Exact retained paths preserve the original behavior. Different state directories, remote SMB aliases, reparse ancestors, unsupported identifiers and changed SSH/source identities still fail closed. Retained paths and journals are not rewritten. Existing startup-worker alias handling is unchanged. The old source-project path convention remains: keep each worktree's original source-path spelling stable.
+
+The final Windows source gate passed 312 workspace tests, including 229 CLI-library tests, through the unchanged build guard. The new regressions cover real drive/loopback aliases, different directories and copied executables, unknown identifiers, retained retries, interrupted submission recovery, pending-return claims and completion in both directions. Physical installation, old-job inspection from both Windows contexts, new jobs, artifact checks and publication are recorded separately after those operations complete.
+
+The prior 0.6.0 source tag is retained unchanged; its GitHub release remains an unpublished superseded draft. The historical 0.5.1 installed Jobs screenshot documents the retained layout. The 0.6.1 Computers gallery image is explicitly a browser-rendered preview with sample data, not current installed/native visual acceptance. A fresh installed visual inspection and physical logon/reboot test are not claimed.
