@@ -10,21 +10,30 @@ fn schema(properties: Value, required: &[&str]) -> Value {
 
 fn tools() -> Value {
     let job = json!({"type":"string","minLength":1});
-    json!([
-      {"name":"devices","description":"Observe laptop and Spark availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access, job-internet policy and shared model-cache capacity; unknown capacity remains unknown. This is an observation, not a reservation. Includes observed Spark and laptop link types. Missing internet or download fields mean an older bridge: assume offline and inspect upload limits before large transfers.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
+    let mut result = json!([
+      {"name":"devices","description":"Observe laptop, Spark and registered-computer availability before submitting work. Reports authenticated connection route, reachability failures, scheduler access, job-internet policy and shared model-cache capacity; unknown capacity remains unknown. This is an observation, not a reservation. Includes observed Spark and laptop link types. Missing internet or download fields mean an older bridge: assume offline and inspect upload limits before large transfers.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"connection","description":"Read the owner's saved route preference and enabled/disconnected state. Does not connect, change settings or reveal SSH credentials. Existing admitted jobs retain their connections after disconnect.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
-      {"name":"resources","description":"Read the authenticated Spark scheduler resource policy and detected hardware bounds. Settings apply to new requests and admissions; this tool cannot change them. Laptop native CPU and memory are not capped by Spark settings.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"resources","description":"Read the selected remote computer's authenticated scheduler resource policy and detected hardware bounds. Settings apply to new requests and admissions; this tool cannot change them. Laptop native CPU and memory are not capped by Spark settings.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"plan","description":"Preview job placement and validate source and exact argv without uploading files, claiming a worktree or launching a job. Does not verify runtime availability or reserve capacity; use devices for current connectivity.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"}}), &["dir","argv"]),"annotations":{"readOnlyHint":true,"idempotentHint":true,"openWorldHint":false}},
-      {"name":"prepare","description":"Sync a project and submit fixed locked dependency preparation on Spark for Rust, Node, Python or CUDA (requirements-cuda.lock; packages the CUDA image provides are refused). No caller commands accepted. Preparation remains the allowlisted locked-dependency path, separate from owner-controlled job internet and shared model downloads. Reconnection also delivers cancellations previously queued by the owner. Retain the detached job ID and poll wait/logs to completion before runs that must work offline. Reuse request_id only for an uncertain submission; use a new ID to rerun a failed job.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"request_id":{"type":"string"}}), &["dir","runtime"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"prepare","description":"Sync a project and submit fixed locked dependency preparation on the selected remote computer for Rust, Node, Python or CUDA (requirements-cuda.lock; packages the CUDA image provides are refused). No caller commands accepted. Preparation remains the allowlisted locked-dependency path, separate from owner-controlled job internet and shared model downloads. Reconnection also delivers cancellations previously queued by the owner. Retain the detached job ID and poll wait/logs to completion before runs that must work offline. Reuse request_id only for an uncertain submission; use a new ID to rerun a failed job.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"request_id":{"type":"string"}}), &["dir","runtime"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
       {"name":"run","description":"Sync a project and submit a detached build/test job. Returns durable job ID; follow with wait/logs. Results and project changes return automatically, preserving newer laptop edits as conflict copies; no_return opts out. wait becomes terminal only after verified return. Use outputs to inspect retained file metadata, never base64 binary files into logs. Spark job internet follows the owner's policy, defaults on with private addresses and observed local networks blocked; the helper's observed public egress IP is also blocked; additional router aliases or other outbound routes are not detected. Reuses the shared model-download cache. Check devices for current availability; cached results are segregated by internet policy, and no_cache forces a fresh run. Laptop commands run natively with owner permissions and can change files outside the project. Reuse request_id to retry without duplicate execution.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"argv":{"type":"array","items":{"type":"string"},"minItems":1},"where":{"type":"string","enum":["auto","laptop","spark"],"default":"auto"},"runtime":{"type":"string"},"request_id":{"type":"string"},"no_cache":{"type":"boolean","default":false},"no_return":{"type":"boolean","default":false}}), &["dir","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
-      {"name":"serve","description":"Sync and start a named Spark-only HTTP model server in an isolated approved runtime. Returns immediately with a durable job ID; logs and wait accept its name. It stops when idle and eligible stops wake on a later call. The shared model cache avoids repeated model downloads. Reuse request_id after uncertain submission; replace=true can stop another client's server with this name.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"name":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"},"argv":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":1024},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"port":{"type":"integer","minimum":1,"maximum":65535,"default":8000},"memory_gb":{"type":"integer","minimum":1,"maximum":48,"default":16},"idle_minutes":{"type":"integer","minimum":5,"maximum":240,"default":30},"replace":{"type":"boolean","default":false},"request_id":{"type":"string"}}), &["dir","name","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
-      {"name":"call","description":"Call a named Spark model server over the authenticated bridge, with no published server port. Send body_json or an input file (up to 1 MiB). Retain request_id to retry safely; eligible stopped servers wake automatically. Polls for at most 45 seconds plus connection overhead, then returns waiting with request_id. Responses are saved locally and verified by SHA-256; only small JSON responses are inline. An HTTP error is a tool error.","inputSchema":schema(json!({"server":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"},"body_json":{"type":"string","maxLength":1048576},"input":{"type":"string","minLength":1},"path":{"type":"string","pattern":"^/[!-~]{0,1023}$","default":"/"},"content_type":{"type":"string","minLength":1,"maxLength":128},"save":{"type":"string","minLength":1},"timeout":{"type":"integer","minimum":0,"maximum":45,"default":45},"request_id":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"}}), &["server"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
-      {"name":"wait","description":"Bound the remote job wait to timeout seconds (0–60) and return status and exit code when terminal. job also accepts a model-server name, resolving active first then newest. Connection and queued-cancellation delivery add overhead. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"timeout":{"type":"integer","minimum":0,"maximum":60,"default":10}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"serve","description":"Sync and start a named remote-computer HTTP model server in an isolated approved runtime. Returns immediately with a durable job ID; logs and wait accept its name. It stops when idle and eligible stops wake on a later call. The shared model cache avoids repeated model downloads. Reuse request_id after uncertain submission; replace=true can stop another client's server with this name.","inputSchema":schema(json!({"dir":{"type":"string","minLength":1},"name":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"},"argv":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":1024},"runtime":{"type":"string","enum":["rust","node","python","cuda"]},"port":{"type":"integer","minimum":1,"maximum":65535,"default":8000},"memory_gb":{"type":"integer","minimum":1,"maximum":48,"default":16},"idle_minutes":{"type":"integer","minimum":5,"maximum":240,"default":30},"replace":{"type":"boolean","default":false},"request_id":{"type":"string"}}), &["dir","name","argv"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"call","description":"Call a named model server on the selected remote computer over the authenticated bridge, with no published server port. Send body_json or an input file (up to 1 MiB). Retain request_id to retry safely; eligible stopped servers wake automatically. Polls for at most 45 seconds plus connection overhead, then returns waiting with request_id. Responses are saved locally and verified by SHA-256; only small JSON responses are inline. An HTTP error is a tool error.","inputSchema":schema(json!({"server":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"},"body_json":{"type":"string","maxLength":1048576},"input":{"type":"string","minLength":1},"path":{"type":"string","pattern":"^/[!-~]{0,1023}$","default":"/"},"content_type":{"type":"string","minLength":1,"maxLength":128},"save":{"type":"string","minLength":1},"timeout":{"type":"integer","minimum":0,"maximum":45,"default":45},"request_id":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"}}), &["server"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+      {"name":"wait","description":"Bound the remote job wait to timeout seconds (0Ã¢â‚¬â€œ60) and return status and exit code when terminal. job also accepts a model-server name, resolving active first then newest. Connection and queued-cancellation delivery add overhead. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"timeout":{"type":"integer","minimum":0,"maximum":60,"default":10}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"outputs","description":"Inspect a Spark job result manifest and automatic laptop return receipt. Completed files return automatically; this is metadata inspection, not a required download step.","inputSchema":schema(json!({"job":job}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true,"openWorldHint":true}},
       {"name":"logs","description":"Read and save a bounded chunk of retained output from a byte offset; next_offset supports lossless repeated polling. job also accepts a model-server name, resolving active first then newest. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({"job":job,"since":{"type":"integer","minimum":0,"default":0}}), &["job"]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
-      {"name":"status","description":"Read the shared job board for Claude Code, Codex and human jobs on the laptop and Spark, with transport and cache details. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
+      {"name":"status","description":"Read the shared job board for Claude Code, Codex and human jobs on the laptop, Spark and registered computers, with transport and cache details. Reconnection also delivers cancellations previously queued by the owner.","inputSchema":schema(json!({}), &[]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}},
       {"name":"cancel","description":"Cancel by job ID or a live model-server name (exactly one of job/name). Job-ID cancellations can be queued when disconnected. A name cancellation requires a live connection and is never queued, so it cannot stop a newer server later.","inputSchema":schema(json!({"job":job,"name":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,23}$"}}), &[]),"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":true}}
-    ])
+    ]);
+    for tool in result.as_array_mut().expect("static tool list") {
+        tool["inputSchema"]["properties"]["device"] = json!({"type":"string","minLength":1,"maxLength":32,"description":"Registered computer ID, spark, laptop or auto. Qualified job IDs retain their original device automatically."});
+        if matches!(tool["name"].as_str(), Some("run" | "plan")) {
+            for key in ["min_memory_gb", "min_vram_gb"] {
+                tool["inputSchema"]["properties"][key] = json!({"type":"integer","minimum":1,"maximum":1048576});
+            }
+        }
+    }
+    result
 }
 
 fn required_string<'a>(v: &'a Value, name: &str) -> Result<&'a str, String> {
@@ -126,7 +135,8 @@ fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> 
         _ => return Err("Unknown tool".into()),
     };
     let object = v.as_object().ok_or("arguments must be an object")?;
-    if object.keys().any(|k| !allowed.contains(&k.as_str())) {
+    if object.keys().any(|k| !allowed.contains(&k.as_str()) && k != "device"
+        && !(matches!(name, "run" | "plan") && matches!(k.as_str(), "min_memory_gb" | "min_vram_gb"))) {
         return Err("Unexpected tool argument".into());
     }
     let mut out = vec![
@@ -135,6 +145,21 @@ fn cli_args(name: &str, v: &Value, client: &str) -> Result<Vec<String>, String> 
         client.into(),
         name.into(),
     ];
+    let mut globals = Vec::new();
+    if v.get("device").is_some() {
+        let device = required_string(v, "device")?;
+        if !matches!(device, "spark" | "laptop" | "auto") {
+            crate::nodes::validate_id(device).map_err(|e| e.message)?;
+        }
+        globals.extend(["--device".to_owned(), device.to_owned()]);
+    }
+    for (key, flag) in [("min_memory_gb", "--min-memory-gb"), ("min_vram_gb", "--min-vram-gb")] {
+        if v.get(key).is_some() {
+            let value = bounded_number(v, key, 1, 1, 1048576)?;
+            globals.extend([flag.to_owned(), value.to_string()]);
+        }
+    }
+    out.splice(3..3, globals);
     match name {
         "serve" => {
             let dir = required_string(v, "dir")?;
@@ -345,6 +370,10 @@ fn error(id: Value, code: i32, message: &str) -> Value {
 }
 
 pub fn serve(client: &str) -> io::Result<()> {
+    serve_with_device(client, None)
+}
+
+pub fn serve_with_device(client: &str, default_device: Option<&str>) -> io::Result<()> {
     if !["claude", "codex", "human"].contains(&client) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -414,7 +443,7 @@ pub fn serve(client: &str) -> io::Result<()> {
                 } else {
                     "2025-06-18"
                 };
-                json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"sparkdev","version":env!("CARGO_PKG_VERSION")},"instructions":"Check devices for authenticated Spark reachability, route, scheduler access, job-internet policy and shared model downloads; plan previews placement without reservation. Use prepare for locked dependencies, run for detached workloads, bounded wait and incremental logs. Use serve/call for named isolated HTTP model servers; retain request IDs across uncertain responses. Internet defaults on for Spark jobs, subject to owner policy. Private addresses, observed local networks and the helper's observed public egress IP are blocked. Additional router aliases or other outbound routes are not discovered; failed or stale public-egress checks cut internet. Missing internet fields mean offline. Never change owner settings or run discover. --no-cache skips result reuse and keeps saved downloads. Initial sync precedes job admission and may take time. Check status for both machines. Laptop admission also requires the shared Spark scheduler. Client identity is bound by server launch arguments. Agent conversations and delegation belong to CodaClauda, not this scheduler."}})
+                json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"sparkdev","version":env!("CARGO_PKG_VERSION")},"instructions":"Check devices for authenticated remote-computer reachability, route, scheduler access, job-internet policy and shared model downloads; plan previews placement without reservation. Use prepare for locked dependencies, run for detached workloads, bounded wait and incremental logs. Use serve/call for named isolated HTTP model servers; retain request IDs across uncertain responses. Internet defaults on for Spark jobs, subject to owner policy. Private addresses, observed local networks and the helper's observed public egress IP are blocked. Additional router aliases or other outbound routes are not discovered; failed or stale public-egress checks cut internet. Missing internet fields mean offline. Never change owner settings or run discover. --no-cache skips result reuse and keeps saved downloads. Initial sync precedes job admission and may take time. Check status for both machines. Laptop admission also requires the shared Spark scheduler. Client identity is bound by server launch arguments. Agent conversations and delegation belong to CodaClauda, not this scheduler."}})
             }
             "ping" => json!({"jsonrpc":"2.0","id":id,"result":{}}),
             _ if !initialized => error(id, -32002, "Initialize first"),
@@ -422,6 +451,12 @@ pub fn serve(client: &str) -> io::Result<()> {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).unwrap_or("");
                 let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+                let mut arguments = arguments;
+                if let Some(device) = default_device {
+                    if let Some(object) = arguments.as_object_mut() {
+                        object.entry("device").or_insert_with(|| json!(device));
+                    }
+                }
                 match cli_args(name, &arguments, client) {
                     Err(message) => error(id, -32602, &message),
                     Ok(args) => {
@@ -737,5 +772,47 @@ mod tests {
                 .ends_with("Includes observed Spark and laptop link types. Missing internet or download fields mean an older bridge: assume offline and inspect upload limits before large transfers.")
         );
         assert_eq!(devices["annotations"]["readOnlyHint"], true);
+    }
+}
+
+#[cfg(test)]
+mod multidevice_tests {
+    use super::*;
+
+    #[test]
+    fn device_selection_keeps_client_binding_and_exact_workload_arguments() {
+        let args = cli_args("run", &json!({"dir":"./project","device":"antonpc","argv":["python3","script.py","--device","literal","a b",""]}), "codex").unwrap();
+        assert_eq!(&args[..6], &["--json","--client","codex","--device","antonpc","run"]);
+        let delimiter = args.iter().position(|v|v=="--").unwrap();
+        assert_eq!(&args[delimiter+1..], &["python3","script.py","--device","literal","a b",""]);
+        assert!(cli_args("run", &json!({"dir":".","device":"antonpc","client":"claude","argv":["true"]}), "codex").is_err());
+    }
+
+    #[test]
+    fn qualified_jobs_are_retained_for_durable_profile_routing() {
+        let args=cli_args("wait", &json!({"job":"antonpc:job-123","timeout":20}), "codex").unwrap();
+        assert!(args.iter().any(|v|v=="antonpc:job-123"));
+        assert!(cli_args("devices", &json!({"device":"../other"}), "codex").is_err());
+        assert!(cli_args("devices", &json!({"device":"--help"}), "codex").is_err());
+    }
+
+    #[test]
+    fn memory_requirements_are_bounded_and_only_available_for_job_placement() {
+        let args=cli_args("plan", &json!({"dir":".","device":"auto","min_memory_gb":16,"min_vram_gb":20,"argv":["python3","main.py"]}), "codex").unwrap();
+        assert!(args.windows(2).any(|v|v==["--min-memory-gb","16"]));
+        assert!(args.windows(2).any(|v|v==["--min-vram-gb","20"]));
+        for bad in [json!(0),json!(-1),json!(true),json!(1048577)] {
+            assert!(cli_args("run", &json!({"dir":".","min_vram_gb":bad,"argv":["true"]}), "codex").is_err());
+        }
+        assert!(cli_args("resources", &json!({"min_vram_gb":1}), "codex").is_err());
+    }
+
+    #[test]
+    fn tool_schemas_expose_optional_device_without_owner_mutation_controls() {
+        let value=tools();
+        for tool in value.as_array().unwrap() {
+            assert_eq!(tool["inputSchema"]["properties"]["device"]["type"], "string");
+            assert!(!tool["inputSchema"]["properties"].as_object().unwrap().contains_key("client"));
+        }
     }
 }

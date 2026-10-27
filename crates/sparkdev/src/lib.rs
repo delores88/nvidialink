@@ -5,6 +5,9 @@ pub mod laptop_network;
 pub mod local;
 pub mod mcp;
 pub mod nodes;
+mod fleet;
+pub mod bundle;
+mod provision;
 pub mod returns;
 mod servers;
 pub mod state;
@@ -49,6 +52,16 @@ impl From<serde_json::Error> for AppError {
     }
 }
 pub type Result<T> = std::result::Result<T, AppError>;
+/// A fleet child must submit the exact source manifest retained by its parent.
+/// This closes the interval between selecting a device and recollecting files.
+pub(crate) fn enforce_expected_manifest(manifest_id: &str) -> Result<()> {
+    if let Some(expected) = std::env::var_os("SPARKDEV_EXPECTED_MANIFEST") {
+        if expected.to_str() != Some(manifest_id) {
+            return Err(AppError::new(5, "Source changed after device selection; restore the retained source or submit a new request ID"));
+        }
+    }
+    Ok(())
+}
 /// Setup's refusal for a redirected state folder, shared with Find my Spark's
 /// save, which writes the same configuration.
 pub(crate) const REDIRECTED_STATE: &str = "Windows redirected this process's state folder. Configure SSH in the normally installed DGXBridge app, or set SPARKDEV_HOME to the verified owner state location; no configuration was copied or saved.";
@@ -68,13 +81,24 @@ pub fn json_output(args: &[String]) -> bool {
 #[command(
     name = "sparkdev",
     version,
-    about = "Run isolated development jobs on your Spark or laptop"
+    about = "Run isolated development jobs across your compute computers"
 )]
 struct Cli {
     #[arg(long, global = true)]
     json: bool,
     #[arg(long, global = true, default_value = "human", value_enum)]
     client: Client,
+    /// Choose a registered computer; auto considers compatible healthy devices.
+    #[arg(long, global = true)]
+    device: Option<String>,
+    /// Minimum observed system memory needed by a remote workload, in GiB.
+    #[arg(long, global = true, value_parser=clap::value_parser!(u64).range(1..=1048576))]
+    min_memory_gb: Option<u64>,
+    /// Minimum observed GPU memory needed by a remote workload, in GiB.
+    #[arg(long, global = true, value_parser=clap::value_parser!(u64).range(1..=1048576))]
+    min_vram_gb: Option<u64>,
+    #[arg(long, global = true, hide = true)]
+    profile_scoped: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -106,6 +130,19 @@ enum Switch {
 }
 #[derive(Subcommand)]
 enum Commands {
+    /// Install this release's inspected controller bundle over the selected SSH connection.
+    Bootstrap {
+        #[arg(long)]
+        bundle: PathBuf,
+        /// Also prepare and verify the architecture-specific GPU runtime.
+        #[arg(long)]
+        cuda: bool,
+    },
+    /// Register and manage additional compute computers without replacing Spark.
+    Node {
+        #[command(subcommand)]
+        command: NodeCommands,
+    },
     Setup {
         #[arg(long)]
         ssh_alias: String,
@@ -261,6 +298,43 @@ enum Commands {
     #[command(hide = true)]
     Mcp,
 }
+
+#[derive(Subcommand)]
+enum NodeCommands {
+    List,
+    Add {
+        id: String,
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        ssh_alias: String,
+        #[arg(long = "host")]
+        hosts: Vec<String>,
+        #[arg(long)]
+        host_key_alias: String,
+        #[arg(long)]
+        identity_file: Option<PathBuf>,
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
+        #[arg(long)]
+        wsl_distro: Option<String>,
+        #[arg(long)]
+        wsl_user: Option<String>,
+        #[arg(long)]
+        controller_path: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        priority: i32,
+    },
+    Enable {
+        id: String,
+        #[arg(value_enum)]
+        enabled: Switch,
+    },
+}
 pub fn execute(args: Vec<String>) -> Result<Value> {
     execute_with_events(args, &mut |_| {})
 }
@@ -273,6 +347,12 @@ pub fn mcp_client(args: &[String]) -> Option<String> {
     } else {
         None
     }
+}
+/// Optional default device for a stdio session; per-tool selectors may override it.
+pub fn mcp_device(args: &[String]) -> Option<String> {
+    Cli::try_parse_from(std::iter::once("sparkdev".to_string()).chain(args.iter().cloned()))
+        .ok()
+        .and_then(|cli| cli.device)
 }
 /// Find my Spark runs only for the owner: exactly one `--client X` or
 /// `--client=X` token before any `--`, naming `human`, and clap's parsed
@@ -309,6 +389,11 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
         std::iter::once("sparkdev".into()).chain(servers::normalize_call_args(args)),
     )
     .map_err(|e| AppError::new(if e.use_stderr() { 2 } else { 0 }, e.to_string()))?;
+    if !cli.profile_scoped {
+        if let Some(value) = fleet::dispatch(&cli, &raw, events)? {
+            return Ok(value);
+        }
+    }
     let parsed_client = cli.client;
     let client = cli.client.name();
     // A normal CLI/app startup recovers delivery after a laptop restart.
@@ -316,6 +401,8 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
         let _ = returns::ensure_worker();
     }
     match cli.command {
+        Commands::Bootstrap { bundle, cuda } => provision::bootstrap(&bundle, cuda),
+        Commands::Node { .. } => Err(AppError::new(2, "Node management is unavailable inside a device worker")),
         Commands::Setup {
             ssh_alias,
             hosts,
@@ -512,6 +599,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             request_id,
         } => {
             let inv = inventory::collect(&dir)?;
+            enforce_expected_manifest(&inv.manifest_id)?;
             let request_id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             state::validate_id(&request_id)?;
             let request = json!({"v":1,"op":"prepare","project":inv.project,"manifest_id":inv.manifest_id,"runtime":runtime,"client":client,"request_id":request_id});
@@ -551,6 +639,7 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             } else {
                 inventory::collect(&root)?
             };
+            enforce_expected_manifest(&inv.manifest_id)?;
             let runtime = runtime.unwrap_or_else(|| default_runtime(&argv).into());
             let request_id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             state::validate_id(&request_id)?;
@@ -823,6 +912,7 @@ fn devices() -> Result<Value> {
             spark["hardware"] = status["hardware"].clone();
             spark["runtimes"] = status["runtimes"].clone();
             spark["gpu_video"] = status["gpu_video"].clone();
+            spark["capabilities"] = status.get("capabilities").cloned().unwrap_or(Value::Null);
             spark["network"] = spark_network(&status);
             spark["internet"] = status
                 .get("internet")

@@ -6,6 +6,13 @@ const INPUT_LIMIT: usize = 1024 * 1024;
 const REPLY_LIMIT: u64 = 256 * 1024 * 1024;
 const CHUNK_LIMIT: u64 = 2 * 1024 * 1024;
 
+fn check_expected_body(body: &[u8], expected: Option<&str>) -> Result<()> {
+    if expected.is_some_and(|expected| inventory::hash(body) != expected) {
+        return Err(AppError::new(5, "Model input changed after device selection; restore the retained input or submit a new request ID"));
+    }
+    Ok(())
+}
+
 pub(crate) fn valid_name(name: &str) -> bool {
     !name.starts_with("laptop")
         && name.len() <= 24
@@ -31,9 +38,10 @@ pub(crate) fn normalize_call_args(mut args: Vec<String>) -> Vec<String> {
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
-            "--json" => index += 1,
-            "--client" => index += 2,
-            v if v.starts_with("--client=") => index += 1,
+            "--json" | "--profile-scoped" => index += 1,
+            "--client" | "--device" | "--min-memory-gb" | "--min-vram-gb" => index += 2,
+            v if ["--client=", "--device=", "--min-memory-gb=", "--min-vram-gb="]
+                .iter().any(|prefix| v.starts_with(prefix)) => index += 1,
             "call" => {
                 index += 1;
                 while index < args.len() {
@@ -56,6 +64,9 @@ pub(crate) fn normalize_call_args(mut args: Vec<String>) -> Vec<String> {
                         "--timeout",
                         "--request-id",
                         "--client",
+                        "--device",
+                        "--min-memory-gb",
+                        "--min-vram-gb",
                     ]
                     .contains(&value)
                     {
@@ -96,10 +107,11 @@ pub(crate) fn serve(
     if !valid_name(name) || port == 0 || !(1..=48).contains(&memory) || !(5..=240).contains(&idle) {
         return Err(AppError::new(
             2,
-            "Use a server name of 1–24 lowercase letters, digits or hyphens (not laptop*), a port above zero, 1–48 GiB, and 5–240 idle minutes.",
+            "Use a server name of 1â€“24 lowercase letters, digits or hyphens (not laptop*), a port above zero, 1â€“48 GiB, and 5â€“240 idle minutes.",
         ));
     }
     let inv = inventory::collect(dir)?;
+    crate::enforce_expected_manifest(&inv.manifest_id)?;
     let id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     state::validate_id(&id)?;
     let mut request = json!({"v":1,"op":"serve","project":inv.project,"manifest_id":inv.manifest_id,
@@ -171,6 +183,11 @@ pub(crate) fn call(
     if body.len() > INPUT_LIMIT {
         return Err(AppError::new(2, "Model call input exceeds 1 MiB"));
     }
+    let expected_body = std::env::var("SPARKDEV_EXPECTED_CALL_BODY")
+        .map(Some)
+        .or_else(|error| if matches!(error, std::env::VarError::NotPresent) { Ok(None) } else { Err(error) })
+        .map_err(|_| AppError::new(5, "Invalid retained model input identity"))?;
+    check_expected_body(&body, expected_body.as_deref())?;
     inventory::scan(&body)?;
     let content_type = content_type.unwrap_or_else(|| {
         if is_json {
@@ -582,5 +599,37 @@ mod tests {
             assert_eq!(got.get("json").is_some(), !large);
             assert_eq!(got["process_exit_code"], 1);
         }
+    }
+}
+
+#[cfg(test)]
+mod device_call_regressions {
+    use super::*;
+
+    #[test]
+    fn named_and_scoped_calls_keep_json_shorthand_and_payloads_unambiguous() {
+        for prefix in [
+            vec!["--json","--client","codex","--device","render"],
+            vec!["--device=render","--profile-scoped","--json"],
+            vec!["--min-vram-gb","20","--device","render"],
+        ] {
+            let mut args=prefix.iter().map(|v|v.to_string()).collect::<Vec<_>>();
+            args.extend(["call","tts","--json","{\"value\":\"--device\"}"].map(str::to_owned));
+            let normalized=normalize_call_args(args);
+            assert_eq!(normalized[normalized.len()-2],"--body-json");
+            assert_eq!(normalized.last().unwrap(),"{\"value\":\"--device\"}");
+        }
+        let args=["run",".","--","call","tts","--json","{}"].map(str::to_owned).to_vec();
+        assert_eq!(normalize_call_args(args.clone()),args);
+    }
+
+    #[test]
+    fn call_body_guard_refuses_changed_bytes_before_remote_submission() {
+        let retained=inventory::hash(b"retained body");
+        assert!(check_expected_body(b"retained body",Some(&retained)).is_ok());
+        let failure=check_expected_body(b"changed body",Some(&retained)).unwrap_err();
+        assert_eq!(failure.code,5);
+        assert!(check_expected_body(b"legacy body",None).is_ok());
+        assert!(check_expected_body(b"retained body",Some("malformed")).is_err());
     }
 }

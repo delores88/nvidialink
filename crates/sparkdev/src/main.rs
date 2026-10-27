@@ -11,7 +11,8 @@ fn main() {
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
     if let Some(client) = sparkdev::mcp_client(&args) {
-        std::process::exit(if sparkdev::mcp::serve(&client).is_ok() {
+        let device = sparkdev::mcp_device(&args);
+        std::process::exit(if sparkdev::mcp::serve_with_device(&client, device.as_deref()).is_ok() {
             0
         } else {
             3
