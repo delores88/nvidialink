@@ -1,5 +1,8 @@
 # Agent and human CLI
 
+For additional Linux/WSL computers, named-device selection, first GPU preparation and qualified job IDs, see [Multiple compute computers](MULTI-DEVICE.md). Existing commands below retain their legacy Spark/laptop behavior when no additional profiles are registered.
+
+
 `sparkdev` never prompts, invokes a pager, allocates a TTY, or interpolates workload arguments into SSH shell text. `--json` produces structured output. Attached runs stream JSON log events followed by the final result; detached commands return one JSON object. Client labels support accounting and fairness; they are not evidence that a particular AI agent actually ran a command.
 
 ## Offload by default
@@ -88,7 +91,7 @@ sparkdev --client codex --json status --all
 sparkdev --client codex --json cancel JOB_ID
 ```
 
-Use the returned `next_offset` for subsequent logs calls. Offsets count bytes, and `data` is base64 for lossless retrieval; `text` is a UTF-8 presentation. Every captured chunk is saved locally at its original byte offset. Log queries are repeatable. SSH requests have bounded connection and process timeouts; `wait` accepts 0â€“60 seconds of server waiting. Network setup adds bounded transport overhead. An attached run passes through the workload exit code; its JSON contains `process_exit_code`. Detached submission, wait and logs return success for a valid operation even if a completed workload failed: inspect `state` and `exit_code`.
+Use the returned `next_offset` for subsequent logs calls. Offsets count bytes, and `data` is base64 for lossless retrieval; `text` is a UTF-8 presentation. Every captured chunk is saved locally at its original byte offset. Log queries are repeatable. SSH requests have bounded connection and process timeouts; `wait` accepts 0Ã¢â‚¬â€œ60 seconds of server waiting. Network setup adds bounded transport overhead. An attached run passes through the workload exit code; its JSON contains `process_exit_code`. Detached submission, wait and logs return success for a valid operation even if a completed workload failed: inspect `state` and `exit_code`.
 
 Reuse the same `--request-id` after an ambiguous submission disconnect. The immutable request is saved before network submission and cannot be reused for different source, argv, runtime or placement. Without an explicit ID each new invocation is a new request. A connection failure (exit 4) of a Spark run or of prepare ends its message with the request ID, including a generated one, so it can be reused. No-cache controls result reuse, not request identity. Run requests survive laptop disconnection once accepted by the Spark; cancel requests made offline are queued and delivered at the next authenticated command.
 

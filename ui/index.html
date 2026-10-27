@@ -23,6 +23,7 @@
   <div class="rail-brand"><img src="brand/icon.png" alt="DGXBridge"></div>
   <button class="nav active" data-view="overview" aria-current="page"><span class="nav-icon"><svg class="icon"><use href="#i-jobs"/></svg><i class="nav-badge" id="nav-active" hidden></i></span><span class="nav-label">Jobs</span></button>
   <button class="nav" data-view="connection"><span class="nav-icon"><svg class="icon"><use href="#i-spark"/></svg><i class="nav-dot" data-connection-dot></i></span><span class="nav-label">Spark</span></button>
+  <button class="nav" data-view="computers"><span class="nav-icon"><svg class="icon"><use href="#i-laptop"/></svg></span><span class="nav-label">Computers</span></button>
   <button class="nav" data-view="resources"><span class="nav-icon"><svg class="icon"><use href="#i-sliders"/></svg></span><span class="nav-label">Settings</span></button>
   <button class="nav" data-view="agents"><span class="nav-icon"><svg class="icon"><use href="#i-agents"/></svg></span><span class="nav-label">Agents</span></button>
   <div class="rail-bottom">
@@ -61,6 +62,7 @@
       <div class="pane-head"><h2>Shared job board</h2><span class="count-pill" id="job-count">0</span></div>
       <label class="search"><svg class="icon"><use href="#i-search"/></svg><input id="job-search" type="search" placeholder="Search job, agent, runtime" autocomplete="off" spellcheck="false" aria-label="Search jobs"><kbd>Ctrl K</kbd></label>
       <div class="chips" role="group" aria-label="Filter jobs"><button data-filter="all" aria-pressed="true">All</button><button data-filter="active" aria-pressed="false">Active</button><button data-filter="failed" aria-pressed="false">Failed</button><button data-filter="spark" aria-pressed="false">Spark</button><button data-filter="laptop" aria-pressed="false">Laptop</button></div>
+      <label id="job-device-label" class="computer-filter" hidden>Computer<select id="job-device-filter" class="computer-select" aria-label="Filter by computer"><option value="">All computers</option></select></label>
       <ul id="jobs" class="job-list" aria-label="Jobs"></ul>
       <div id="empty-jobs" class="list-empty" hidden><p id="empty-jobs-text">No jobs recorded yet.</p></div>
       <nav class="pagination" id="pagination" aria-label="Job pages" hidden><button class="icon-button small" id="previous-page" aria-label="Previous page"><svg class="icon flip"><use href="#i-chevron"/></svg></button><span id="page-position" aria-live="polite"></span><button class="icon-button small" id="next-page" aria-label="Next page"><svg class="icon"><use href="#i-chevron"/></svg></button><span id="page-summary" class="sr-only"></span></nav>
@@ -109,6 +111,41 @@
     <article class="card bootstrap-card"><h2>Install or repair the Spark bridge</h2><p class="card-sub">For a new Spark or a service repair. Installs DGXBridge under ~/sparkdev and restarts only its own user services.</p><label class="checkbox"><input type="checkbox" id="bootstrap-remote"><span>Enable public iroh relays for remote access</span></label><p class="fine-print">An explicit relay choice. It does not configure a private VM or prove an off-network connection. Existing pairings may need a new code after a relay policy change.</p><button id="bootstrap" class="button secondary">Install / repair Spark bridge</button><p id="bootstrap-message" class="fine-print" role="status"></p></article>
   </div>
   <details class="card disclosure diagnostic"><summary><span><strong>Raw observation</strong><small>The last devices response, for troubleshooting</small></span><svg class="icon chevron"><use href="#i-chevron"/></svg></summary><pre id="connection-detail">Waiting for the first check.</pre></details>
+</section>
+
+<section id="computers" class="view page" hidden>
+  <article class="card">
+    <div class="card-top"><div><h2>Your computers</h2><p class="card-sub">Add trusted computers for builds and compute. Each keeps its own jobs, limits, and returned files.</p></div><button id="refresh-computers" class="button secondary" type="button">Refresh</button></div>
+    <p class="fine-print">Your laptop and Spark stay on the Jobs board. Install the bridge on a saved computer, then choose Prepare GPU for CUDA tools. <button class="text-link" data-view="connection" type="button">Open Spark connection</button></p>
+    <p id="computers-status" class="note" role="status">Open Computers to read saved connections.</p>
+    <div id="computer-cards" class="computer-grid" aria-label="Additional computers"></div>
+    <p id="computers-empty" class="fine-print">No additional computers saved yet.</p>
+  </article>
+  <details class="card disclosure" id="add-computer">
+    <summary><span><strong>Add a computer</strong><small>Use an existing trusted SSH connection</small></span><svg class="icon chevron"><use href="#i-chevron"/></svg></summary>
+    <p class="card-sub">The computer needs SSH and Docker ready. Reference a saved key and verified host identity, then install its independent bridge from the saved computer card.</p>
+    <form id="computer-form" class="form-grid" novalidate>
+      <label>Computer name<input name="label" placeholder="Office workstation" maxlength="96" autocomplete="off"></label>
+      <label>Computer ID<input name="id" placeholder="office-pc" maxlength="32" autocomplete="off" spellcheck="false"><span class="fine-print">A short lowercase name agents can select.</span></label>
+      <label>SSH alias<input name="ssh_alias" placeholder="office-workstation" autocomplete="off" spellcheck="false"></label>
+      <label>Computer address<input name="host" placeholder="Optional when saved in SSH configuration" autocomplete="off" spellcheck="false"></label>
+      <label>SSH username<input name="user" autocomplete="off" spellcheck="false"></label>
+      <label>Computer environment<select name="endpoint" id="computer-endpoint" class="computer-select"><option value="linux-ssh">Linux</option><option value="windows-wsl">Windows with WSL</option></select></label>
+      <div id="computer-wsl" class="form-grid span-all computer-wsl" hidden>
+        <label>WSL distribution<input name="distribution" placeholder="Ubuntu-24.04" autocomplete="off" spellcheck="false"></label>
+        <label>Linux username<input name="wsl_user" autocomplete="off" spellcheck="false"></label>
+        <label class="span-all">Linux controller path<input name="controller_path" placeholder="/home/you/sparkdev/controller.py" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <details class="span-all computer-settings" open><summary>Trusted connection details</summary><div class="form-grid">
+        <label>Known-host alias<input name="host_key_alias" placeholder="office-workstation" autocomplete="off" spellcheck="false"></label>
+        <label>SSH port<input name="port" type="number" min="1" max="65535" value="22"></label>
+        <label class="span-all">SSH configuration file<input name="ssh_config" placeholder="Optional absolute path" autocomplete="off" spellcheck="false"></label>
+        <label class="span-all">Private key file reference<input name="identity_file" placeholder="Optional absolute path to your existing key" autocomplete="off" spellcheck="false"></label>
+        <label>Scheduling priority<input name="priority" type="number" min="-1000" max="1000" value="0"><span class="fine-print">Higher values prefer this computer when it can run the job.</span></label>
+      </div></details>
+      <div class="form-footer span-all"><p id="computer-form-status" class="fine-print" role="status">Saving registers a separate connection.</p><button id="save-computer" class="button primary" type="submit">Add computer</button></div>
+    </form>
+  </details>
 </section>
 
 <section id="resources" class="view page" hidden>

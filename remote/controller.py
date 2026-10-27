@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import csv
 import errno
 import hashlib
 import ipaddress
@@ -16,6 +17,7 @@ import itertools
 import json
 import math
 import os
+import platform
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -387,6 +389,65 @@ def hardware_capacity():
     except (OSError, ValueError):
         pass
     return {"cpu_count": os.cpu_count() or 0, "memory_gb": memory}
+
+
+def unknown_capabilities():
+    return {"v": 1, "architecture": platform.machine(),
+            "system_memory": {"total_bytes": None, "available_bytes": None},
+            "gpu": {"observed": False, "memory_model": "unknown", "devices": []}}
+
+
+def compute_capabilities():
+    """Bounded observations, never reservations or inferred GPU memory."""
+    result = unknown_capabilities()
+    try:
+        for line in Path("/proc/meminfo").read_text()[:65536].splitlines():
+            name, _, value = line.partition(":")
+            if name in {"MemTotal", "MemAvailable"}:
+                fields = value.split()
+                if len(fields) == 2 and fields[1] == "kB":
+                    amount = int(fields[0]) * 1024
+                    if 0 <= amount <= 1024**5:
+                        result["system_memory"]["total_bytes" if name == "MemTotal" else "available_bytes"] = amount
+    except (OSError, ValueError):
+        pass
+    # Fixed system-installed paths only; never execute a tool from a project.
+    tools = ("/usr/bin/nvidia-smi", "/usr/lib/wsl/lib/nvidia-smi", "/bin/nvidia-smi")
+    tool = next((name for name in tools if os.path.isfile(name) and os.access(name, os.X_OK)), None)
+    if tool is None:
+        return result
+    try:
+        raw = run_tool([tool, "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"], 1.5)
+        if raw is None or len(raw) > 16384:
+            return result
+        rows = list(csv.reader(raw.decode("utf-8", "strict").splitlines()))
+        if not 1 <= len(rows) <= 16:
+            return result
+        devices = []
+        for row in rows:
+            if len(row) != 3:
+                return result
+            name = row[0].strip()
+            if not name or len(name) > 128 or any(ord(c) < 32 for c in name):
+                return result
+            sizes = []
+            for token in row[1:]:
+                token = token.strip()
+                if token in {"N/A", "[N/A]", "Not Supported", "[Not Supported]"}:
+                    sizes.append(None)
+                elif token.isascii() and token.isdigit() and 0 <= int(token) <= 1048576:
+                    sizes.append(int(token) * 1024**2)
+                else:
+                    return result
+            total, free = sizes
+            if total is not None and free is not None and free > total:
+                return result
+            devices.append({"name": name, "total_memory_bytes": total, "free_memory_bytes": free})
+        model = "unified" if any("GB10" in device["name"] for device in devices) else "discrete"
+        result["gpu"] = {"observed": True, "memory_model": model, "devices": devices}
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+        pass
+    return result
 
 
 def bounded_text(path, limit=SYS_READ):
@@ -1129,7 +1190,8 @@ class Progress:
 
 class Controller:
     def __init__(self, root=None, docker=None, memory_probe=None, hardware_probe=None, link_probe=None, *,
-                 disk_probe=None, spawn=None, clock=None, sleep=None, lan_probe=None, output_spawn=None):
+                 disk_probe=None, spawn=None, clock=None, sleep=None, lan_probe=None, output_spawn=None,
+                 capability_probe=None):
         self.root = Path(root or os.environ.get("SPARKDEV_STATE", Path.home() / "sparkdev/state")).absolute()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.root.is_symlink():
@@ -1190,6 +1252,7 @@ class Controller:
         self.docker = docker or Docker()
         self.memory_probe = memory_probe or available_gb
         self.hardware_probe = hardware_probe or hardware_capacity
+        self.capability_probe = capability_probe or (compute_capabilities if docker is None else unknown_capabilities)
         self.link_probe = link_probe or network_link
         self.lan_probe = lan_probe or lan_addresses
         self.system_packages = system_packages.SystemPackages(self, sys.modules[__name__])
@@ -2301,7 +2364,9 @@ class Controller:
         except Exception:
             pass
         # Every preparation, whatever its runtime, needs the Python image for its proxy.
+        capabilities = bounded_call(self.capability_probe, 2.0) or unknown_capabilities()
         return {"jobs": sorted(jobs, key=lambda j: j["created_at"], reverse=True), "runtimes": list(registry),
+                "capabilities": capabilities,
                 "preparable_runtimes": list(registry) if "python" in registry else [],
                 "scheduler": {"last_heartbeat": float(last[0]) if last else None, "healthy": self.scheduler_alive()},
                 **policy, "dependency_preparation": "isolated_allowlist_proxy", "network": network,
@@ -2321,8 +2386,11 @@ class Controller:
         result["checks"] = {"sqlite": self.db.execute("PRAGMA quick_check").fetchone()[0] == "ok", "memory_available_gb": self.memory_probe(),
                             "linux": sys.platform.startswith("linux"), "docker": False}
         try:
-            self.docker.call(["version", "--format", "{{.Server.Version}}"], timeout=10)
-            result["checks"]["docker"] = True
+            version = self.docker.call(["version", "--format", "{{.Server.Version}}"], timeout=10)
+            # Some older Desktop clients exit zero while reconnecting, with
+            # no server version. Exit status alone is not daemon readiness.
+            result["checks"]["docker"] = isinstance(version, bytes) and len(version) <= 128 and bool(
+                re.fullmatch(rb"[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9._-]+)?", version.strip()))
         except (Rejected, OSError, subprocess.TimeoutExpired):
             pass
         return result

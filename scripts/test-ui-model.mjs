@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {connectionView,configMode,jobsFrom,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,plainReason,internetView,downloadsView,serviceView,jobFlags,jobInternet,laptopLink,sparkLink,
-  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome} from '../ui/model.mjs';
+import {connectionView,configMode,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,plainReason,internetView,downloadsView,serviceView,jobFlags,jobInternet,laptopLink,sparkLink,
+  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome,jobRunner,jobRunnerLabel,jobToolsLabel,filterJobs,boardSummary,namedComputers,nodeAddArgs} from '../ui/model.mjs';
 import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
 import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
@@ -298,4 +298,94 @@ test('returning work stays active and agent prompts explain automatic delivery',
     assert.match(text,/return automatically/);assert.match(text,/No fetch command is needed/);
     assert.match(text,/--no-return/);assert.match(text,/--runtime cuda/);
   }
+});
+
+test('named jobs keep their computer identity without changing Spark and laptop labels',()=>{
+  const legacy=[{job:'same-id',where:'spark',state:'running',reserved_cpu:2},{job:'laptop-old',where:'laptop',state:'running'}];
+  const named={job:'office:same-id',device:'office',device_label:'Office workstation',where:'spark',state:'returning',reserved_cpu:8};
+  assert.equal(jobRunner(named),'office');assert.equal(jobRunnerLabel(named),'Office workstation');
+  assert.equal(jobToolsLabel({...named,runtime:'cuda'}),'GPU tools');assert.equal(jobToolsLabel({...legacy[0],runtime:'cuda'}),'Spark GPU');assert.equal(jobToolsLabel({...named,runtime:'python'}),'Python tools');
+  assert.equal(jobRunnerLabel(legacy[0]),'Spark');assert.equal(jobRunnerLabel(legacy[1]),'Laptop');assert.equal(jobRunnerLabel(legacy[1],true),'This laptop');
+  const jobs=jobsFrom({shared_board:[...legacy,named]});assert.equal(jobs.length,3);
+  assert.deepEqual(filterJobs(jobs,{filter:'spark'}).map(job=>job.job),['same-id']);
+  assert.deepEqual(filterJobs(jobs,{filter:'active',device:'office'}).map(job=>job.job),['office:same-id']);
+  assert.deepEqual(filterJobs(jobs,{query:'Office workstation'}).map(job=>job.job),['office:same-id']);
+  const summary=boardSummary({devices:[{id:'spark',managed_limits:{cpu_total:16}}]},jobs);
+  assert.equal(summary.sparkRunning,1);assert.equal(summary.laptopActive,1);assert.equal(summary.remoteActive,1);assert.equal(summary.reservedCpu,2);
+});
+
+test('failed named observations retain only their qualified last-seen jobs and fresh facts win',()=>{
+  const previous=[{job:'same',where:'spark',state:'running'},{job:'office:same',device:'office',where:'spark',state:'running'},{job:'healthy:removed',device:'healthy',where:'spark',state:'running'},{job:'raw-unqualified',device:'office',where:'spark',state:'running'}];
+  for(const failed of [{id:'office',reachable:null,availability:'observation_limited',error:{kind:'local_metadata_limit'}},{id:'office',reachable:false,error:{message:'Offline'}}]){
+    const observation={devices:[{id:'spark',reachable:true},failed,{id:'healthy',reachable:true}],shared_board:[{job:'same',where:'spark',state:'succeeded',exit_code:0}]};
+    const merged=reconcileObservedJobs(previous,observation);assert.deepEqual(merged.map(job=>job.job),['office:same','same']);assert.equal(merged[0].ui_observation_stale,true);assert.equal(merged[1].state,'succeeded');assert.equal(previous[1].ui_observation_stale,undefined);
+    observation.shared_board.push({job:'office:same',device:'office',where:'spark',state:'succeeded',exit_code:0});const fresh=reconcileObservedJobs(merged,observation).find(job=>job.job==='office:same');assert.equal(fresh.state,'succeeded');assert.equal(fresh.ui_observation_stale,undefined);
+    observation.devices[1]={id:'office',reachable:true};observation.shared_board=[];assert.deepEqual(reconcileObservedJobs(merged,observation),[]);
+  }
+  const baseline={devices:[{id:'spark',reachable:true}],shared_board:[previous[0]]};assert.deepEqual(reconcileObservedJobs(previous,baseline),jobsFrom(baseline));
+});
+
+test('computer cards require authenticated observations and preserve disabled profiles',()=>{
+  assert.deepEqual(namedComputers(lan),[]);
+  const nodes=[{id:'office',label:'Office workstation',enabled:true,priority:3,endpoint:{kind:'windows-wsl',distribution:'Ubuntu-24.04'}},{id:'render',label:'Render box',enabled:false}];
+  const observations={devices:[...lan.devices,{id:'office',reachable:true,transport:{authenticated:false},hardware:{cpu_count:32,memory_gb:256}},{id:'render',reachable:true,transport:{authenticated:true},scheduler:{healthy:true}}]};
+  const rows=namedComputers(observations,nodes);assert.equal(rows.length,2);assert.equal(rows[0].connected,false);assert.notEqual(rows[0].status,'Ready for jobs');assert.equal(rows[1].status,'Disabled');
+  assert.equal(namedComputers(observations,nodes,{stale:true})[1].status,'Disabled');
+  observations.devices[1].transport.authenticated=true;observations.devices[1].scheduler={healthy:true};observations.devices[1].runtimes=['python'];
+  assert.equal(namedComputers(observations,nodes)[0].status,'Ready for jobs');
+  observations.devices[1].reachable=false;observations.devices[1].availability='unreachable';observations.devices[1].error={message:'Computer is offline'};
+  assert.equal(namedComputers(observations,nodes)[0].status,'Offline');assert.equal(connectionView(observations).connected,true);
+  observations.devices[1].reachable=null;observations.devices[1].availability='observation_limited';observations.devices[1].error={kind:'local_metadata_limit',message:'local_metadata_limit: over 40 MiB'};
+  const limited=namedComputers(observations,nodes)[0];assert.equal(limited.status,'Details unavailable');assert.equal(limited.connected,false);assert.match(limited.error,/job history is too large/);assert.match(limited.error,/does not indicate a network connection failure/);assert.doesNotMatch(limited.error,/local_metadata_limit/);
+});
+
+const computerForm=values=>new Map(Object.entries({id:'office',label:'Office workstation',ssh_alias:'office-trusted',host_key_alias:'office-pin',host:'192.0.2.20',user:'owner',port:'22',priority:'0',endpoint:'linux-ssh',...values}));
+test('computer registration keeps references as exact arguments and never replaces Spark setup',()=>{
+  const args=nodeAddArgs(computerForm({identity_file:'C:/Users/Example/My Keys/office',ssh_config:'C:/Users/Example/SSH Config/config'}));
+  assert.deepEqual(args.slice(0,5),['node','add','office','--label','Office workstation']);assert.equal(args.includes('setup'),false);
+  assert.equal(args[args.indexOf('--identity-file')+1],'C:/Users/Example/My Keys/office');assert.equal(args[args.indexOf('--ssh-config')+1],'C:/Users/Example/SSH Config/config');assert.ok(args.length<=48);
+  assert.equal(args.includes('--wsl-distro'),false);
+});
+
+test('invalid and reserved computers are rejected before registration',()=>{
+  for(const id of ['spark','laptop','auto','../office','Office','office--pc','office-'])assert.throws(()=>nodeAddArgs(computerForm({id})),/computer ID/);
+  assert.throws(()=>nodeAddArgs(computerForm({port:'0'})),/port/);assert.throws(()=>nodeAddArgs(computerForm({priority:'1001'})),/Priority/);
+  assert.throws(()=>nodeAddArgs(computerForm({ssh_alias:'alias\nnext'})),/one line/);assert.throws(()=>nodeAddArgs(computerForm({host_key_alias:''})),/known-host/);
+});
+
+test('Windows computer registration binds one named WSL user and controller',()=>{
+  const values={endpoint:'windows-wsl',distribution:'Ubuntu-24.04',wsl_user:'owner',controller_path:'/home/owner/sparkdev/controller.py'};
+  const args=nodeAddArgs(computerForm(values));assert.deepEqual(args.slice(-6),['--wsl-distro','Ubuntu-24.04','--wsl-user','owner','--controller-path','/home/owner/sparkdev/controller.py']);
+  for(const overrides of [{distribution:'Ubuntu & calc'},{wsl_user:'owner;id'},{controller_path:'/home/owner/../sparkdev/controller.py'},{controller_path:'/home/owner/sparkdev/controller.py;id'}])assert.throws(()=>nodeAddArgs(computerForm({...values,...overrides})));
+});
+
+test('additional-computer agent instructions are additive and retain qualified job IDs',()=>{
+  const baseline=agentPrompt({agent:'codex',config:{}});assert.doesNotMatch(baseline,/COMPUTERS:/);
+  const text=agentPrompt({agent:'codex',config:{},computers:[{id:'office',label:'Office workstation',enabled:true},{id:'render',label:'Render workstation',enabled:false}]});
+  assert.match(text,/COMPUTERS: office, render \(disabled\)/);assert.match(text,/--device ID/);assert.match(text,/--device auto/);assert.match(text,/Retain node:JOB IDs exactly/);assert.match(text,/an eligible saved computer/);assert.ok(text.length<5000);
+});
+
+test('named computer readiness requires installed runtime observations',()=>{
+  const device={id:'office',reachable:true,transport:{authenticated:true},scheduler:{healthy:true}};
+  const observation={devices:[device]};
+  assert.equal(namedComputers(observation)[0].status,'Setup needed');
+  device.runtimes=[];assert.equal(namedComputers(observation)[0].status,'Tools preparing');
+  device.runtimes=[null,''];assert.notEqual(namedComputers(observation)[0].status,'Ready for jobs');
+  device.runtimes=['python'];const ready=namedComputers(observation)[0];assert.equal(ready.status,'Ready for jobs');
+  const stale=namedComputers(observation,[],{stale:true})[0];assert.equal(stale.status,'Last seen');assert.equal(stale.connected,false);assert.deepEqual(stale.facts.slice(1),ready.facts.slice(1));assert.equal(namedComputers(observation)[0].status,'Ready for jobs');
+  device.scheduler.healthy=false;assert.equal(namedComputers(observation)[0].status,'Connected');
+});
+
+test('profile agent instructions require each remote scheduler independently',()=>{
+  const baseline=agentPrompt({agent:'codex',config:{}});assert.match(baseline,/Both managed runners need the Spark scheduler/);
+  const observation={devices:[{id:'spark',reachable:false,error:{message:'Spark is offline'}},{id:'office',label:'Office workstation',reachable:true,transport:{authenticated:true},scheduler:{healthy:true},runtimes:['python']}]};
+  assert.equal(namedComputers(observation)[0].status,'Ready for jobs');assert.equal(connectionView(observation).connected,false);
+  const text=agentPrompt({agent:'codex',config:{},connection:connectionView(observation),computers:namedComputers(observation)});
+  assert.match(text,/Each selected remote computer needs its own healthy scheduler/);assert.match(text,/Native laptop admission still needs the Spark scheduler/);assert.doesNotMatch(text,/Both managed runners need the Spark scheduler/);
+});
+
+test('computer cards distinguish discrete GPU memory from system RAM',()=>{
+  const observation={devices:[{id:'office',hardware:{memory_gb:256},capabilities:{gpu:{observed:true,memory_model:'discrete',devices:[{name:'GPU fixture',total_memory_bytes:24*1024**3}]}}}]};
+  const facts=namedComputers(observation)[0].facts;assert.deepEqual(facts.find(([label])=>label==='System memory'),['System memory','256 GiB']);assert.match(facts.find(([label])=>label==='GPU memory')[1],/^24.*dedicated$/);
+  observation.devices[0].capabilities.gpu={observed:false,memory_model:'unknown',devices:[]};assert.equal(namedComputers(observation)[0].facts.some(([label])=>label==='GPU memory'),false);
 });

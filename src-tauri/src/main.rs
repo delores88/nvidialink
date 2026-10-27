@@ -153,6 +153,7 @@ async fn launch(
 fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
     let operation = args.first().map(String::as_str);
     let changes_connection = operation == Some("setup")
+        || (operation == Some("node") && matches!(args.get(1).map(String::as_str), Some("add" | "enable")))
         || (operation == Some("discover")
             && args.iter().any(|a| a == "--save" || a.starts_with("--save=")));
     if pairing && changes_connection {
@@ -160,10 +161,12 @@ fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
             "Finish or cancel the current pairing before changing the SSH connection.".into(),
         );
     }
-    let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect", "discover", "downloads"];
+    let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect", "discover", "downloads", "node"];
+    let node_operation = operation == Some("node");
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
-        || args.len() > 24
+        || args.len() > if node_operation { 48 } else { 24 }
+        || (node_operation && !matches!(args.get(1).map(String::as_str), Some("list" | "add" | "enable")))
         || args.iter().any(|s| s.contains('\0'))
     {
         return Err("Unsupported desktop operation".into());
@@ -209,6 +212,23 @@ mod desktop_args_tests {
         assert!(desktop_args_allowed(&long, false).is_err());
         long.truncate(24);
         assert_eq!(desktop_args_allowed(&long, false), Ok(()));
+    }
+
+    #[test]
+    fn named_computers_are_additive_and_mutations_wait_for_pairing() {
+        assert_eq!(desktop_args_allowed(&args(&["node", "list"]), true), Ok(()));
+        for values in [&["node", "add", "workstation", "--ssh-alias", "trusted"][..], &["node", "enable", "workstation", "off"]] {
+            assert_eq!(desktop_args_allowed(&args(values), false), Ok(()));
+            assert_eq!(desktop_args_allowed(&args(values), true).unwrap_err(), PAIRING);
+        }
+        for values in [&["node"][..], &["node", "remove", "workstation"], &["node", "add", "bad\0"]] {
+            assert!(desktop_args_allowed(&args(values), false).is_err());
+        }
+        let mut long = args(&["node", "add", "workstation"]);
+        long.extend(std::iter::repeat_n("argument".to_string(), 45));
+        assert_eq!(desktop_args_allowed(&long, false), Ok(()));
+        long.push("one-too-many".into());
+        assert!(desktop_args_allowed(&long, false).is_err());
     }
 }
 
@@ -640,6 +660,45 @@ async fn bootstrap(app: tauri::AppHandle, remote_access: bool) -> Result<Value, 
     .map_err(|_| "Remote setup could not finish".to_owned())?
 }
 
+fn node_bootstrap_allowed(id: &str, pairing: bool, updating: bool) -> Result<(), String> {
+    sparkdev::nodes::validate_id(id).map_err(|error| error.message)?;
+    if pairing {
+        return Err("Finish or cancel the current pairing before installing or changing the connection.".into());
+    }
+    if updating {
+        return Err("Finish the current update operation before installing computer services.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn bootstrap_node(app: tauri::AppHandle, id: String, cuda: bool) -> Result<Value, String> {
+    let state = app.state::<PairState>().inner().clone();
+    let _lifecycle = state.lifecycle.lock().await;
+    node_bootstrap_allowed(&id, state.running.load(Ordering::SeqCst), false)?;
+    node_bootstrap_allowed(&id, false, updates::action(&app, "status").await?["busy"] == true)?;
+    let resources = app.path().resource_dir().map_err(|_| "Application resources unavailable")?;
+    let mut args = vec!["--json".into(), "--client".into(), "human".into(), "--device".into(), id,
+        "bootstrap".into(), "--bundle".into(), resources.to_string_lossy().into_owned()];
+    if cuda { args.push("--cuda".into()); }
+    launch(app, "sparkdev", args, None, 120).await
+}
+
+#[cfg(test)]
+mod node_bootstrap_tests {
+    use super::node_bootstrap_allowed;
+
+    #[test]
+    fn selected_node_setup_obeys_pairing_update_and_identity_guards() {
+        assert!(node_bootstrap_allowed("office", false, false).is_ok());
+        assert!(node_bootstrap_allowed("office", true, false).unwrap_err().contains("pairing"));
+        assert!(node_bootstrap_allowed("office", false, true).unwrap_err().contains("update"));
+        for id in ["spark", "laptop", "auto", "../office", "office\0", ""] {
+            assert!(node_bootstrap_allowed(id, false, false).is_err());
+        }
+    }
+}
+
 fn main() {
     if update_helper::run_if_requested() { return; }
     let context = tauri::generate_context!();
@@ -661,7 +720,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, connection, resources, update_action])
+        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, connection, resources, update_action])
         .run(context)
         .expect("DGXBridge could not start");
 }

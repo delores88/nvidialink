@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import subprocess
 import sqlite3
@@ -20,7 +21,7 @@ import tempfile
 import time
 import uuid
 
-ALLOWED = {"outputs.py", "system_packages.py", "media_probe.py", "runtime/Dockerfile.blender", "runtime/blender/prune_deps.py", "runtime/blender/patch_deps_cuda13.py", "runtime/blender/patch_deps_toolchain.py", "runtime/blender/patch_deps_ispc.py", "runtime/blender/patch_deps_oidn_cudart.py", "runtime/blender/patch_deps_numpy.py", "runtime/blender/10_nvidia.json", "controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "install-runtime.py", "install-cuda.py", "bootstrap.py",
+ALLOWED = {"outputs.py", "system_packages.py", "media_probe.py", "runtime/Dockerfile.amd64", "runtime/requirements-amd64.txt", "runtime/Dockerfile.cuda.amd64", "runtime/Dockerfile.blender", "runtime/blender/prune_deps.py", "runtime/blender/patch_deps_cuda13.py", "runtime/blender/patch_deps_toolchain.py", "runtime/blender/patch_deps_ispc.py", "runtime/blender/patch_deps_oidn_cudart.py", "runtime/blender/patch_deps_numpy.py", "runtime/blender/10_nvidia.json", "controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "install-runtime.py", "install-cuda.py", "bootstrap.py",
            "runtime/blender/locked_sources.py", "runtime/blender/inputs.lock.json",
            "runtime/Dockerfile", "runtime/Dockerfile.cuda", "runtime/requirements.txt", "sparkdev-controller.service", "sparkdev-link.service", "bin/sparkdev-link"}
 REQUIRED = {"outputs.py", "system_packages.py", "media_probe.py", "controller.py", "worker.py", "proxy.py", "prepare.py", "model_cache.py", "model_server.py", "bootstrap.py", "install-runtime.py",
@@ -49,6 +50,26 @@ def write(path, raw, mode=0o600):
 
 RUNTIME_SOURCES = ("runtime/Dockerfile", "runtime/requirements.txt")
 CUDA_SOURCES = ("runtime/Dockerfile.cuda", "media_probe.py", "runtime/Dockerfile.blender", "runtime/blender/prune_deps.py", "runtime/blender/patch_deps_cuda13.py", "runtime/blender/patch_deps_toolchain.py", "runtime/blender/patch_deps_ispc.py", "runtime/blender/patch_deps_oidn_cudart.py", "runtime/blender/patch_deps_numpy.py", "runtime/blender/10_nvidia.json", "runtime/blender/locked_sources.py", "runtime/blender/inputs.lock.json")
+AMD64_RUNTIME_SOURCES = ("runtime/Dockerfile.amd64", "runtime/requirements-amd64.txt")
+AMD64_CUDA_SOURCES = ("runtime/Dockerfile.cuda.amd64", "media_probe.py")
+
+
+def runtime_architecture(machine=None):
+    """Map the executing Linux host, never a caller-provided image, to a closed set."""
+    value = platform.machine() if machine is None else machine
+    if not isinstance(value, str):
+        raise ValueError("Unsupported runtime architecture")
+    value = {"aarch64": "arm64", "arm64": "arm64", "x86_64": "amd64", "amd64": "amd64"}.get(value.lower())
+    if value is None:
+        raise ValueError("Unsupported runtime architecture")
+    return value
+
+
+def runtime_sources(cuda=False, architecture=None):
+    architecture = runtime_architecture(architecture)
+    if architecture == "arm64":
+        return CUDA_SOURCES if cuda else RUNTIME_SOURCES
+    return AMD64_CUDA_SOURCES if cuda else AMD64_RUNTIME_SOURCES
 
 
 class RuntimeRefreshError(ValueError):
@@ -84,6 +105,7 @@ def bounded_json(path):
 
 
 def runtime_current(root, source_digest, cuda=False):
+    architecture = runtime_architecture()
     try:
         receipt = bounded_json(root / ("runtime-cuda-build.json" if cuda else "runtime-build.json"))
         registry = bounded_json(root / "runtimes.json")
@@ -109,7 +131,7 @@ def runtime_current(root, source_digest, cuda=False):
         if re.fullmatch(r"(?:Error response from daemon: )?No such image: " + re.escape(image), error):
             return False
         raise RuntimeRefreshError("runtime_image_check_unavailable", "Could not verify the pinned runtime image")
-    if result.stdout.strip() != (image + " arm64").encode():
+    if result.stdout.strip() != (image + " " + architecture).encode():
         raise RuntimeRefreshError("runtime_image_identity_mismatch", "The pinned runtime image identity could not be verified")
     return True
 
@@ -188,7 +210,11 @@ def install_locked(bundle):
         raise ValueError("Install root is a symlink")
     root.mkdir(exist_ok=True, mode=0o700)
     os.chmod(root, 0o700)
-    source_digest = runtime_source_digest(decoded)
+    architecture = runtime_architecture()
+    cpu_sources = runtime_sources(architecture=architecture)
+    if not set(cpu_sources) <= decoded.keys():
+        raise ValueError("Runtime setup files for this architecture are missing")
+    source_digest = runtime_source_digest(decoded, cpu_sources)
     refresh_runtime = bundle.get("build_runtime") and not runtime_current(root, source_digest)
     cuda_requested = bundle.get("build_cuda", False)
     if bundle.get("build_runtime") and (root / "runtimes.json").exists():
@@ -198,7 +224,10 @@ def install_locked(bundle):
         cuda_requested = cuda_requested or "cuda" in saved_registry.get("runtimes", {})
     if cuda_requested and not {"install-cuda.py", "runtime/Dockerfile.cuda"} <= decoded.keys():
         raise ValueError("Refreshing the provisioned CUDA runtime requires its setup files")
-    cuda_digest = runtime_source_digest(decoded, CUDA_SOURCES) if cuda_requested else None
+    cuda_sources = runtime_sources(cuda=True, architecture=architecture)
+    if cuda_requested and not set(cuda_sources) <= decoded.keys():
+        raise ValueError("CUDA setup files for this architecture are missing")
+    cuda_digest = runtime_source_digest(decoded, cuda_sources) if cuda_requested else None
     refresh_cuda = cuda_digest is not None and not runtime_current(root, cuda_digest, cuda=True)
     if refresh_runtime or refresh_cuda:
         # The caller holds the refresh lock, excluding new scheduler admissions.
@@ -268,7 +297,7 @@ def install_locked(bundle):
                 write_runtime_attempt(root, cuda_attempt_id, {"state": "not_started", "kind": "cuda", "source_digest": cuda_digest,
                     "error": "runtime_launch_unavailable", "finished_at": time.time()})
                 raise
-    receipt = {"ok": True, "revision": revision, "file_hashes": hashes, "services": units, "runtime_state": runtime_state,
+    receipt = {"ok": True, "revision": revision, "file_hashes": hashes, "services": units, "architecture": architecture, "runtime_state": runtime_state,
                "runtime_source_digest": source_digest, "cuda_state": cuda_state, "installed_at": time.time()}
     if runtime_attempt_id:
         receipt.update(runtime_attempt_id=runtime_attempt_id,

@@ -182,12 +182,13 @@ def verify_release(value, input_directory, require_published):
             'sourceCommit': ref['sha'], 'assetId': asset['id'], 'filename': asset['name'], 'bytes': asset['size'], 'sha256': digest}
 
 
-def cuda_wheel_downloads(cuda):
+def cuda_wheel_downloads(cuda, architecture='aarch64', required=False):
     # Only the explicitly supported, hash-enforced recipe is understood here.
     # Reject new ADD forms instead of silently omitting executable downloads.
     instructions = re.sub(r'\\\n[ \t]*', ' ', cuda).splitlines()
     additions = [line.strip() for line in instructions if re.match(r'^\s*ADD(?:\s|$)', line, re.I)]
     if not additions:
+        require(not required, 'AMD64 CUDA recipe is missing its hash-locked Pillow ADD')
         return []  # Historical releases used only the immutable CUDA base.
     require(len(additions) == 1, 'Unsupported CUDA ADD recipe: expected one hash-locked Pillow wheel')
     match = re.fullmatch(r'ADD (https://files\.pythonhosted\.org/packages/[A-Za-z0-9/._-]+\.whl) /opt/sparkdev/wheels/', additions[0])
@@ -195,7 +196,8 @@ def cuda_wheel_downloads(cuda):
     url = match[1]
     filename = urlsplit(url).path.rsplit('/', 1)[-1]
     wheel = re.fullmatch(r'pillow-([0-9]+\.[0-9]+\.[0-9]+)-cp312-cp312-(manylinux_[a-z0-9_.]+)\.whl', filename)
-    require(wheel is not None and all(re.fullmatch(r'manylinux_[0-9]+_[0-9]+_aarch64', tag)
+    require(architecture in {'aarch64', 'x86_64'}, 'Unsupported CUDA wheel architecture')
+    require(wheel is not None and all(re.fullmatch(r'manylinux_[0-9]+_[0-9]+_' + architecture, tag)
                                     for tag in wheel[2].split('.')), 'Unsupported CUDA Pillow wheel')
     recipes = [re.fullmatch(r"RUN printf '%s\\n' 'pillow==([^\s']+) --hash=sha256:([0-9a-f]{64})' > /opt/sparkdev/pillow-requirements\.txt\s+&& /usr/bin/python3 -m pip install (.+)", line.strip())
                for line in instructions]
@@ -210,8 +212,9 @@ def cuda_wheel_downloads(cuda):
              and item.get('digests', {}).get('sha256') == digest and item.get('packagetype') == 'bdist_wheel'
              and not item.get('yanked', False)]
     require(len(files) == 1, 'Pinned CUDA wheel URL and SHA-256 cannot be verified against PyPI')
+    scope = 'ARM64 CPython 3.12 wheel installed only inside the optional owner-requested Spark CUDA runtime' if architecture == 'aarch64' else 'AMD64 CPython 3.12 wheel installed only inside the optional owner-requested AMD64 CUDA runtime'
     return [{'url': url, 'sha256': digest,
-             'purpose': f'Hash-locked Pillow {wheel[1]} ARM64 CPython 3.12 wheel installed only inside the optional owner-requested Spark CUDA runtime during setup.'}]
+             'purpose': f'Hash-locked Pillow {wheel[1]} {scope} during setup.'}]
 
 
 def docker_stages(recipe, variables=()):
@@ -313,7 +316,51 @@ def blender_sources(commit):
             'scope': 'Optional Spark setup only; not bundled Windows executables. Existing local image reuse makes no network download. Otherwise build the standalone recipe.'}
 
 
-def runtime_downloads(commit, evidence=None):
+def amd64_runtime_downloads(commit, evidence=None):
+    paths = ['runtimes/Dockerfile.amd64', 'runtimes/Dockerfile.cuda.amd64', 'runtimes/requirements-amd64.txt']
+    raw = {path: source(commit, path) for path in paths}
+    cpu, cuda, lock = [raw[path].decode().replace('\r\n', '\n') for path in paths]
+    cpu_bases, cuda_bases = docker_stages(cpu), docker_stages(cuda)
+    require(len(cpu_bases) == 1 and cpu_bases[0].startswith('rust:'), 'Unsupported AMD64 CPU OCI base recipe')
+    require(len(cuda_bases) == 1 and cuda_bases[0].startswith('nvcr.io/nvidia/pytorch@'), 'Unsupported AMD64 CUDA OCI base recipe')
+    require(re.search(r'^COPY requirements-amd64\.txt /opt/sparkdev/requirements\.txt$', cpu, re.M), 'AMD64 CPU recipe must use its separate wheel lock')
+    require(not re.search(r'^\s*ADD(?:\s|$)', cpu, re.I | re.M), 'Unsupported AMD64 CPU ADD recipe')
+    require(not re.search(r'^\s*COPY\s+--from=', cuda, re.I | re.M), 'AMD64 CUDA must not copy an undeclared runtime stage')
+    downloads = []
+    for base, registry, scope in [(cpu_bases[0], 'https://registry-1.docker.io/v2/library/rust/', 'AMD64 CPU'),
+                                  (cuda_bases[0], 'https://nvcr.io/v2/nvidia/pytorch/', 'optional owner-requested AMD64 CUDA')]:
+        digest = base.rsplit('sha256:', 1)[1]
+        downloads.append({'url': registry + 'manifests/sha256:' + digest, 'sha256': digest,
+                          'purpose': f'Independent {scope} base OCI manifest; Docker verifies its digest and layer digests. Setup resolves signed repository packages, then pins the final local image ID.'})
+    lines = [line.strip() for line in lock.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+    wheels = [re.fullmatch(r'(numpy|pillow)==([^\s]+) --hash=sha256:([0-9a-f]{64})', line) for line in lines]
+    require(len(wheels) == 2 and all(wheels) and {wheel[1] for wheel in wheels} == {'numpy', 'pillow'}, 'Unsupported AMD64 CPU wheel lock')
+    for name, version, digest in [wheel.groups() for wheel in wheels]:
+        with urllib.request.urlopen(f'https://pypi.org/pypi/{name}/{version}/json', timeout=30) as response:
+            metadata = json.load(response)
+        files = [item for item in metadata['urls'] if item.get('digests', {}).get('sha256') == digest]
+        require(len(files) == 1, 'Pinned AMD64 CPU wheel cannot be resolved')
+        item = files[0]
+        url, filename = item.get('url', ''), item.get('filename', '')
+        wheel = re.fullmatch(re.escape(name + '-' + version) + r'-cp313-cp313-(manylinux_[a-z0-9_.]+)\.whl', filename)
+        parsed = urlsplit(url)
+        require(parsed.scheme == 'https' and parsed.hostname == 'files.pythonhosted.org' and not parsed.query and not parsed.fragment
+                and not parsed.username and not parsed.password and parsed.port is None and parsed.path.rsplit('/', 1)[-1] == filename
+                and item.get('packagetype') == 'bdist_wheel' and not item.get('yanked', False)
+                and wheel is not None and all(re.fullmatch(r'manylinux_[0-9]+_[0-9]+_x86_64', tag) for tag in wheel[1].split('.')),
+                'Pinned AMD64 CPU wheel has an unsupported URL, type or architecture')
+        downloads.append({'url': url, 'sha256': digest,
+                          'purpose': f'Hash-locked {name} {version} AMD64 CPython 3.13 wheel installed only inside the independent AMD64 CPU runtime during setup.'})
+    downloads.extend(cuda_wheel_downloads(cuda, architecture='x86_64', required=True))
+    require(len(downloads) == 5, 'Expected two independent AMD64 OCI manifests and three hash-locked AMD64 wheels')
+    if evidence is not None:
+        evidence['amd64'] = {'cpuBase': cpu_bases[0], 'cudaBase': cuda_bases[0],
+                             'sourceSha256': {path: hashlib.sha256(raw[path]).hexdigest() for path in paths},
+                             'blenderProvisioned': False}
+    return downloads
+
+
+def runtime_downloads(commit, evidence=None, release_version='0.0.0'):
     downloads = []
     cpu = source(commit, 'runtimes/Dockerfile').decode().replace('\r\n', '\n')
     cpu_bases = docker_stages(cpu)
@@ -349,6 +396,9 @@ def runtime_downloads(commit, evidence=None):
         require(len(downloads) <= 128, 'Runtime inputs exceed the Marketplace declaration limit')
         if evidence is not None:
             evidence['blender'] = details
+    if tuple(map(int, release_version.split('-', 1)[0].split('.'))) >= (0, 6, 0):
+        downloads.extend(amd64_runtime_downloads(commit, evidence))
+    require(len(downloads) <= 128, 'Runtime inputs exceed the Marketplace declaration limit')
     return downloads
 
 
@@ -489,6 +539,49 @@ def manifest(value, downloads, runtime_evidence=None):
         document['permissions']['filesystem'] += [
             'Write temporary upload packs and bounded materializer health on the Spark; the builder discards stdout and stderr.',
             'Prune stale queued Spark snapshots and their partial trees under age and lock checks; preserve completed snapshots and content-addressed chunks.']
+    if tuple(map(int, value['version'].split('-', 1)[0].split('.'))) >= (0, 6, 0):
+        document['summary'] = 'Run agent-directed work on your own Linux or Windows/WSL computers and NVIDIA DGX Spark, with one Windows job board and CLI.'
+        _, setup = document['description'].split('\n\n', 1)
+        setup = setup.replace(
+            'Spark requires ARM64 Linux, Python 3, a working user Docker setup, systemd user services and sufficient disk/memory headroom.',
+            'Each remote controller requires supported ARM64 or AMD64 Linux, Python 3, working Docker, systemd user services and sufficient disk/memory headroom. Windows SSH targets need an existing WSL2 distribution and Linux user.')
+        setup = setup.replace(
+            'Phone QR approval is a separate owner action on the same LAN; optional encrypted public n0 relays can then provide remote connectivity.',
+            'Existing Spark phone approval is a separate owner action on the same LAN; optional encrypted public n0 relays can then provide Spark connectivity. Additional computers use independently pinned SSH, with LAN SSH tested and no new-node relay pairing. Their off-LAN availability is unverified.')
+        for old, new in [('Normal Spark jobs', 'Normal remote jobs'), ('the Spark host', 'the selected Linux host'),
+                         ('Spark connections', 'remote connections'), ('Completed Spark job', 'Completed remote job'),
+                         ('derived Spark image', 'derived remote image'), ('Spark incoming', 'Remote incoming')]:
+            setup = setup.replace(old, new)
+        setup = setup.replace('Optional CUDA setup includes FFmpeg and Blender tools.',
+                              'Optional CUDA setup includes FFmpeg; only the ARM64 recipe provisions Blender. AMD64 Blender is not provisioned.')
+        document['description'] = ('DGXBridge connects a Windows laptop to owner-controlled Linux compute computers, including NVIDIA DGX Spark and Windows computers with an existing WSL2 Linux environment. It provides a shared job board, resumable project transfer, immutable request and job IDs, automatic file return, cancellation, per-project caches, shared downloads, model servers and stdio MCP for coding agents. Windows work can run as native owner processes; remote Linux work runs in restricted containers on its selected computer. Native laptop execution is not sandboxed.\n\n' + setup +
+            '\n\nNamed computers retain separate connection profiles, controller state, runtimes, policies and return workers. Saving or inspecting a computer does not install software; explicit setup uses the packaged hash-checked bundle. Spark is optional for named remote Linux jobs. Managed native Windows laptop jobs still require the original reachable Spark scheduler; a named controller does not replace that admission dependency. Existing Spark pairing and state are preserved. Each controller enforces its own admission and resource policy.\n\nAutomatic placement considers authenticated runtime and available budget observations, including client quotas and explicit memory requirements. Linux system RAM, discrete GPU VRAM and Windows installed RAM are separate observations, not reservations. Docker system-memory caps do not enforce GPU VRAM. Separate jobs may run concurrently on separate computers; each job uses one computer. Distributed model training and cross-host GPU memory pooling are not implemented. The fleet journal retains request/source/target identities before submission and preserves uncertain submissions and worktree claims until verified completion and automatic delivery. Local responses above 40 MiB report incomplete observation, not an offline computer; saved receipts are retained. Future logon/reboot recovery, hotspot and sleep acceptance remain separate from source tests and LAN job receipts.')
+        document['intelligence']['capabilities'] = [
+            'Run Linux jobs on owner-selected ARM64 or AMD64 computers, including Windows/WSL targets, through independently pinned SSH.',
+            'Select a compatible computer from authenticated runtime and resource observations; retain immutable request and device identity across retries.',
+            'Run independent jobs concurrently across computers and return verified files automatically, preserving newer local edits.',
+            'Preserve the existing Spark/laptop job board, Spark pairing and policies; native Windows jobs retain their original Spark admission dependency.']
+        document['intelligence']['functionalTest'] = ('Install the Windows client. Register an independently verified SSH profile named test-node for an ARM64/AMD64 Linux controller, or an existing Windows/WSL2 environment. Explicitly bootstrap that profile using the installed validated bundle and wait for its CPU runtime and scheduler to become ready. With a throwaway project and locked dependencies, run sparkdev --client codex --json --device test-node prepare PROJECT --runtime rust and poll its qualified job ID. Then run sparkdev --client codex --json --device test-node run PROJECT --where auto --runtime rust --detach --request-id marketplace-check -- cargo test --locked. Retain test-node:JOB_ID; poll wait JOB_ID --timeout 20 and consume logs JOB_ID --since OFFSET through their returned next offset. Require terminal workload exit_code 0 and completed automatic file return. Verify local output hashes and the qualified job on the desktop board. Retry the same original source/arguments/request ID and require the same job; moving that ID to another device must fail. Spark pairing, GPU tools, multiple-computer overlap, installed startup and hotspot operation each require separate acceptance.')
+        document['featureNotices'][0]['description'] = 'Historical release evidence: Claude Code and Codex MCP jobs ran concurrently on the physical Spark. The prior restricted Windows shell check failed with missing writable-root capability SIDs; no global security setting changed. No new 0.6 Claude Code or restricted-shell acceptance is claimed.'
+        document['integrations'][0]['required'] = False
+        document['integrations'][0]['purpose'] = 'Optional ARM64 compute computer and existing phone-paired route. Its reachable scheduler remains required for managed native Windows laptop jobs.'
+        document['integrations'].insert(1, {
+            'name': 'Owner-selected Linux or Windows/WSL compute computer', 'required': True,
+            'purpose': 'At least one remote compute controller is required for remote jobs; Spark can supply it. Additional ARM64/AMD64 computers use pinned SSH, Docker and independent user services; Windows targets need WSL2.',
+            'costDisclosure': 'The owner supplies hardware, storage, memory, network, Docker and any Windows/WSL prerequisites. This utility supplies no hosted compute. No GPU or system memory is pooled between computers.'})
+        for integration in document['integrations']:
+            if integration['name'] == 'OpenSSH and Microsoft Edge WebView2':
+                integration['purpose'] = 'Pinned SSH connects to each selected remote computer; preinstalled WebView2 displays the Windows app.'
+            if integration['name'] == 'Container and package registries':
+                integration['costDisclosure'] = 'Transfers use owner bandwidth and disk. Prepared remote jobs can use LAN SSH without public internet; each needs its selected controller. Native Windows jobs retain the original Spark admission dependency.'
+        document['privacy']['dataLeavesDevice'] = document['privacy']['dataLeavesDevice'].replace('owner-selected Spark', 'owner-selected compute computer').replace('Spark job internet', 'Remote job internet').replace('observed Spark host/on-link', 'observed remote host/on-link')
+        document['privacy']['retention'] = ('Completed source snapshots, content-addressed chunks, project caches, audit events, logs, laptop replies, automatic-return manifests/chunks, conflict copies and receipts persist until owner removal. Updates preserve pairing and pending delivery. Shared downloads are cleaned only when idle, with recent-use protection and deferred owner clearing. Remote model-call payloads/replies become eligible for cleanup at the earlier of creation plus one hour or completed delivery plus ten minutes; call identity metadata becomes eligible 24 hours after creation. Actual deletion requires successful controller housekeeping; delays or errors can extend retention. Pending cancellations persist. Uninstall preserves pairing, remote services and retained data. Queued snapshot records and partial trees become eligible for pruning after one hour when a newer pending record exists for that project, or after 24 hours; active locked records are skipped and completed snapshots/chunks are preserved. Incoming upload packs are removed after validation is attempted; unclaimed packs become eligible after one hour since modification. Materializer health retains only the latest bounded PID/timing/exit/error-kind record; its stdout/stderr are discarded. Named profiles, fleet request/source/SSH identity references, worktree claims and per-computer delivery checkpoints persist in owner-local state. Uncertain submissions and pending delivery retain their claims.')
+        document['permissions']['filesystem'] = [entry.replace('selected Spark', 'selected remote computer').replace('Spark images', 'remote images').replace('on the Spark', 'on the selected computer').replace('Spark snapshots', 'remote snapshots') for entry in document['permissions']['filesystem']]
+        document['permissions']['filesystem'].append('Store independent computer profiles and immutable fleet request/target identities, claims and per-profile automatic-return checkpoints in owner-local state.')
+        document['updater']['coordination'] = document['updater']['coordination'].replace('independent Spark services', 'independent services on the explicitly selected computer')
+        document['featureNotices'].append({
+            'name': 'Multiple compute computers', 'status': 'beta',
+            'description': 'Named Linux and Windows/WSL controllers have independent state and pinned SSH. Separate jobs can overlap across computers; each job uses one computer. LAN CPU, RTX 4090 CUDA and file-return evidence is separate from installed startup and off-LAN acceptance. AMD64 Blender, distributed training and cross-host GPU memory pooling are not implemented.'})
     blender = (runtime_evidence or {}).get('blender')
     if blender:
         pins = blender['sources']
@@ -547,7 +640,7 @@ def main():
     media = {name: verify_media(value['artwork'][name], name, input_directory) for name in ['icon', 'thumbnail']}
     media['screenshots'] = [verify_media({'url': item['url'], 'localPath': item['localPath']}, 'screenshot', input_directory) for item in value['screenshots']]
     runtime_evidence = {}
-    document = manifest(value, runtime_downloads(value['sourceCommit'], runtime_evidence), runtime_evidence)
+    document = manifest(value, runtime_downloads(value['sourceCommit'], runtime_evidence, value['version']), runtime_evidence)
     checked = runtime_validate(document, args.marketplace_checkout.resolve())
     raw = (json.dumps(document, indent=2, ensure_ascii=False) + '\n').encode('utf-8')
     require(len(raw) <= 128000, 'Manifest exceeds the Marketplace size limit')

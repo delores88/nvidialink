@@ -82,6 +82,36 @@ class Compatibility(unittest.TestCase):
         for entry in document['intelligence']['capabilities']:
             self.assertLessEqual(len(entry), 200)
 
+    def test_060_declares_named_computers_without_changing_native_windows_admission(self):
+        document = manifest.manifest(release_input(version='0.6.0'), [])
+        self.assertIn('Linux compute computers', document['description'])
+        self.assertIn('Spark is optional for named remote Linux jobs', document['description'])
+        self.assertIn('native Windows laptop jobs still require the original reachable Spark scheduler', document['description'])
+        self.assertIn('AMD64 Blender is not provisioned', document['description'])
+        self.assertIn('cross-host GPU memory pooling are not implemented', document['description'])
+        self.assertIn('no new-node relay pairing', document['description'])
+        self.assertIn('observation', document['description'])
+        integrations = {row['name']: row for row in document['integrations']}
+        self.assertFalse(integrations['Owner-controlled NVIDIA DGX Spark']['required'])
+        self.assertTrue(integrations['Owner-selected Linux or Windows/WSL compute computer']['required'])
+        self.assertIn('owner-selected compute computer', document['privacy']['dataLeavesDevice'])
+        self.assertIn('Uncertain submissions', document['privacy']['retention'])
+        self.assertIn('test-node:JOB_ID', document['intelligence']['functionalTest'])
+        self.assertEqual(document['artifacts'][0]['requirements']['runtimes'], ['Microsoft Edge WebView2'])
+        self.assertLessEqual(len(document['description']), 12000)
+        self.assertLessEqual(len(document['privacy']['retention']), 2000)
+        self.assertLessEqual(len(document['intelligence']['functionalTest']), 2000)
+        for key, bound in [('filesystem', 200), ('credentials', 160)]:
+            for entry in document['permissions'][key]:
+                self.assertLessEqual(len(entry), bound, entry)
+        for entry in document['intelligence']['capabilities']:
+            self.assertLessEqual(len(entry), 200, entry)
+
+    def test_historical_051_listing_does_not_advertise_named_computers(self):
+        document = manifest.manifest(release_input(version='0.5.1'), [])
+        self.assertTrue(document['integrations'][0]['required'])
+        self.assertNotIn('Named computers retain', document['description'])
+
 
 class DraftValidation(unittest.TestCase):
     def setUp(self):
@@ -184,6 +214,100 @@ class RuntimeDownloads(unittest.TestCase):
                 manifest.cuda_wheel_downloads(self.recipe())
 
 
+class MultiDeviceRuntimeDownloads(unittest.TestCase):
+    def sources(self):
+        paths = ['runtimes/Dockerfile.amd64', 'runtimes/Dockerfile.cuda.amd64', 'runtimes/requirements-amd64.txt']
+        files = {path: (manifest.ROOT / path).read_bytes() for path in paths}
+        arm = RuntimeDownloads()
+        files.update({'runtimes/Dockerfile': b'FROM rust:1@sha256:' + b'a' * 64,
+                      'runtimes/Dockerfile.cuda': ('FROM nvcr.io/nvidia/pytorch@sha256:' + 'b' * 64 + '\n' + arm.recipe()).encode(),
+                      'runtimes/requirements.txt': b'numpy==2.4.0 --hash=sha256:' + b'c' * 64 + b'\npillow==13.0.0 --hash=sha256:' + b'd' * 64})
+        return files
+
+    def metadata(self):
+        rows = [{'url': 'https://files.pythonhosted.org/cpu-numpy.whl', 'digests': {'sha256': 'c' * 64}},
+                {'url': 'https://files.pythonhosted.org/cpu-pillow.whl', 'digests': {'sha256': 'd' * 64}},
+                json.load(RuntimeDownloads().metadata())['urls'][0]]
+        for name, digest in [('numpy-2.4.6-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl', 'a7830bab239b79cda9c08c2da014761cafb48da6150e1da17ac06283f43b6089'),
+                             ('pillow-13.0.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl', '5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582'),
+                             ('pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl', '42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca')]:
+            url = 'https://files.pythonhosted.org/packages/aa/bb/' + name
+            if '-cp312-' in name:
+                url = 'https://files.pythonhosted.org/packages/e6/99/fdf65cc539e266ab93546c261bdf98411fe165c6e4e13f9dbf597097192b/' + name
+            rows.append({'url': url, 'filename': name, 'digests': {'sha256': digest}, 'packagetype': 'bdist_wheel', 'yanked': False})
+        return {'urls': rows}
+
+    def collect(self, sources=None, metadata=None, version='0.6.0'):
+        files = self.sources() if sources is None else sources
+        metadata = self.metadata() if metadata is None else metadata
+        evidence = {}
+        with patch.object(manifest, 'source', side_effect=lambda commit, path: files[path]) as read, \
+                patch.object(manifest.urllib.request, 'urlopen', side_effect=lambda *a, **k: io.BytesIO(json.dumps(metadata).encode())):
+            result = manifest.runtime_downloads('exact-release-commit', evidence, version)
+        self.assertTrue(all(call.args[0] == 'exact-release-commit' for call in read.call_args_list))
+        return result, evidence
+
+    def test_060_adds_five_independent_amd64_downloads_and_preserves_arm_inputs(self):
+        historical, old_evidence = self.collect(version='0.5.1')
+        downloads, evidence = self.collect()
+        self.assertEqual(len(historical), 5)
+        self.assertEqual(downloads[:5], historical)
+        self.assertEqual(len(downloads), 10)
+        self.assertNotIn('amd64', old_evidence)
+        self.assertEqual([row['sha256'] for row in downloads[5:]], [
+            'fce83543909cd5409924a61ce296bdf5bab0fca37f004c0f6c8ef6f4a37bbc59',
+            '4bf906c628d572681a977681765a44a3c1d7e34b39633b7160a84de707608139',
+            'a7830bab239b79cda9c08c2da014761cafb48da6150e1da17ac06283f43b6089',
+            '5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582',
+            '42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca'])
+        for row in downloads[5:]:
+            self.assertIn('AMD64', row['purpose'])
+            self.assertLessEqual(len(row['purpose']), 300)
+        self.assertFalse(evidence['amd64']['blenderProvisioned'])
+        self.assertEqual(evidence['amd64']['sourceSha256'], {path: hashlib.sha256(raw).hexdigest() for path, raw in self.sources().items() if path.endswith(('amd64', 'amd64.txt'))})
+
+    def test_060_never_silently_omits_missing_unpinned_or_cross_architecture_inputs(self):
+        for mutation in ['missing-cpu', 'missing-cuda', 'missing-lock', 'floating-base', 'wrong-lock', 'extra-add', 'extra-stage', 'missing-cuda-wheel', 'wrong-cuda-architecture', 'unhashed-wheel']:
+            sources = self.sources()
+            cpu, cuda, lock = 'runtimes/Dockerfile.amd64', 'runtimes/Dockerfile.cuda.amd64', 'runtimes/requirements-amd64.txt'
+            if mutation.startswith('missing-') and mutation != 'missing-cuda-wheel':
+                del sources[{'missing-cpu': cpu, 'missing-cuda': cuda, 'missing-lock': lock}[mutation]]
+            elif mutation == 'floating-base':
+                sources[cpu] = b'FROM rust:latest\nCOPY requirements-amd64.txt /opt/sparkdev/requirements.txt\n'
+            elif mutation == 'wrong-lock':
+                sources[cpu] = sources[cpu].replace(b'COPY requirements-amd64.txt', b'COPY requirements.txt')
+            elif mutation == 'extra-add':
+                sources[cpu] += b'\nADD https://example.com/code /tmp/code\n'
+            elif mutation == 'extra-stage':
+                sources[cuda] += b'\nCOPY --from=unrecorded /opt/blender /opt/blender\n'
+            elif mutation == 'missing-cuda-wheel':
+                sources[cuda] = b'\n'.join(line for line in sources[cuda].splitlines() if not line.startswith(b'ADD '))
+            elif mutation == 'wrong-cuda-architecture':
+                sources[cuda] = sources[cuda].replace(b'x86_64', b'aarch64')
+            else:
+                sources[lock] = sources[lock].replace(b' --hash=sha256:', b' # unhashed ')
+            with self.subTest(mutation=mutation), self.assertRaises((ValueError, KeyError)):
+                self.collect(sources=sources)
+
+    def test_amd64_cpu_metadata_must_match_architecture_type_and_live_artifact(self):
+        for mutation in ['arm-wheel', 'yanked', 'sdist', 'http', 'wrong-hash']:
+            metadata = self.metadata()
+            row = metadata['urls'][3]
+            if mutation == 'arm-wheel':
+                row['url'] = row['url'].replace('x86_64', 'aarch64')
+                row['filename'] = row['filename'].replace('x86_64', 'aarch64')
+            elif mutation == 'yanked':
+                row['yanked'] = True
+            elif mutation == 'sdist':
+                row['packagetype'] = 'sdist'
+            elif mutation == 'http':
+                row['url'] = row['url'].replace('https:', 'http:')
+            else:
+                row['digests']['sha256'] = 'f' * 64
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                self.collect(metadata=metadata)
+
+
 class MultiStageRuntime(unittest.TestCase):
     def test_exact_multistage_from_and_reject_unpinned_variants(self):
         pin = 'nvidia/cuda:13.0@sha256:' + '1' * 64
@@ -249,6 +373,44 @@ class MultiStageRuntime(unittest.TestCase):
         self.assertIn('blender', evidence)
         document = manifest.manifest(release_input(version='0.5.0'), downloads, evidence)
         self.assertIn('66 dependency archives and nine Python wheels', document['description'])
+
+    def test_060_keeps_the_full_arm_blender_inventory_alongside_amd64(self):
+        sources = self.sources()
+        fixture = MultiDeviceRuntimeDownloads()
+        sources.update(fixture.sources())
+        sources['runtimes/Dockerfile.cuda'] = b'ARG BLENDER_IMAGE\nFROM ${BLENDER_IMAGE} AS blender\nFROM nvcr.io/nvidia/pytorch@sha256:' + b'b' * 64
+        evidence = {}
+        with patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path]), \
+                patch.object(manifest.urllib.request, 'urlopen', side_effect=lambda *a, **k: io.BytesIO(json.dumps(fixture.metadata()).encode())):
+            downloads = manifest.runtime_downloads('selected-commit', evidence, '0.6.0')
+        self.assertEqual(len(downloads), 88)
+        self.assertEqual(sum('/lib-source.git/info/lfs/objects/' in row['url'] for row in downloads), 66)
+        self.assertEqual(set(evidence), {'blender', 'amd64'})
+        document = manifest.manifest(release_input(version='0.6.0'), downloads, evidence)
+        self.assertIn('66 dependency archives and nine Python wheels', document['description'])
+        self.assertIn('AMD64 Blender is not provisioned', document['description'])
+        self.assertLessEqual(len(document['description']), 12000)
+        self.assertLessEqual(len(document['privacy']['retention']), 2000)
+        for entry in document['permissions']['filesystem']:
+            self.assertLessEqual(len(entry), 200, entry)
+
+    def test_051_real_arm_recipes_never_require_amd64_sources(self):
+        sources = self.sources()
+        for path in ['runtimes/Dockerfile', 'runtimes/Dockerfile.cuda', 'runtimes/requirements.txt']:
+            sources[path] = (manifest.ROOT / path).read_bytes()
+        cuda_url = next(line.split()[1] for line in sources['runtimes/Dockerfile.cuda'].decode().splitlines() if line.startswith('ADD '))
+        metadata = {'urls': [
+            {'url': 'https://files.pythonhosted.org/arm-numpy.whl', 'digests': {'sha256': '72fbe16c6fac95aedf5937fa873445cec2110be35d8a4e9433d7501fd98dae6b'}},
+            {'url': 'https://files.pythonhosted.org/arm-pillow.whl', 'digests': {'sha256': '19b66ca0a4d25cc0200b381ce824c7ea090db61427315e73cfb05dbf1b35c369'}},
+            {'url': cuda_url, 'filename': cuda_url.rsplit('/', 1)[1], 'packagetype': 'bdist_wheel', 'yanked': False,
+             'digests': {'sha256': '8bf295fe459343bc6093c8e5e0df60bfa189e0fcb775a22e2c2488fdeccc6c0d'}}]}
+        evidence = {}
+        with patch.object(manifest, 'source', side_effect=lambda commit, path: sources[path]) as read, \
+                patch.object(manifest.urllib.request, 'urlopen', side_effect=lambda *a, **k: io.BytesIO(json.dumps(metadata).encode())):
+            downloads = manifest.runtime_downloads('historical-arm-release', evidence, '0.5.1')
+        self.assertEqual(len(downloads), 84)
+        self.assertEqual(set(evidence), {'blender'})
+        self.assertTrue(all(call.args[0] == 'historical-arm-release' and 'amd64' not in call.args[1] for call in read.call_args_list))
 
 
 def fake_nsis(files):

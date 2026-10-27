@@ -1,8 +1,8 @@
 import {qrArt,eyeRing,eyePupil,alignRing,alignDot,sparkPath,checkPoints} from './vendor/sparkLinkQr.mjs';
 import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vendor/sparkParticles.mjs';
-import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
-  isActiveJob,jobId,jobRunner,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
-  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,plainError,TOOL_LABELS,serviceView,INTERNET_COPY,internetView,downloadsView,jobInternet,formatGiB,laptopLink} from './model.mjs';
+import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
+  isActiveJob,jobId,jobRunner,jobRunnerLabel,jobToolsLabel,namedComputers,nodeAddArgs,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
+  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,plainError,serviceView,INTERNET_COPY,internetView,downloadsView,jobInternet,formatGiB,laptopLink} from './model.mjs';
 import {createConnectionVisual} from './connection-visual.mjs';
 const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__.core.invoke(name,args);
@@ -17,6 +17,7 @@ let updateTimer=null,updateBusy=false,update={status:'idle'},messageTimer=null;
 let findBusy=false,findMessage=null;
 let refreshPromise=null,refreshAgain=false,lastGoodObservation=null,lastFailure=null,health={failures:0,lastGoodAt:0};
 let internet=null,downloads=null,extrasEpoch=0,downloadsBusy=false,clearArmed=false,downloadsDirty=false,internetBusy=false,internetMessage='',downloadsMessage='';
+let computers=[],computersBusy=false,computersLoaded=false,computersMessage='',computerObservation=null,computerObservationStale=false,jobDevice='';
 const logCache=new Map(),jobCache=new Map();
 const visuals=[createConnectionVisual($('connection-visual'))];
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!=null)node.textContent=text;return node;}
@@ -32,8 +33,8 @@ function applyTheme(theme){document.documentElement.dataset.theme=theme;const li
 try{applyTheme(localStorage.getItem('dgxbridge-theme')==='light'?'light':'dark');}catch{applyTheme('dark');}
 $('theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';applyTheme(next);try{localStorage.setItem('dgxbridge-theme',next);}catch{}});
 
-const TITLES={overview:'Jobs',connection:'Spark connection',resources:'Job settings',agents:'Agent setup'};
-function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name==='connection')readPairState();}
+const TITLES={overview:'Jobs',connection:'Spark connection',computers:'Computers',resources:'Job settings',agents:'Agent setup'};
+function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name==='connection')readPairState();if(name==='computers'){renderComputers();if(!computersLoaded)readComputers();}}
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.agentChoice){agent=button.dataset.agentChoice;renderAgents();}view(button.dataset.view);}));
 
 // Connection
@@ -71,14 +72,15 @@ async function refresh(){
   refreshPromise=(async()=>{do{
     refreshAgain=false;const generation=resourceGeneration,epoch=extrasEpoch;refreshing=true;$('refresh').disabled=true;$('refresh').classList.add('spinning');
     try{
-      const result=await command(['devices']);if(generation!==resourceGeneration){refreshAgain=true;continue;}
-      const spark=result?.devices?.find(d=>d.id==='spark'),good=spark?.reachable===true&&spark.transport?.authenticated===true;
+      const result=await command(['devices']);if(generation!==resourceGeneration){refreshAgain=true;continue;}computerObservation=result;computerObservationStale=false;
+      const spark=result?.devices?.find(d=>d.id==='spark'),good=spark?.reachable===true&&spark.transport?.authenticated===true,incomingJobs=reconcileObservedJobs(boardJobs,result);
       if(!good&&savedConfig?.connection_enabled!==false&&lastGoodObservation){lastFailure=result;health.failures++;observation=lastGoodObservation;}
-      else{observation=result;lastFailure=null;boardJobs=jobsFrom(result);for(const job of boardJobs)jobCache.set(jobId(job),job);if(good){lastGoodObservation=result;health={failures:0,lastGoodAt:Date.now()/1000};}else health={failures:0,lastGoodAt:0};}
+      else{observation=result;lastFailure=null;boardJobs=incomingJobs;for(const job of boardJobs)jobCache.set(jobId(job),job);if(good){lastGoodObservation=result;health={failures:0,lastGoodAt:Date.now()/1000};}else health={failures:0,lastGoodAt:0};}
+      if(!good&&lastGoodObservation&&namedComputers(result,computers).length){boardJobs=jobsFrom({jobs:[...boardJobs.filter(job=>jobRunner(job)==='spark'),...incomingJobs]});for(const job of boardJobs)jobCache.set(jobId(job),job);}
       if(epoch===extrasEpoch&&!resourceBusy&&!downloadsBusy&&good)acceptExtras(result);
       $('connection-detail').textContent=JSON.stringify(result,null,2);
-    }catch(error){if(generation!==resourceGeneration){refreshAgain=true;continue;}health.failures++;lastFailure={ok:false,error:{message:error.message||String(error),code:error.code,kind:error.kind}};observation=lastGoodObservation||lastFailure;$('connection-detail').textContent=error.message||String(error);}
-    finally{renderConnection();renderBoard();renderExtras();}
+    }catch(error){if(generation!==resourceGeneration){refreshAgain=true;continue;}computerObservationStale=true;health.failures++;lastFailure={ok:false,error:{message:error.message||String(error),code:error.code,kind:error.kind}};observation=lastGoodObservation||lastFailure;$('connection-detail').textContent=error.message||String(error);}
+    finally{renderConnection();renderBoard();renderExtras();renderComputers();}
   }while(refreshAgain);})().finally(()=>{refreshPromise=null;refreshing=false;$('refresh').disabled=false;$('refresh').classList.remove('spinning');});
   return refreshPromise;
 }
@@ -86,9 +88,56 @@ $('connection-help').addEventListener('click',()=>{const action=connectionState(
 $('check-cable').addEventListener('click',()=>busy($('check-cable'),async()=>{await refresh();await refresh();message(connectionState().connected?'Connection choices checked. The displayed route is the one that answered.':"The Spark didn't confirm a connection. Check the status above before trying again.");}));
 $('refresh').addEventListener('click',refresh);
 
+// Additional computers keep their own connections and do not edit Spark setup.
+function renderComputers(){
+  const rows=namedComputers(computerObservation||observation,computers,{stale:computerObservationStale}),cards=$('computer-cards');cards.replaceChildren();
+  $('computers-empty').hidden=rows.length>0;
+  const availability=computerObservationStale?'Availability could not be refreshed. Showing last seen computer details; jobs are retained.':computersLoaded?`${rows.length} additional ${rows.length===1?'computer':'computers'} saved. Availability is checked independently.`:'Open Computers to read saved connections.';
+  $('computers-status').textContent=computersBusy?'Checking saved computers…':computerObservationStale?[computersMessage,availability].filter(Boolean).join(' '):computersMessage||availability;
+  $('refresh-computers').disabled=computersBusy;$('save-computer').disabled=computersBusy;
+  for(const row of rows){
+    const card=element('article','machine computer-card');card.dataset.node=row.id;card.dataset.state=!row.enabled?'disabled':row.connected?'connected':'offline';
+    const head=element('div','machine-head'),name=element('div','machine-name');name.append(element('h3',null,row.label),element('p','computer-id',row.id));head.append(name,element('span','computer-status',row.status));
+    const facts=element('dl','facts');renderFacts(facts,row.facts);const actions=element('div','computer-actions');
+    const install=element('button','button secondary small','Install bridge');install.type='button';install.dataset.nodeInstall=row.id;install.disabled=computersBusy||!row.enabled;install.setAttribute('aria-label',`Install bridge on ${row.label}`);install.addEventListener('click',()=>installComputer(row.id,row.label,false));
+    const gpu=element('button','button secondary small','Prepare GPU');gpu.type='button';gpu.dataset.nodeGpu=row.id;gpu.disabled=computersBusy||!row.enabled;gpu.setAttribute('aria-label',`Prepare GPU on ${row.label}`);gpu.addEventListener('click',()=>installComputer(row.id,row.label,true));
+    const toggle=element('button','button secondary small',row.enabled?'Disable new jobs':'Enable new jobs');toggle.type='button';toggle.dataset.nodeToggle=row.id;toggle.disabled=computersBusy;toggle.setAttribute('aria-label',`${row.enabled?'Disable':'Enable'} new jobs on ${row.label}`);toggle.addEventListener('click',()=>changeComputer(['node','enable',row.id,row.enabled?'off':'on'],`${row.label}: ${row.enabled?'new jobs disabled':'new jobs enabled'}. Existing jobs keep their original connection.`));
+    const buttons=element('div','computer-action-buttons');buttons.append(install,gpu,toggle);actions.append(element('p','fine-print',`Scheduling priority: ${row.priority}`),buttons);card.append(head,facts);if(row.error)card.append(element('p','fine-print computer-error',row.error));card.append(actions);cards.append(card);
+  }
+}
+async function readComputers(){
+  if(computersBusy)return;computersBusy=true;renderComputers();
+  try{const result=await command(['node','list']);computers=Array.isArray(result.nodes)?result.nodes:[];computersLoaded=true;computersMessage='';}
+  catch(error){computersMessage=`Saved computers could not be read: ${failure(error)}`;}
+  finally{computersBusy=false;renderComputers();renderComputerFilter();}
+}
+async function changeComputer(args,success){
+  if(computersBusy)return false;computersBusy=true;renderComputers();
+  try{await command(args);const result=await command(['node','list']);computers=Array.isArray(result.nodes)?result.nodes:[];computersLoaded=true;computersMessage=success;$('computer-form-status').textContent=success;await refresh();return true;}
+  catch(error){computersMessage=failure(error);$('computer-form-status').textContent=computersMessage;return false;}
+  finally{computersBusy=false;renderComputers();renderComputerFilter();}
+}
+async function installComputer(id,label,cuda){
+  if(computersBusy)return;computersBusy=true;computersMessage=`${cuda?'Preparing GPU tools':'Installing DGXBridge'} on ${label}…`;renderComputers();
+  try{const result=requireOk(await invoke('bootstrap_node',{id,cuda}));const preparing=[result.runtime_state,result.cuda_state].some(state=>['scheduled','building'].includes(state));computersMessage=`Bridge installed on ${label}. ${preparing?'Tools are queued or preparing; check availability before running jobs.':'Check its connection and tools before running jobs.'}`;await refresh();}
+  catch(error){computersMessage=`Setup on ${label} did not complete: ${failure(error)}`;}
+  finally{computersBusy=false;renderComputers();}
+}
+$('refresh-computers').addEventListener('click',async()=>{await readComputers();await refresh();});
+$('computer-endpoint').addEventListener('change',()=>{$('computer-wsl').hidden=$('computer-endpoint').value!=='windows-wsl';});
+$('computer-form').addEventListener('submit',async event=>{event.preventDefault();if(computersBusy)return;try{const args=nodeAddArgs(new FormData(event.currentTarget));if(await changeComputer(args,'Computer saved. Its jobs and returned files use a separate connection.')){event.target.reset();$('computer-wsl').hidden=true;}}catch(error){$('computer-form-status').textContent=failure(error);}});
+function renderComputerFilter(){
+  const named=namedComputers(computerObservation||observation,computers),labels=new Map(named.map(row=>[row.id,row.label]));
+  for(const job of boardJobs){const id=jobRunner(job);if(!['spark','laptop'].includes(id)&&!labels.has(id))labels.set(id,jobRunnerLabel(job));}
+  const select=$('job-device-filter');$('job-device-label').hidden=labels.size===0;
+  const options=[['','All computers'],['spark','Spark'],['laptop','Laptop'],...labels];select.replaceChildren(...options.map(([value,label])=>{const option=element('option',null,label);option.value=value;return option;}));
+  if(!options.some(([id])=>id===jobDevice))jobDevice='';select.value=jobDevice;
+}
+$('job-device-filter').addEventListener('change',event=>{jobDevice=event.target.value;pageIndex=0;renderJobs();});
+
 // Jobs
 function renderBoard(){
-  const summary=boardSummary(observation,boardJobs),state=connectionState(),active=summary.sparkRunning+summary.sparkQueued+summary.laptopActive;
+  const summary=boardSummary(observation,boardJobs),state=connectionState(),active=summary.sparkRunning+summary.sparkQueued+summary.laptopActive+summary.remoteActive;
   $('activity-label').textContent=(health.failures?'Last seen: ':'')+(active?`${active} active ${active===1?'job':'jobs'}`:health.failures?'no active jobs':observation?.ok===false?'Jobs unavailable':'No active jobs');$('activity-dot').dataset.active=String(active>0);
   $('nav-active').hidden=!active;$('nav-active').textContent=active>9?'9+':String(active);
   $('laptop-network').textContent=laptopLink(observation).label;
@@ -100,11 +149,11 @@ function renderBoard(){
   const slowLink=sparkLink(observation);
   if(state.connected&&slowLink?.warning){$('spark-foot').textContent=slowLink.warning;$('spark-foot').dataset.warn='true';}else{delete $('spark-foot').dataset.warn;
   $('spark-foot').textContent=!state.connected?'Linux builds, tests and compute. Connect to see the scheduler.':budget?`Running jobs have ${summary.reservedCpu} of ${budget} cores and ${summary.reservedMemory} of ${summary.memoryBudget??'—'} GiB set aside${summary.heartbeatAge!=null?` · scheduler seen ${relativeTime(Number(observation.observed_at)-summary.heartbeatAge,observation.observed_at)}`:''}`:'Scheduler responding. Budgets not reported.';}
-  renderJobs();
+  renderComputerFilter();renderJobs();
 }
 function stateLabel(state){return state?state[0].toUpperCase()+state.slice(1):'Unknown';}
 function renderJobs(){
-  const filtered=filterJobs(boardJobs,{filter:jobFilter,query:jobQuery}),page=jobPage(filtered,pageIndex,PAGE_SIZE);pageIndex=page.page;
+  const filtered=filterJobs(boardJobs,{filter:jobFilter,query:jobQuery,device:jobDevice}),page=jobPage(filtered,pageIndex,PAGE_SIZE);pageIndex=page.page;
   $('job-count').textContent=String(boardJobs.length);
   const list=$('jobs');list.replaceChildren();
   $('empty-jobs').hidden=page.total>0;$('empty-jobs-text').textContent=boardJobs.length?'No jobs match this filter.':observation?.ok===false?'The job board could not be read. Check the Spark connection.':'No jobs recorded yet. Ask an agent to run a build.';
@@ -113,10 +162,10 @@ function renderJobs(){
   for(const job of page.rows){
     const id=jobId(job),outcome=jobOutcome(job),runner=jobRunner(job),flags=jobFlags(job,now);
     const item=element('li');const button=element('button','job-row');button.type='button';button.dataset.job=id;button.dataset.outcome=outcome.kind;if(id===selectedJob)button.setAttribute('aria-current','true');
-    button.setAttribute('aria-label',`Job ${id}, ${clientLabel(job.client)}, ${runner}, ${job.state||'unknown'}, ${outcome.label}`);
+    button.setAttribute('aria-label',`Job ${id}, ${clientLabel(job.client)}, ${jobRunnerLabel(job)}, ${job.state||'unknown'}, ${outcome.label}${job.ui_observation_stale?', last seen':''}`);
     const top=element('span','job-row-top');const state=element('span','job-state');state.dataset.state=job.state||'unknown';state.title=stateLabel(job.state);top.append(state,element('span','job-id',job.kind==='service'?serviceView(job).name:id.slice(0,12)||'—'),element('span','job-time',relativeTime(job.created_at,now)));
-    const bottom=element('span','job-row-meta');const who=element('span',`client-tag client-${job.client||'unknown'}`,clientLabel(job.client));bottom.append(who,element('span','runner-tag',runner==='laptop'?'Laptop':'Spark'));if(job.kind==='service')bottom.append(element('span','service-name',`Model server · ${serviceView(job).state}`));else if(job.runtime)bottom.append(element('span','meta-text',TOOL_LABELS[job.runtime]||job.runtime));
-    const result=element('span',`outcome outcome-${outcome.kind}`,outcome.label);bottom.append(result);
+    const bottom=element('span','job-row-meta');const who=element('span',`client-tag client-${job.client||'unknown'}`,clientLabel(job.client));bottom.append(who,element('span','runner-tag',jobRunnerLabel(job)));if(job.kind==='service')bottom.append(element('span','service-name',`Model server · ${serviceView(job).state}`));else if(job.runtime)bottom.append(element('span','meta-text',jobToolsLabel(job)));
+    const result=element('span',`outcome outcome-${outcome.kind}`,outcome.label);bottom.append(result);if(job.ui_observation_stale)bottom.append(element('span','meta-text','Last seen'));
     if(flags.some(flag=>flag.kind==='warn')){const warn=element('span','row-warn','!');warn.title=flags.filter(flag=>flag.kind==='warn').map(flag=>flag.label).join(', ');bottom.append(warn);}
     button.append(top,bottom);button.addEventListener('click',()=>selectJob(id));item.append(button);list.append(item);
   }
@@ -137,7 +186,8 @@ function renderJobDetail(){
   const flags=$('detail-flags');flags.replaceChildren(...jobFlags(job,now).map(flag=>{const node=element('div',`flag flag-${flag.kind}`);node.append(element('strong',null,flag.label),element('span',null,flag.detail));return node;}));
   const started=Number(job.started_at),finished=Number(job.finished_at),cpu=job.reserved_cpu??job.cpu,memory=job.reserved_memory_gb??job.memory_gb;
   const service=serviceView(job);
-  const facts=[['Result',service?service.state:outcome.label,`fact-outcome outcome-${outcome.kind}`],['Submitted by',`${clientLabel(job.client)} (self-declared)`],['Runs on',runner==='laptop'?'This laptop':'Spark'],['Tools',TOOL_LABELS[job.runtime]||job.runtime||'Not reported'],['Set aside',cpu!=null?`${cpu} cores · ${memory??'—'} GiB`:runner==='laptop'?'No enforced limits':'Not reported'],['Internet',jobInternet(job)],['Downloaded',formatGiB(job.internet_use?.bytes_down)],['Queued',relativeTime(job.created_at,now)],['Run time',Number.isFinite(started)&&started>0?duration((Number.isFinite(finished)&&finished>0?finished:now)-started)+(isActiveJob(job)?' so far':''):'Not started']];
+  const facts=[['Result',service?service.state:outcome.label,`fact-outcome outcome-${outcome.kind}`],['Submitted by',`${clientLabel(job.client)} (self-declared)`],['Runs on',jobRunnerLabel(job,true)],['Tools',jobToolsLabel(job)],['Set aside',cpu!=null?`${cpu} cores · ${memory??'—'} GiB`:runner==='laptop'?'No enforced limits':'Not reported'],['Internet',jobInternet(job)],['Downloaded',formatGiB(job.internet_use?.bytes_down)],['Queued',relativeTime(job.created_at,now)],['Run time',Number.isFinite(started)&&started>0?duration((Number.isFinite(finished)&&finished>0?finished:now)-started)+(isActiveJob(job)?' so far':''):'Not started']];
+  if(job.ui_observation_stale)facts.push(['Observation','Last seen; this computer did not provide a fresh job list.']);
   if(job.return_status==='complete')facts.push(['Results',`Results returned to ${job.results_folder}`]);
   else if(job.return_status==='retrying')facts.push(['Results',job.return_error||'Return paused; the bridge will retry.']);
   else if(job.state==='returning')facts.push(['Results','Returning and verifying files on this laptop...']);
@@ -299,7 +349,7 @@ $('start-pair').addEventListener('click',async()=>{$('pair-art').hidden=false;$(
 $('cancel-pair').addEventListener('click',async()=>{await invoke('link',{op:'pair-cancel'});await pollPair();});
 
 // Agents
-function renderAgents(){const state=connectionState(),paths=agentPaths(agent,preferences);$('agent-file').textContent=agent==='codex'?'Add to ~/.codex/config.toml':'Add to your project’s .mcp.json';$('agent-label').textContent=agent;$('agent-config').textContent=agentConfiguration(agent,paths.path,paths.stateRoot);$('agent-prompt').textContent=agentPrompt({agent,...paths,config:savedConfig,connection:state,limits:resourceReady?limits:null});document.querySelectorAll('[data-agent]').forEach(el=>{el.classList.toggle('selected',el.dataset.agent===agent);el.setAttribute('aria-pressed',String(el.dataset.agent===agent));});}
+function renderAgents(){const state=connectionState(),paths=agentPaths(agent,preferences);$('agent-file').textContent=agent==='codex'?'Add to ~/.codex/config.toml':'Add to your project’s .mcp.json';$('agent-label').textContent=agent;$('agent-config').textContent=agentConfiguration(agent,paths.path,paths.stateRoot);$('agent-prompt').textContent=agentPrompt({agent,...paths,config:savedConfig,connection:state,limits:resourceReady?limits:null,computers:namedComputers(computerObservation||observation,computers)});document.querySelectorAll('[data-agent]').forEach(el=>{el.classList.toggle('selected',el.dataset.agent===agent);el.setAttribute('aria-pressed',String(el.dataset.agent===agent));});}
 document.querySelectorAll('[data-agent]').forEach(el=>el.addEventListener('click',()=>{agent=el.dataset.agent;renderAgents();}));
 async function copyText(text,label){try{await navigator.clipboard.writeText(text);message(`${label} copied.`);}catch{message(`Select and copy the ${label.toLowerCase()} manually.`);}}
 $('copy-config').addEventListener('click',()=>copyText($('agent-config').textContent,'Agent configuration'));$('copy-prompt').addEventListener('click',()=>copyText($('agent-prompt').textContent,'Agent prompt'));
@@ -315,5 +365,5 @@ $('open-updates').addEventListener('click',()=>{$('updates-dialog').showModal();
 
 motionQuery.addEventListener('change',event=>{reduced=event.matches;renderConnection();if(reduced)cancelAnimationFrame(pairFrame);});
 async function init(){try{await loadPreferences();}catch(error){message(failure(error));}await refresh();performUpdate('status',true);}
-init();const refreshTimer=setInterval(()=>{if(!document.hidden&&['overview','connection'].includes(currentView))refresh();},15000);
+init();const refreshTimer=setInterval(()=>{if(!document.hidden&&['overview','connection','computers'].includes(currentView))refresh();},15000);
 window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearInterval(pairTimer);stopLogFollow();clearTimeout(updateTimer);cancelAnimationFrame(pairFrame);visuals.forEach(visual=>visual.dispose());});
