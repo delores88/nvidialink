@@ -12,9 +12,10 @@ import subprocess
 import time
 import uuid
 
-from bootstrap import CUDA_SOURCES, RuntimeRefreshError, bounded_json, ensure_runtime_idle, runtime_current, runtime_lock, write_runtime_attempt
+from bootstrap import CUDA_SOURCES, RuntimeRefreshError, bounded_json, ensure_runtime_idle, runtime_architecture, runtime_current, runtime_lock, runtime_sources, write_runtime_attempt
 
 BASE = "nvcr.io/nvidia/pytorch@sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130"
+AMD64_BASE = "nvcr.io/nvidia/pytorch@sha256:4bf906c628d572681a977681765a44a3c1d7e34b39633b7160a84de707608139"
 BLENDER_EXISTING = "sha256:69504fa0aa66263511d356be871df4ab56c8332ea629525fbb832a7249abff62"
 BLENDER_FILES = ("Dockerfile.blender", "prune_deps.py", "patch_deps_cuda13.py", "patch_deps_toolchain.py",
                  "patch_deps_ispc.py", "patch_deps_oidn_cudart.py", "patch_deps_numpy.py", "10_nvidia.json",
@@ -33,7 +34,7 @@ def require_probe_headroom():
 
 def inspect_image(identity):
     image = json.loads(subprocess.check_output(["docker", "image", "inspect", identity], timeout=10))[0]
-    if image.get("Architecture") != "arm64" or not re.fullmatch(r"sha256:[0-9a-f]{64}", image.get("Id", "")):
+    if image.get("Architecture") != runtime_architecture() or not re.fullmatch(r"sha256:[0-9a-f]{64}", image.get("Id", "")):
         raise ValueError("Unexpected image identity")
     if identity.startswith("sha256:") and image["Id"] != identity:
         raise ValueError("Pinned image identity differs")
@@ -41,6 +42,8 @@ def inspect_image(identity):
 
 
 def blender_image(root, context, env):
+    if runtime_architecture() != "arm64":
+        raise RuntimeRefreshError("blender_architecture_unsupported", "Blender is not provisioned for this runtime architecture")
     # Reading/reusing content-addressed layers never retags or edits PhaseForge.
     try:
         return inspect_image(BLENDER_EXISTING), "existing immutable owner image"
@@ -71,28 +74,35 @@ def blender_image(root, context, env):
 
 def build_cuda(root, expected=None, attempt_id=None):
     # Caller holds runtime-refresh.lock exclusively for the whole refresh.
+    architecture = runtime_architecture()
     ensure_runtime_idle(root)
+    base = BASE if architecture == "arm64" else AMD64_BASE
     cpu = helpers()
-    source_digest, context = cpu["runtime_inputs"](root, expected, CUDA_SOURCES)
+    source_digest, context = cpu["runtime_inputs"](root, expected, runtime_sources(cuda=True, architecture=architecture))
     if runtime_current(root, source_digest, cuda=True):
         if attempt_id:
             write_runtime_attempt(root, attempt_id, {**bounded_json(root / "runtime-cuda-build.json"), "reused": True})
         return 0
     require_probe_headroom()
-    receipt = {"started_at": time.time(), "state": "building", "kind": "cuda", "base": BASE,
-               "tag": "sparkdev/cuda:25.09-arm64", "source_digest": source_digest}
+    receipt = {"started_at": time.time(), "state": "building", "kind": "cuda", "base": base,
+               "tag": "sparkdev/cuda:25.09-" + architecture, "architecture": architecture, "source_digest": source_digest}
     publish = lambda: cpu["publish_runtime_status"](root, receipt, attempt_id, cuda=True)
     publish()
     env = {**os.environ, "DOCKER_BUILDKIT": "0"}
     phase = "blender_image"
     try:
-        blender, blender_origin = blender_image(root, context, env)
-        receipt.update(blender_image=blender, blender_provenance=blender_origin)
+        if architecture == "arm64":
+            blender, blender_origin = blender_image(root, context, env)
+            receipt.update(blender_image=blender, blender_provenance=blender_origin)
+            recipe_args = ["--build-arg", "BLENDER_IMAGE=" + blender, "--file", str(context / "Dockerfile.cuda")]
+        else:
+            receipt["blender"] = {"state": "unsupported", "reason": "amd64_blender_not_provisioned"}
+            recipe_args = ["--file", str(context / "Dockerfile.cuda.amd64")]
         publish()
         phase = "image_build"
         with (root / "runtime-cuda-build.log").open("wb") as log:
             code = subprocess.run(["docker", "build", "--cpu-period", "100000", "--cpu-quota", "100000",
-                "--memory", "1g", "--memory-swap", "1g", "--build-arg", "BLENDER_IMAGE=" + blender, "--file", str(context / "Dockerfile.cuda"),
+                "--memory", "1g", "--memory-swap", "1g", *recipe_args,
                 "--tag", receipt["tag"], str(context)], stdout=log, stderr=subprocess.STDOUT, env=env, check=False).returncode
         if code:
             receipt.update(state="failed", exit_code=code, finished_at=time.time(), phase=phase,
@@ -102,33 +112,40 @@ def build_cuda(root, expected=None, attempt_id=None):
         phase = "image_identity"
         image = json.loads(subprocess.check_output(["docker", "image", "inspect", receipt["tag"]], timeout=10))[0]
         image_id = image["Id"]
-        if image.get("Architecture") != "arm64" or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        if image.get("Architecture") != architecture or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             raise ValueError("Unexpected image identity")
         require_probe_headroom()
         phase = "gpu_probe"
         # Probe the worker's exact interpreter, not the image's PATH alias.
         program = "import io,json,site,pip,torch,PIL; from PIL import Image; assert site.ENABLE_USER_SITE; assert PIL.__version__ == '13.0.0'; b=io.BytesIO(); Image.new('RGB',(2,2),(1,2,3)).save(b,format='PNG'); b.seek(0); im=Image.open(b); im.load(); assert im.resize((1,1)).getpixel((0,0)) == (1,2,3); assert torch.cuda.is_available(); x=torch.ones(4*1024*1024,device='cuda'); torch.cuda.synchronize(); print(json.dumps({'torch':torch.__version__,'pillow':PIL.__version__,'pillow_png_decode_resize':True,'cuda':torch.version.cuda,'device':torch.cuda.get_device_name(0),'bytes':x.numel()*x.element_size(),'sum':x.sum().item(),'user_site':site.ENABLE_USER_SITE}))"
+        if architecture == "amd64":
+            # Observe device VRAM itself, separately from the host RAM headroom check.
+            program = program.replace("x=torch.ones", "assert torch.cuda.mem_get_info()[0] >= 64*1024*1024; x=torch.ones")
+            program = program.replace("'user_site':site.ENABLE_USER_SITE", "'user_site':site.ENABLE_USER_SITE,'gpu_memory_total_bytes':torch.cuda.get_device_properties(0).total_memory,'gpu_memory_free_bytes':torch.cuda.mem_get_info()[0]")
         probe = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000", "--cpus", "1", "--memory", "4g", "--memory-swap", "4g",
             "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video", "--env", "OMP_NUM_THREADS=1",
             "--tmpfs", "/tmp:rw,nosuid,nodev,size=268435456", "--entrypoint", "/usr/bin/python3", image_id, "-c", program], timeout=120, stderr=subprocess.PIPE)
         probe_value = json.loads(probe)
         phase = "media_probe"
+        media_args = ["/opt/sparkdev/media_probe.py", "--probe"]
+        if architecture == "amd64":
+            media_args = ["-c", "import json,runpy; m=runpy.run_path('/opt/sparkdev/media_probe.py'); print(json.dumps({'gpu_video':m['probe_video'](),'blender':{'state':'unsupported','reason':'amd64_blender_not_provisioned'}}))"]
         media = subprocess.check_output(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "1000:1000", "--cpus", "1", "--memory", "4g", "--memory-swap", "4g",
             "--pids-limit", "512", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,video",
             "--env", "HOME=/tmp", "--env", "OMP_NUM_THREADS=1", "--tmpfs", "/tmp:rw,nosuid,nodev,size=536870912",
-            "--entrypoint", "/usr/bin/python3", image_id, "/opt/sparkdev/media_probe.py", "--probe"], timeout=300, stderr=subprocess.PIPE)
+            "--entrypoint", "/usr/bin/python3", image_id, *media_args], timeout=300, stderr=subprocess.PIPE)
         probe_value.update(json.loads(media))
         receipt.update(probe=probe_value, probe_sha256=hashlib.sha256(probe).hexdigest(),
                        media_probe_sha256=hashlib.sha256(media).hexdigest())
         # A listed encoder is only a build capability, not hardware acceptance.
         # Require the promised FFmpeg codecs, while reporting actual successes separately.
-        if set(probe_value["gpu_video"]["listed_encoders"]) != {"h264_nvenc", "hevc_nvenc", "av1_nvenc"}:
+        if architecture == "arm64" and set(probe_value["gpu_video"]["listed_encoders"]) != {"h264_nvenc", "hevc_nvenc", "av1_nvenc"}:
             raise RuntimeRefreshError("cuda_nvenc_not_compiled", "FFmpeg lacks the required compiled NVENC encoders")
         phase = "registry_activation"
         cpu["register_runtimes"](root, {"cuda": {"image": image_id, "gpu": True,
-            "provenance": "sparkdev CUDA Dockerfile; source " + source_digest + "; base " + BASE}})
+            "provenance": "sparkdev CUDA Dockerfile; architecture " + architecture + "; source " + source_digest + "; base " + base}})
         phase = "receipt_publish"
         receipt.update(state="succeeded", image=image_id, finished_at=time.time(), exit_code=0)
         publish()

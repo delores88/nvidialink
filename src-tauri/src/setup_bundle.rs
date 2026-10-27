@@ -7,7 +7,7 @@ use std::{collections::BTreeSet, fs, io::Read, path::Path};
 
 const MAX_MANIFEST: u64 = 64 * 1024;
 const MAX_TOTAL: u64 = 192 * 1024 * 1024;
-const ALLOWED: [&str; 28] = [
+const ALLOWED: [&str; 31] = [
     "outputs.py",
     "system_packages.py",
     "media_probe.py",
@@ -33,6 +33,9 @@ const ALLOWED: [&str; 28] = [
     "runtime/Dockerfile",
     "runtime/Dockerfile.cuda",
     "runtime/requirements.txt",
+    "runtime/Dockerfile.amd64",
+    "runtime/requirements-amd64.txt",
+    "runtime/Dockerfile.cuda.amd64",
     "sparkdev-controller.service",
     "sparkdev-link.service",
     "bin/sparkdev-link",
@@ -148,6 +151,16 @@ pub fn load(resources: &Path) -> Result<Value> {
         || REQUIRED.iter().any(|name| !names.contains(name))
         || names.contains("bin/sparkdev-link") != names.contains("sparkdev-link.service")
         || names.contains("install-cuda.py") != names.contains("runtime/Dockerfile.cuda")
+        || [
+            "runtime/Dockerfile.amd64",
+            "runtime/requirements-amd64.txt",
+            "runtime/Dockerfile.cuda.amd64",
+        ]
+        .iter()
+        .filter(|name| names.contains(**name))
+        .count()
+            % 3
+            != 0
     {
         return Err(INVALID.into());
     }
@@ -255,6 +268,23 @@ mod tests {
         )
         .unwrap();
         assert!(load(dir.path()).is_err());
+    }
+    #[test]
+    fn amd64_sources_are_optional_only_as_a_complete_set() {
+        let amd64 = [
+            "runtime/Dockerfile.amd64",
+            "runtime/requirements-amd64.txt",
+            "runtime/Dockerfile.cuda.amd64",
+        ];
+        for removed in 1..=3 {
+            let (dir, mut manifest) = fixture();
+            manifest["files"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|entry| !amd64[..removed].iter().any(|name| entry["path"] == *name));
+            save(dir.path(), &manifest);
+            assert_eq!(load(dir.path()).is_ok(), removed == 3);
+        }
     }
     #[cfg(unix)]
     #[test]

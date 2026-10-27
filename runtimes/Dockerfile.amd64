@@ -1,0 +1,16 @@
+# Independent AMD64 CPU runtime. Registry manifest/config pins are in PROVENANCE.md.
+# The ARM64 recipe is retained separately for existing Spark installations.
+FROM rust:1.98.1-slim-trixie@sha256:fce83543909cd5409924a61ce296bdf5bab0fca37f004c0f6c8ef6f4a37bbc59
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git pkg-config libdbus-1-dev libssl-dev python3 python3-venv nodejs npm ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY requirements-amd64.txt /opt/sparkdev/requirements.txt
+RUN python3 -m venv --system-site-packages /opt/pyenv \
+ && /opt/pyenv/bin/pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /opt/sparkdev/requirements.txt
+ENV PATH=/opt/pyenv/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    CARGO_HOME=/cargo-home CARGO_TARGET_DIR=/target PYTHONDONTWRITEBYTECODE=1
+RUN mkdir -p /cargo-home /target /npm-cache /pip-cache /work \
+ && chown 1000:1000 /cargo-home /target /npm-cache /pip-cache /work
+WORKDIR /work
+ENTRYPOINT ["/usr/bin/python3"]

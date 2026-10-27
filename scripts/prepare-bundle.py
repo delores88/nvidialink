@@ -22,7 +22,7 @@ def sources(root, controller_only=False):
         'outputs.py', 'system_packages.py', 'media_probe.py', 'controller.py', 'worker.py', 'prepare.py', 'proxy.py', 'model_cache.py', 'model_server.py', 'install-runtime.py',
         'bootstrap.py', 'sparkdev-controller.service', 'install-cuda.py']}
     files.update({'runtime/' + name: root / 'runtimes' / name for name in [
-        'Dockerfile', 'requirements.txt', 'Dockerfile.cuda', 'Dockerfile.blender', 'blender/prune_deps.py', 'blender/patch_deps_cuda13.py', 'blender/patch_deps_toolchain.py', 'blender/patch_deps_ispc.py', 'blender/patch_deps_oidn_cudart.py', 'blender/patch_deps_numpy.py', 'blender/10_nvidia.json', 'blender/locked_sources.py', 'blender/inputs.lock.json']})
+        'Dockerfile', 'requirements.txt', 'Dockerfile.cuda', 'Dockerfile.amd64', 'requirements-amd64.txt', 'Dockerfile.cuda.amd64', 'Dockerfile.blender', 'blender/prune_deps.py', 'blender/patch_deps_cuda13.py', 'blender/patch_deps_toolchain.py', 'blender/patch_deps_ispc.py', 'blender/patch_deps_oidn_cudart.py', 'blender/patch_deps_numpy.py', 'blender/10_nvidia.json', 'blender/locked_sources.py', 'blender/inputs.lock.json']})
     binary = root / 'dist/linux-arm64/sparkdev-link'
     if not binary.is_file() and not controller_only:
         raise ValueError('A release bundle requires dist/linux-arm64/sparkdev-link')
@@ -48,7 +48,7 @@ def prepare(root, output, controller_only=False):
         total += len(raw)
         payloads[name] = raw
         entries.append({'path': name, 'size': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()})
-    if len(entries) > 28 or total > MAX_TOTAL:
+    if len(entries) > 31 or total > MAX_TOTAL:
         raise ValueError('Bundle exceeds aggregate limits')
     manifest = {'v': 2, 'build_runtime': True, 'files': entries}
     raw_manifest = (json.dumps(manifest, indent=2) + '\n').encode('utf-8')

@@ -23,6 +23,11 @@ OLD_IMAGE = "sha256:" + "a" * 64
 
 class RefreshTests(unittest.TestCase):
     def setUp(self):
+        # Existing fixtures model the shipped Spark architecture independently
+        # of the machine that executes these source-only tests.
+        architecture = mock.patch.object(bootstrap.platform, "machine", return_value="aarch64")
+        architecture.start()
+        self.addCleanup(architecture.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
         self.root = self.home / "sparkdev"

@@ -23,3 +23,33 @@ The drawer updater placement follows `frontend/src/components/shared/DesktopUpda
 ## 0.5.0 Blender runtime
 
 The read-only PhaseForge Blender 4.5.9 image and the owner-authorized recipe/support-file reuse, exact upstream commits, file hashes and third-party license boundaries are recorded in [PROVENANCE-REMOTE.md](PROVENANCE-REMOTE.md). DGXBridge uses a distinct runtime image and never changes the upstream image, repository or service.
+
+## Multi-device AMD64 runtime sources
+
+The AMD64 CPU recipe adapts DGXBridge's own `runtimes/Dockerfile` at exact upstream commit `6c25314c7b69a5fe73aa0ce317d8d6844afd4772`. The independent AMD64 CUDA recipe adapts the PyTorch/Pillow/media portions of `runtimes/Dockerfile.cuda` at that commit, omitting all ARM64 Blender inputs. The original ARM64 recipes, existing base pins, wheel locks, and Blender image identity are retained unchanged. No PhaseForge source, service, runtime, image or volume is modified by this work.
+
+Public registry manifests and configuration blobs were fetched directly on 2026-10-27 from Docker's official registry and NVIDIA NGC; the SHA-256 of each fetched manifest body was checked against its digest. Architecture is also verified against the image configuration before selecting a base:
+
+| Source | Verified identity |
+| --- | --- |
+| Docker official `library/rust:1.98.1-slim-trixie` multiarch index | `sha256:4cd829461bd5c4d511c32e269da9cb8929223b666519d8004e35fc8d1d771ab7` |
+| Independent Linux AMD64 Rust child used by `Dockerfile.amd64` | `sha256:fce83543909cd5409924a61ce296bdf5bab0fca37f004c0f6c8ef6f4a37bbc59`; configuration `sha256:3807bfc7862f0e7e5f64fb10278b09a0c150fb05329afdf1b4878820eef226b8`, architecture `amd64` |
+| Existing Linux ARM64 Rust child, retained | `sha256:441452f8033b93f69dce3a3ff5c821c411f0a580723e6343932fc34a1b03ba5d`; configuration `sha256:9aa8fafc925472ff98d14b89a5f4b97adf803fe20a68b2a0a1a22cb68bc6d324`, architecture `arm64` |
+| NVIDIA `nvcr.io/nvidia/pytorch:25.09-py3` existing multiarch index, retained for Spark | `sha256:f3b4a33fd60d5e0358287bb44d57e91eda45e8f1681fef1bfd6c969371417130` |
+| Independent Linux AMD64 PyTorch child used by `Dockerfile.cuda.amd64` | `sha256:4bf906c628d572681a977681765a44a3c1d7e34b39633b7160a84de707608139`; configuration `sha256:32e1d4fac739042fb889b92ff9678223212931986bdebdd2d836d97eceaaa0d8`, architecture `amd64`, `CUDA_VERSION=13.0.1.012`, `NVIDIA_PYTORCH_VERSION=25.09` |
+
+The existing NGC base is a multiarch index, rather than an ARM64-only manifest. Its AMD64 child is pinned explicitly by the new recipe; no mutable tag is used for execution. Docker registry reference: `https://registry-1.docker.io/v2/library/rust/manifests/1.98.1-slim-trixie`. NVIDIA registry reference: `https://nvcr.io/v2/nvidia/pytorch/manifests/25.09-py3`. NVIDIA's platform/release reference is `https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-25-09.html`. NVIDIA's container and bundled components retain their own licenses; they are not relicensed as DGXBridge MIT source.
+
+The following unyanked wheel filenames and SHA-256 values were read from the package/version JSON returned directly by `https://pypi.org/pypi/numpy/2.4.6/json` and `https://pypi.org/pypi/pillow/13.0.0/json` on 2026-10-27. The CPU installer uses the first two through `requirements-amd64.txt`; the CUDA recipe uses the third with a hash-checked local wheel install and preserves NVIDIA's Torch stack:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `numpy-2.4.6-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl` | `a7830bab239b79cda9c08c2da014761cafb48da6150e1da17ac06283f43b6089` |
+| `pillow-13.0.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl` | `5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582` |
+| `pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl` | `42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca` |
+
+Blender is explicitly not provisioned by the AMD64 CUDA recipe. Its receipt reports that unsupported capability separately from observed CUDA compute and media probes. Architecture dispatch, source snapshots, image verification and registry activation fail closed on unsupported hosts, changed sources, cross-architecture images or failed probes. Source-only tests do not establish successful image builds, real RTX 4090 job execution, installation, remote-network behavior or Marketplace acceptance.
+
+## Shared setup bundle validation
+
+The validated raw-file bundle loader and its regression tests move from `src-tauri/src/setup_bundle.rs` to `crates/sparkdev/src/bundle.rs`. Original upstream is DGXBridge exact commit `6c25314c7b69a5fe73aa0ce317d8d6844afd4772`; the desktop now re-exports the shared loader. The closed file set includes the separately recorded AMD64 sources, retaining the all-or-none rule and existing size, hash and path checks. Named-computer provisioning uses that same validated bootstrap source through typed pinned SSH, omits the ARM64 paired-link executable and unit, disables relay pairing, and prepares GPU tools only after an explicit request. The existing Spark desktop bootstrap retains its own owner-controlled pairing behavior. No PhaseForge code was copied or changed by this relocation.
