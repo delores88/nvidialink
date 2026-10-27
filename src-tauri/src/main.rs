@@ -87,7 +87,7 @@ fn binary(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, String> {
     if adjacent.is_file() {
         return Ok(adjacent);
     }
-    Err(format!("Bundled {name} is missing. Reinstall DGXBridge."))
+    Err(format!("Bundled {name} is missing. Reinstall RTXBridge."))
 }
 
 async fn launch(
@@ -610,7 +610,7 @@ async fn resources(app: tauri::AppHandle, policy: Option<Value>, internet: Optio
 
 #[tauri::command]
 async fn update_action(app: tauri::AppHandle, window: tauri::Window, action: String) -> Result<Value, String> {
-    if window.label() != "main" { return Err("Updates are available only from the main DGXBridge window.".into()); }
+    if window.label() != "main" { return Err("Updates are available only from the main RTXBridge window.".into()); }
     if action == "install" {
         let state = app.state::<PairState>().inner().clone();
         let _lifecycle = state.lifecycle.lock().await;
@@ -746,7 +746,7 @@ fn main() {
     let context = tauri::generate_context!();
     #[cfg(windows)]
     windows_taskbar::set_app_id(&context.config().identifier)
-        .expect("DGXBridge could not initialize its Windows taskbar identity");
+        .expect("RTXBridge could not initialize its Windows taskbar identity");
 
     tauri::Builder::default()
         .manage(PairState::default())
@@ -757,12 +757,12 @@ fn main() {
             {
                 let window = app
                     .get_webview_window("main")
-                    .ok_or_else(|| std::io::Error::other("DGXBridge main window is unavailable"))?;
+                    .ok_or_else(|| std::io::Error::other("RTXBridge main window is unavailable"))?;
                 windows_taskbar::set_taskbar_icon(&window)?;
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, sign_in, connection, resources, update_action])
         .run(context)
-        .expect("DGXBridge could not start");
+        .expect("RTXBridge could not start");
 }

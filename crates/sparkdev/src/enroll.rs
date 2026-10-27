@@ -505,6 +505,8 @@ pub fn read_password() -> Result<String> {
 }
 
 fn password_from(text: &str) -> Result<String> {
+    // PowerShell can put a byte-order mark in front of what it pipes.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let password = if text.trim_start().starts_with('{') {
         serde_json::from_str::<Value>(text)
             .ok()
@@ -580,6 +582,8 @@ pub fn authorize(id: &str, name: &str, user: &str, port: u16, password: &str) ->
     state::atomic_bytes(&known, format!("{} ssh-ed25519 {blob}\n", alias(id)).as_bytes())?;
     let login = dir.join("login-ssh.conf");
     state::atomic_bytes(&login, login_profile(id, host, user, port, &known).as_bytes())?;
+    let marker = dir.join("password-asked");
+    let _ = fs::remove_file(&marker);
     let mut command = Command::new("ssh");
     command
         .arg("-F")
@@ -588,15 +592,25 @@ pub fn authorize(id: &str, name: &str, user: &str, port: u16, password: &str) ->
         .arg(install_command(windows, &public))
         .env("SSH_ASKPASS", std::env::current_exe()?)
         .env("SSH_ASKPASS_REQUIRE", "force")
-        .env(crate::ASKPASS_SECRET, password);
+        .env(crate::ASKPASS_SECRET, password)
+        .env(crate::ASKPASS_MARK, &marker);
     let outcome = remote_outcome(transport::run_process(command, &[], STEP));
     let _ = fs::remove_file(&login);
+    // Some servers close the connection after a wrong password instead of
+    // refusing it; the helper's marker says a password was asked for.
+    let asked = fs::remove_file(&marker).is_ok();
     match outcome? {
         Remote::Ran(0, out) if out.contains(KEY_ADDED) => {}
-        Remote::Refused => {
+        Remote::Refused | Remote::Unreachable if asked => {
             return Err(AppError::new(
                 4,
                 format!("{name} didn't accept that password for {user}. Check the account name and password, then try again."),
+            ));
+        }
+        Remote::Refused => {
+            return Err(AppError::new(
+                4,
+                format!("{name} doesn't allow signing in with a password. Use the setup command under \"Can't use a password?\" instead."),
             ));
         }
         Remote::Unreachable => {
@@ -798,6 +812,8 @@ mod tests {
     #[test]
     fn passwords_arrive_as_one_line_or_the_apps_json() {
         assert_eq!(password_from("hunter 2\r\n").unwrap(), "hunter 2");
+        assert_eq!(password_from("\u{feff}{\"password\":\"x y\"}\r\n").unwrap(), "x y");
+        assert_eq!(password_from("\u{feff}plain\r\n").unwrap(), "plain");
         assert_eq!(password_from("{\"password\":\"a\\\"b {c}\"}").unwrap(), "a\"b {c}");
         for bad in ["", "\n", "two\nlines\n", "{\"pass\":\"x\"}", &"x".repeat(1025)] {
             assert!(password_from(bad).is_err(), "{bad:?}");

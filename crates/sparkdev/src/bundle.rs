@@ -57,7 +57,7 @@ const REQUIRED: [&str; 14] = [
     "sparkdev-controller.service",
 ];
 const INVALID: &str =
-    "The installed Spark setup bundle is invalid or incomplete. Reinstall DGXBridge.";
+    "The installed Spark setup bundle is invalid or incomplete. Reinstall RTXBridge.";
 type Result<T> = std::result::Result<T, String>;
 
 #[derive(Deserialize)]

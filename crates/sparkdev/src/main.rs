@@ -4,6 +4,9 @@ fn main() {
     if let Some(secret) = std::env::var_os(sparkdev::ASKPASS_SECRET) {
         match sparkdev::askpass_reply(&args, &secret.to_string_lossy()) {
             Some(reply) => {
+                if let Some(mark) = std::env::var_os(sparkdev::ASKPASS_MARK) {
+                    let _ = std::fs::write(mark, b"");
+                }
                 println!("{reply}");
                 std::process::exit(0);
             }

@@ -121,7 +121,7 @@ pub(crate) fn spawn_detached(mode: &str, job: Option<&str>) -> Result<()> {
     let current = std::env::current_exe()?;
     let exe = if mode == "__return_worker" {
         let worker = current.with_file_name("sparkdev-return.exe");
-        if !worker.is_file() { return Err(AppError::new(3, "The automatic result worker is missing; reinstall DGXBridge")); }
+        if !worker.is_file() { return Err(AppError::new(3, "The automatic result worker is missing; reinstall RTXBridge")); }
         worker
     } else { current };
     let application: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();

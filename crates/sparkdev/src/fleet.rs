@@ -2027,8 +2027,12 @@ pub(crate) fn dispatch(
     match &cli.command {
         Commands::Discover { .. } => crate::owner_only(raw, cli.client)?,
         // A password sign-in, and replacing the Spark connection, are the owner's.
-        Commands::Node { command: NodeCommands::Authorize { .. } } => crate::owner_only(raw, cli.client)?,
-        Commands::Node { command: NodeCommands::Trust { id, .. } } if id == "spark" => crate::owner_only(raw, cli.client)?,
+        Commands::Node { command: NodeCommands::Authorize { .. } } if !crate::explicitly_owner(raw, cli.client) => {
+            return Err(error(crate::OWNER_SIGN_IN));
+        }
+        Commands::Node { command: NodeCommands::Trust { id, .. } } if id == "spark" && !crate::explicitly_owner(raw, cli.client) => {
+            return Err(error(crate::OWNER_SIGN_IN));
+        }
         Commands::Resources {
             internet: Some(_), ..
         } if !crate::explicitly_owner(raw, cli.client) => {

@@ -51,7 +51,7 @@ impl Default for UpdateState {
                 downloaded: None,
             })),
             view: Arc::new(Mutex::new(
-                json!({"ok":true,"status":"idle","current_version":env!("CARGO_PKG_VERSION"),"available_version":null,"message":"Check for an approved DGXBridge update."}),
+                json!({"ok":true,"status":"idle","current_version":env!("CARGO_PKG_VERSION"),"available_version":null,"message":"Check for an approved RTXBridge update."}),
             )),
             busy: Arc::new(AtomicBool::new(false)),
         }
@@ -92,7 +92,7 @@ pub fn client() -> Result<reqwest::Client> {
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(12))
         .timeout(Duration::from_secs(35))
-        .user_agent(concat!("DGXBridge/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("RTXBridge/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|_| "Secure update transport is unavailable.".into())
 }
@@ -403,7 +403,7 @@ async fn perform(app: &tauri::AppHandle, state: &UpdateState, action: &str) -> R
             std::fs::create_dir(&session).map_err(|_| "Could not reserve update staging.")?;
             update_helper::plain(&session)?;
             let partial = session.join("installer.partial");
-            let target = session.join("DGXBridge-update.exe");
+            let target = session.join("RTXBridge-update.exe");
             state.set(
                 "downloading",
                 "Downloading the exact approved installer.",
@@ -427,7 +427,7 @@ async fn perform(app: &tauri::AppHandle, state: &UpdateState, action: &str) -> R
                 .map_err(|_| "Verified download could not be finalized.")?;
             inner.downloaded = Some(target);
             inner.authorization = Some(auth);
-            state.set("ready","Installer verified. Install update opens ordinary Windows setup and closes DGXBridge after a safe handoff.",json!({}));
+            state.set("ready","Installer verified. Install update opens ordinary Windows setup and closes RTXBridge after a safe handoff.",json!({}));
         }
         "install" => {
             update_helper::normal_context()?;
@@ -458,7 +458,7 @@ async fn perform(app: &tauri::AppHandle, state: &UpdateState, action: &str) -> R
                 auth.expires,
             )
             .await?;
-            state.set("installing","DGXBridge is closing. Follow Windows setup; your existing connection and job state stay in place.",json!({}));
+            state.set("installing","RTXBridge is closing. Follow Windows setup; your existing connection and job state stay in place.",json!({}));
             inner.authorization = None;
             app.exit(0);
         }

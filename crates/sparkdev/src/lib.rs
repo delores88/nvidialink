@@ -69,6 +69,11 @@ pub(crate) fn enforce_expected_manifest(manifest_id: &str) -> Result<()> {
 /// Set only on the ssh that `node authorize` runs, which then calls this program
 /// as its password helper; see `main`.
 pub const ASKPASS_SECRET: &str = "SPARKDEV_ASKPASS_SECRET";
+/// A file the helper creates when it answers, so a wrong password can be told
+/// apart from a server that never asked for one. It holds nothing.
+pub const ASKPASS_MARK: &str = "SPARKDEV_ASKPASS_MARK";
+pub(crate) const OWNER_SIGN_IN: &str =
+    "Signing in with a password and choosing the Spark are owner actions; run them from RTXBridge or with --client human";
 /// What this program answers when ssh asks it `prompt`: the password for a
 /// password prompt, and nothing for anything else (such as a host-key question).
 pub fn askpass_reply(prompt: &[String], secret: &str) -> Option<String> {
