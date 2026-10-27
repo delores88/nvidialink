@@ -101,7 +101,7 @@ function deviceCard(row,mode){
   title.append(element('strong',null,row.name),element('small',null,row.detail));status.dataset.state=row.status.kind;head.append(deviceIcon(row.kind),title,status);card.append(head);
   if(!compact)card.append(element('span','device-good',row.goodFor));
   const specs=element('span','device-specs');for(const spec of row.specs.slice(0,compact?2:4))specs.append(element('span','device-spec',spec));card.append(specs);
-  if(row.link){const link=element('span','device-link',row.link.label);link.dataset.measured=String(row.link.measured);link.title=row.link.measured?`Measured on the last large transfer${row.link.measuredAt?` (${relativeTime(row.link.measuredAt)})`:''}`:'Reported link rate; real speed is measured on the first large transfer';card.append(link);}
+  if(row.link&&!row.specs.slice(0,compact?2:4).includes(row.link.label)){const link=element('span','device-link',row.link.label);link.dataset.measured=String(row.link.measured);link.title=row.link.measured?`Measured on the last large transfer${row.link.measuredAt?` (${relativeTime(row.link.measuredAt)})`:''}`:'Reported link rate; real speed is measured on the first large transfer';card.append(link);}
   if(row.kind==='laptop'&&mode!=='strip'){const who=Object.entries(row.agents||{}).map(([name,count])=>`${name} ${count}`).join(' · ');card.append(element('span','device-link',who?`Agents: ${who}`:'No agent jobs running'));}
   if(row.error&&mode!=='strip'){const error=element('span','fine-print computer-error',row.error);error.title=row.error;card.append(error);}
   card.setAttribute('aria-label',`${row.name}: ${row.status.label}. ${row.goodFor}.`);
