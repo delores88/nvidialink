@@ -34,7 +34,7 @@ try{applyTheme(localStorage.getItem('dgxbridge-theme')==='light'?'light':'dark')
 $('theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';applyTheme(next);try{localStorage.setItem('dgxbridge-theme',next);}catch{}if(fleetMap)renderDevices();});
 
 const TITLES={overview:'Jobs',devices:'Devices',resources:'Job settings',agents:'Agent setup'};
-function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name!=='devices')expandMap(false);if(name==='devices'){renderDevices();if(selectedDevice==='spark')readPairState();if(!computersLoaded)readComputers();}fleetMap?.setActive(name==='devices');}
+function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name!=='devices')expandMap(false);if(name==='devices'){renderDevices();if(selectedDevice==='spark'){readPairState();readAgents();}if(!computersLoaded)readComputers();}fleetMap?.setActive(name==='devices');}
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.agentChoice){agent=button.dataset.agentChoice;renderAgents();}if(button.dataset.device)selectedDevice=button.dataset.device;view(button.dataset.view);}));
 
 // Connection
@@ -123,6 +123,46 @@ function expandMap(on){const map=$('fleet-map');map.classList.toggle('expanded',
 $('map-expand').addEventListener('click',()=>expandMap(!$('fleet-map').classList.contains('expanded')));
 $('map-reset').addEventListener('click',()=>fleetMap?.resetView());
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('fleet-map').classList.contains('expanded')){expandMap(false);event.stopPropagation();}});
+// Agents on the Spark: which tools are signed in, and signing them in or out.
+const AGENT_TOOLS=[{id:'claude',name:'Claude Code'},{id:'codex',name:'Codex'}];
+let agentState=null,agentBusy=false;
+function renderAgentTools(){
+  $('agent-tools').replaceChildren(...AGENT_TOOLS.map(tool=>{
+    const signed=agentState?.[tool.id]?.signed_in===true,item=element('li','agent-tool');
+    const status=element('span','device-status',agentState?signed?'Signed in':'Not signed in':'Not checked');status.dataset.state=signed?'ready':'setup';
+    const button=element('button',`button ${signed?'subtle':'secondary'} small`,signed?'Sign out':'Sign in');button.type='button';button.disabled=agentBusy||!agentState;
+    button.addEventListener('click',()=>signed?agentSignOut(tool):agentSignIn(tool));
+    item.append(deviceIcon('computer'),element('strong',null,tool.name),status,button);return item;
+  }));
+}
+async function readAgents(){
+  if(!savedConfig)return;
+  try{agentState=(await command(['agent','status'])).agents||null;$('agent-message').textContent='';}
+  catch(error){agentState=null;$('agent-message').textContent=`Couldn't check agent sign-ins: ${failure(error)}`;}
+  renderAgentTools();
+}
+async function agentSignIn(tool){
+  if(tool.id==='claude'){$('agent-token').value='';$('agent-token-message').textContent='';$('agent-token-dialog').showModal();$('agent-token').focus();return;}
+  agentBusy=true;renderAgentTools();
+  try{const started=await command(['agent','login','codex']);$('agent-message').textContent="Codex's sign-in link and code are in its job's log. Open the link, enter the code, then choose Check.";if(started.job){selectedJob=started.job;view('overview');selectJob(started.job);}}
+  catch(error){$('agent-message').textContent=`Codex sign-in didn't start: ${failure(error)}`;}
+  finally{agentBusy=false;renderAgentTools();}
+}
+async function agentSignOut(tool){
+  agentBusy=true;renderAgentTools();
+  try{await command(['agent','signout',tool.id]);await readAgents();$('agent-message').textContent=`${tool.name} is signed out on your Spark.`;}
+  catch(error){$('agent-message').textContent=`Couldn't sign ${tool.name} out: ${failure(error)}`;}
+  finally{agentBusy=false;renderAgentTools();}
+}
+$('refresh-agents').addEventListener('click',readAgents);
+$('close-agent-token').addEventListener('click',()=>$('agent-token-dialog').close());
+$('agent-token-dialog').addEventListener('close',()=>{$('agent-token').value='';});
+$('agent-token-form').addEventListener('submit',event=>{event.preventDefault();busy($('save-agent-token'),async()=>{
+  const token=$('agent-token').value.trim();if(!token){$('agent-token-message').textContent='Paste the token first.';return;}
+  try{requireOk(await invoke('agent_sign_in',{token}));$('agent-token-dialog').close();await readAgents();$('agent-message').textContent='Claude Code is signed in on your Spark.';}
+  catch(error){$('agent-token-message').textContent=failure(error);}
+  finally{$('agent-token').value='';}
+});});
 function renderDevices(){
   const rows=currentDevices();renderFleet(rows);
   if(!rows.some(row=>row.id===selectedDevice))selectedDevice='spark';
