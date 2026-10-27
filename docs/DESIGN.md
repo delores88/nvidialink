@@ -1,6 +1,13 @@
 # DGXBridge design
 
-Status: implementation contract, updated 2026-10-21 for the complete 0.4.1 candidate. Product name DGXBridge; repository nvidialink; CLI `sparkdev`.
+Status: implementation contract including the 0.6 multi-computer candidate. Product name DGXBridge; repository nvidialink; CLI `sparkdev`.
+
+## 0.6 multiple-computer extension
+
+The multi-computer contract is documented in [MULTI-DEVICE.md](MULTI-DEVICE.md). Named Linux/WSL profiles retain independent state and return workers. A fleet journal binds immutable requests, source manifests, worktree claims, and SSH identities before submission. Existing Spark/laptop state and UI remain compatible. Additional desktop controls are additive and have regression coverage; no profile is installed or GPU runtime prepared implicitly when it is saved.
+
+Automatic selection uses authenticated runtime and resource observations, with discrete GPU memory separate from system RAM. Each controller still owns actual admission. Additional computers use pinned SSH; existing Spark pairing is preserved. Independent jobs may run concurrently across devices, while a single job uses one controller/runtime.
+
 
 ## Evidence and boundaries
 

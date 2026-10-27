@@ -1,5 +1,8 @@
 # Native tools for Claude Code and Codex
 
+In the 0.6 candidate, tools accept an optional `device` argument (`auto`, `spark`, `laptop`, or a registered computer ID). Run/plan also accept bounded `min_memory_gb` and `min_vram_gb`. Keep qualified `computer:JOB` IDs intact for wait/logs/outputs/cancel. Each selected remote computer needs its own healthy controller; native laptop admission retains its Spark dependency. A stdio session can set a default with `--device COMPUTER mcp`, and individual tool calls can override it. See [multi-computer setup and limits](MULTI-DEVICE.md).
+
+
 The installed `sparkdev` CLI is the primary interface. Its `mcp` command exposes 13 tools through the same core over stdio: connection, resources, devices, plan, prepare, run, wait, logs, status, cancel, serve, call and outputs. The 0.5.0 candidate adds automatic Spark file return and `outputs` metadata inspection. No TCP listener, token copying or separate model account is required by the MCP server. Each AI product still uses its own existing authentication. Candidate features need the matching CLI, Spark controller and installed Windows return worker; the older real-session evidence below does not verify them.
 
 Use the executable and state paths shown by the desktop **Agent setup** drawer screen. Its copyable prompts and snippets select the verified owner state and explain package redirection. The examples below omit an environment override; add the generated `SPARKDEV_HOME` environment entry when shown. On Windows the NSIS install bundles it in the application's `bin` directory. Replace the example below with that exact installed path; do not point production configuration at a development build.
