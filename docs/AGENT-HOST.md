@@ -26,7 +26,7 @@ sparkdev agent status                            # sign-in state per tool and de
 
 ## How it works
 
-1. **In.** The laptop writes `git bundle create` of the chosen branch, with its history up to the merge base the Spark already has. It adds the prompt and a small request record to a staging folder. That folder goes through the existing project sync, so it works over the LAN and over the paired remote route alike. No git server, no second SSH path.
+1. **In.** The laptop writes `git bundle create` of the chosen branch. In v1 this is the branch's whole history; sending only what the Spark lacks is P2. It adds the prompt and a small request record to a staging folder. That folder goes through the existing project sync, so it works over the LAN and over the paired remote route alike. No git server, no second SSH path.
 2. **Run.** The controller runs a normal job with runtime `agent`:
    - It uses the existing sandbox: non-root, read-only root, `--cap-drop ALL`, `no-new-privileges`, CPU, memory and pid limits, the headroom watchdog and scratch on tmpfs.
    - A fixed driver script, copied into the job record like `worker.py`, does the rest:
