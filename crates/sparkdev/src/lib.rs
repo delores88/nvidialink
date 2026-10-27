@@ -66,7 +66,16 @@ pub(crate) fn enforce_expected_manifest(manifest_id: &str) -> Result<()> {
 }
 /// Setup's refusal for a redirected state folder, shared with Find my Spark's
 /// save, which writes the same configuration.
-pub(crate) const REDIRECTED_STATE: &str = "Windows redirected this process's state folder. Configure SSH in the normally installed DGXBridge app, or set SPARKDEV_HOME to the verified owner state location; no configuration was copied or saved.";
+/// Set only on the ssh that `node authorize` runs, which then calls this program
+/// as its password helper; see `main`.
+pub const ASKPASS_SECRET: &str = "SPARKDEV_ASKPASS_SECRET";
+/// What this program answers when ssh asks it `prompt`: the password for a
+/// password prompt, and nothing for anything else (such as a host-key question).
+pub fn askpass_reply(prompt: &[String], secret: &str) -> Option<String> {
+    let text = prompt.join(" ").to_ascii_lowercase();
+    (prompt.len() <= 1 && text.contains("password")).then(|| secret.to_string())
+}
+pub(crate) const REDIRECTED_STATE: &str = "Windows redirected this process's state folder. Configure SSH in the normally installed RTXBridge app, or set SPARKDEV_HOME to the verified owner state location; no configuration was copied or saved.";
 /// Output formatting follows parsed flags, not literal command arguments or call bodies.
 pub fn json_output(args: &[String]) -> bool {
     let normalized = servers::normalize_call_args(args.to_vec());
@@ -318,7 +327,19 @@ enum NodeCommands {
         #[arg(long, default_value_t = 22)]
         port: u16,
     },
-    /// Trust a checked device by its confirmed fingerprint and add it.
+    /// Sign in once with the owner's password, read from stdin, to authorize
+    /// this device's key. The password is never stored or passed as an argument.
+    Authorize {
+        id: String,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+    },
+    /// Trust a checked device by its confirmed fingerprint and add it. `spark`
+    /// makes it this laptop's Spark instead.
     Trust {
         id: String,
         #[arg(long)]
@@ -454,6 +475,11 @@ pub fn execute_with_events(args: Vec<String>, events: &mut dyn FnMut(&Value)) ->
             // settings it keeps are read under the lock, and a concurrent
             // Find my Spark save or mode change cannot interleave.
             state::replace_config(|previous| state::Config {
+                // A pin RTXBridge saved stays in use while the pinned identity is the same.
+                known_hosts: previous
+                    .as_ref()
+                    .filter(|c| c.host_key_alias == host_key_alias)
+                    .and_then(|c| c.known_hosts.clone()),
                 ssh_alias,
                 hosts,
                 host_key_alias,
@@ -841,7 +867,7 @@ pub fn resource_settings(policy: Option<Value>, internet: Option<bool>) -> Resul
     let mut tr = transport::Transport::new()?;
     let mut response = tr.rpc(request).map_err(|e| {
         if internet.is_some() && e.message.starts_with("invalid_request:") {
-            AppError::new(6, "This Spark bridge has no internet switch yet. Repair the Spark bridge from DGXBridge.")
+            AppError::new(6, "This Spark bridge has no internet switch yet. Repair the Spark bridge from RTXBridge.")
         } else { e }
     })?;
     response["transport"] = tr.info();
@@ -965,6 +991,9 @@ fn devices() -> Result<Value> {
             // controllers that predate them.
             spark["materializing"] = status.get("materializing").cloned().unwrap_or(Value::Null);
             spark["materializer"] = status.get("materializer").cloned().unwrap_or(Value::Null);
+            // Last measured transfer speeds to this device, for the owner and for agents
+            // choosing where large inputs and outputs should go. Null until measured.
+            spark["link_speed"] = state::link_speed();
             spark["capacity_note"] = json!(
                 "Scheduler limits and recorded jobs are observations, not free hardware capacity or a reservation."
             );
@@ -1379,7 +1408,7 @@ fn disk_preflight(storage: &Value, uploaded: u64, absent: u64) -> Result<()> {
         return Err(AppError::new(
             6,
             format!(
-                "insufficient_disk: Spark has {} GiB free; this upload needs {} GiB and DGXBridge keeps {} in reserve. Free Spark disk space, then retry",
+                "insufficient_disk: Spark has {} GiB free; this upload needs {} GiB and RTXBridge keeps {} in reserve. Free Spark disk space, then retry",
                 gib_text(free),
                 gib_text(needed),
                 inventory::size_text(reserve)
@@ -1435,6 +1464,8 @@ struct Session<'a> {
     succeeded: bool,
     retries: u64,
     uploaded: u64,
+    /// Time spent sending files, the measured part of an upload's speed.
+    upload_time: Duration,
     /// The Spark folder packs are copied into, when this route can copy files.
     incoming: Option<String>,
 }
@@ -1509,6 +1540,18 @@ impl Session<'_> {
     /// by RPC in order. Each RPC batch is sized for the route at that moment and
     /// halves after a batch proves too slow for the link; one chunk always fits.
     fn upload(
+        &mut self,
+        inv: &inventory::Inventory,
+        hashes: &[String],
+        limits: &SparkLimits,
+        retry: bool,
+    ) -> Result<()> {
+        let started = Instant::now();
+        let result = self.send(inv, hashes, limits, retry);
+        self.upload_time += started.elapsed();
+        result
+    }
+    fn send(
         &mut self,
         inv: &inventory::Inventory,
         hashes: &[String],
@@ -1806,6 +1849,7 @@ pub fn sync_with(
         succeeded: false,
         retries: 0,
         uploaded: 0,
+        upload_time: Duration::ZERO,
         incoming: None,
     };
     let probe = session.call(&json!({"v":1,"op":"missing","hashes":[]}), false)?;
@@ -1877,6 +1921,8 @@ pub fn sync_with(
     }
     out["uploaded_bytes"] = json!(session.uploaded);
     out["sync_seconds"] = json!(started.elapsed().as_secs_f64());
+    out["upload_seconds"] = json!(session.upload_time.as_secs_f64());
+    state::record_speed("upload", session.uploaded, session.upload_time.as_secs_f64());
     out["sync_rounds"] = json!(rounds);
     out["materialize_polls"] = json!(polls);
     out["transfer_retries"] = json!(session.retries);

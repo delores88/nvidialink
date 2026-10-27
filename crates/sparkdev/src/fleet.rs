@@ -673,6 +673,7 @@ pub(crate) fn register_node(registration: Registration) -> Result<Value> {
         local_build_gate: state::config()
             .ok()
             .and_then(|config| config.local_build_gate),
+        known_hosts: None,
     };
     let node = nodes::Node {
         id: registration.id,
@@ -694,6 +695,9 @@ fn node_crud(command: &NodeCommands) -> Result<Value> {
         NodeCommands::Scan => crate::enroll::scan(),
         NodeCommands::Key { id } => crate::enroll::key(id),
         NodeCommands::Probe { id, host, user, port } => crate::enroll::probe(id, host, user, *port),
+        NodeCommands::Authorize { id, host, user, port } => {
+            crate::enroll::authorize(id, host, user, *port, &crate::enroll::read_password()?)
+        }
         NodeCommands::Trust {
             id,
             label,
@@ -2022,6 +2026,9 @@ pub(crate) fn dispatch(
     // approval for internet, cache changes or Find my Spark.
     match &cli.command {
         Commands::Discover { .. } => crate::owner_only(raw, cli.client)?,
+        // A password sign-in, and replacing the Spark connection, are the owner's.
+        Commands::Node { command: NodeCommands::Authorize { .. } } => crate::owner_only(raw, cli.client)?,
+        Commands::Node { command: NodeCommands::Trust { id, .. } } if id == "spark" => crate::owner_only(raw, cli.client)?,
         Commands::Resources {
             internet: Some(_), ..
         } if !crate::explicitly_owner(raw, cli.client) => {

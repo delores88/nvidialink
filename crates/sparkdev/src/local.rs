@@ -72,13 +72,8 @@ pub fn submit(
             ),
         ));
     }
-    if is_cargo(argv) {
-        let gate = config.local_build_gate.as_ref().ok_or_else(|| {
-            AppError::new(
-                3,
-                "Configure --local-build-gate before running local Cargo jobs",
-            )
-        })?;
+    // A build gate is optional; when one is set, Cargo runs through it.
+    if let Some(gate) = config.local_build_gate.as_ref().filter(|_| is_cargo(argv)) {
         if !gate.is_file() {
             return Err(AppError::new(
                 3,
@@ -420,18 +415,10 @@ fn worker_inner(job: &str) -> Result<()> {
     }
     let mut tr = transport::Transport::from_config(config.clone());
     tr.rpc(json!({"v":1,"op":"heartbeat","lease":lease,"state":"running","ttl":60}))?;
-    let mut command = if is_cargo(&argv) {
+    let gate = config.local_build_gate.as_ref().filter(|_| is_cargo(&argv));
+    let mut command = if let Some(gate) = gate {
         let mut command = Command::new("python");
-        command
-            .arg("-I")
-            .arg(
-                config
-                    .local_build_gate
-                    .as_ref()
-                    .ok_or_else(|| AppError::new(3, "Local Cargo requires build gate"))?,
-            )
-            .arg("--")
-            .args(&argv);
+        command.arg("-I").arg(gate).arg("--").args(&argv);
         command
     } else {
         let mut command = Command::new(&argv[0]);

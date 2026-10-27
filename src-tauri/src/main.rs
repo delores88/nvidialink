@@ -692,9 +692,43 @@ async fn bootstrap_node(app: tauri::AppHandle, id: String, cuda: bool) -> Result
     launch(app, "sparkdev", args, None, 120).await
 }
 
+/// The sign-in that authorizes a device's new key. Only names and the account
+/// travel as arguments; the password goes to sparkdev on stdin.
+fn sign_in_args(id: &str, host: &str, user: &str, port: u16) -> Result<Vec<String>, String> {
+    if id != "spark" {
+        sparkdev::nodes::validate_id(id).map_err(|error| error.message)?;
+    }
+    if [host, user].iter().any(|value| value.is_empty() || value.len() > 253 || value.starts_with('-') || value.contains('\0')) || port == 0 {
+        return Err("Enter the device's name or address and the account you sign in with.".into());
+    }
+    Ok(["--json", "--client", "human", "node", "authorize", id, "--host", host, "--user", user, "--port", &port.to_string()]
+        .iter()
+        .map(|value| value.to_string())
+        .collect())
+}
+
+#[tauri::command]
+async fn sign_in(app: tauri::AppHandle, id: String, host: String, user: String, port: Option<u16>, password: String) -> Result<Value, String> {
+    if password.is_empty() || password.len() > 1024 {
+        return Err("Enter the password for that account.".into());
+    }
+    let args = sign_in_args(&id, &host, &user, port.unwrap_or(22))?;
+    launch(app, "sparkdev", args, Some(serde_json::json!({"password": password})), 90).await
+}
+
 #[cfg(test)]
 mod node_bootstrap_tests {
-    use super::node_bootstrap_allowed;
+    use super::{node_bootstrap_allowed, sign_in_args};
+
+    #[test]
+    fn sign_in_passes_names_as_arguments_and_nothing_else() {
+        let args = sign_in_args("spark", "192.0.2.9", "ben", 22).unwrap();
+        assert_eq!(args, ["--json", "--client", "human", "node", "authorize", "spark", "--host", "192.0.2.9", "--user", "ben", "--port", "22"]);
+        assert!(sign_in_args("office", "AntonPC", "ben", 2222).is_ok());
+        for (id, host, user) in [("laptop", "h", "u"), ("../x", "h", "u"), ("office", "-oProxyCommand=x", "u"), ("office", "h", ""), ("office", "h", "u\0")] {
+            assert!(sign_in_args(id, host, user, 22).is_err(), "{id} {host} {user}");
+        }
+    }
 
     #[test]
     fn selected_node_setup_obeys_pairing_update_and_identity_guards() {
@@ -728,7 +762,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, connection, resources, update_action])
+        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, sign_in, connection, resources, update_action])
         .run(context)
         .expect("DGXBridge could not start");
 }

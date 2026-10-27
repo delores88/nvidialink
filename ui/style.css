@@ -108,12 +108,6 @@ input:not([type=radio]):not([type=checkbox]){display:block;width:100%;min-width:
 .bootstrap-card .checkbox{margin:14px 0 10px}.bootstrap-card>button{margin-top:14px}.bootstrap-card #bootstrap-message{margin-top:10px}
 .diagnostic pre{margin:0;max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;line-height:1.6;background:var(--log-bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 
-/* PhaseForge SparkLinkVisuals geometry; see PROVENANCE.md */
-.connection-visual{display:grid;grid-template-columns:104px minmax(24px,1fr) 104px;align-items:center;width:100%;min-width:0;padding:10px 0 8px}.connection-device{display:grid;justify-items:center;gap:1px;min-width:0;isolation:isolate}.hardware{display:block;width:104px;height:78px;overflow:visible}.hardware-edge{stroke:#c1d6de;stroke-width:.65;stroke-opacity:.4;stroke-linejoin:round}.device-shadow{fill:#000;opacity:.18}.vent{fill:none;stroke:#7fb1bc;stroke-opacity:.6;stroke-width:1.3;stroke-linecap:round}.side-vent{fill:none;stroke:#86a9bf;stroke-opacity:.32;stroke-width:1;stroke-linecap:round}.device-led{fill:#65d9ce}.device-label{color:var(--muted);font-size:11px;font-weight:550;line-height:1.6;white-space:nowrap}
-.connection-lane{position:relative;height:110px;min-width:0;overflow:hidden}.ribbons,.connection-particles{position:absolute;inset:0;display:block;width:100%;height:100%;pointer-events:none}.ribbons{overflow:visible;opacity:.35}.ribbons path{fill:none;stroke-width:.8}.connection-particles{opacity:.95}.path-label{position:absolute;top:0;left:50%;transform:translateX(-50%);color:var(--muted);font-size:10.5px;font-weight:550;white-space:nowrap}
-.connection-visual[data-route=unknown] .ribbons path{stroke-dasharray:3 5}.connection-visual[data-motion=static] .ribbons path{stroke:#87968b;opacity:.65}.connection-visual[data-motion=static] .hardware{filter:grayscale(.85);opacity:.7}.connection-visual[data-state=offline] .ribbons{opacity:.15}
-@container(max-width:460px){.connection-visual{grid-template-columns:68px minmax(24px,1fr) 68px}.hardware{width:68px;height:56px}.connection-lane{height:86px}.path-label{font-size:9.5px}}
-
 /* Limits */
 .resource-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.resource-preset{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;padding:13px 14px;border-radius:11px;border:1px solid var(--line);background:var(--panel-soft)}.resource-preset:hover:not(:disabled){border-color:var(--line-strong)}.resource-preset strong{font-size:13px}.resource-preset span{font-size:11.5px;color:var(--muted)}.resource-preset small{font-size:11px;color:var(--faint);margin-top:4px}.resource-preset[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent-line)}.resource-preset[aria-pressed=true] small{color:var(--accent)}
 .resource-capacity{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin:18px 0 6px}.capacity-heading{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:7px}.capacity-heading strong{color:var(--text);font-variant-numeric:tabular-nums}.capacity-bar{position:relative;display:flex;height:9px;border-radius:5px;background:var(--panel-soft);border:1px solid var(--line);overflow:hidden}.budget-fill{display:block;height:100%;background:linear-gradient(90deg,var(--teal),var(--accent));transition:width .3s var(--ease)}.headroom-fill{display:block;height:100%;background:repeating-linear-gradient(135deg,var(--warn) 0 3px,transparent 3px 6px);opacity:.55}.capacity-item .fine-print{margin-top:6px}
@@ -194,6 +188,45 @@ dialog{border:1px solid var(--line-strong);border-radius:16px;padding:0;backgrou
 .computer-filter .computer-select{min-height:32px;padding:5px 9px;font-size:12px}
 .text-link{font-size:inherit;color:var(--accent);text-decoration:underline;text-underline-offset:2px}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Devices uses the whole window: the map on the left, the selected device beside it. */
+.page.wide{max-width:none;padding:18px 20px 28px}
+.devices-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,440px);gap:16px;align-items:start}
+.devices-stage>.fleet-map{position:sticky;top:0}
+.devices-side{display:flex;flex-direction:column;gap:16px;min-width:0}
+.devices-side .two-up,.devices-side .segmented-cards,.devices-side .form-grid{grid-template-columns:minmax(0,1fr)}
+@media(max-width:1180px){.devices-stage{grid-template-columns:minmax(0,1fr)}.devices-stage>.fleet-map{position:relative}}
+
+/* Network map: the device cards float under their nodes; the plain grid is the fallback. */
+.fleet-map{position:relative;min-width:0}
+.fleet-map[data-mode=map]{height:max(460px,calc(100vh - 170px));border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:radial-gradient(ellipse at 50% 92%,rgba(196,239,135,.09),transparent 55%),radial-gradient(ellipse at 50% 30%,rgba(116,172,255,.08),transparent 60%),var(--bg)}
+.fleet-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+.fleet-canvas:active{cursor:grabbing}
+.fleet-map.expanded{position:fixed!important;inset:12px;z-index:60;height:auto!important;box-shadow:0 24px 80px rgba(0,0,0,.45)}
+body.map-open{overflow:hidden}
+.map-tools{position:absolute;right:12px;bottom:12px;display:flex;align-items:center;gap:6px;z-index:2}
+.map-tools[hidden],.fleet-map[data-mode=grid] .map-tools{display:none}
+.map-hint{font-size:11px;color:var(--faint);margin-right:4px}
+.map-tool{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:9px;font-size:11.5px;font-weight:600;color:var(--text);background:color-mix(in srgb,var(--panel) 82%,transparent);border:1px solid var(--line);backdrop-filter:blur(8px)}
+.map-tool:hover{border-color:var(--line-strong);background:var(--hover)}
+.map-tool .icon{width:14px;height:14px}
+@media(max-width:900px){.map-hint{display:none}}
+.fleet-map[data-mode=grid] .fleet-canvas{display:none}
+.fleet-map[data-mode=map] .device-grid{position:absolute;inset:0;display:block;pointer-events:none}
+.fleet-map[data-mode=map] .device-card{position:absolute;width:212px;transform:translate(-50%,0);pointer-events:auto;background:color-mix(in srgb,var(--panel) 80%,transparent);backdrop-filter:blur(8px);box-shadow:var(--shadow)}
+.fleet-map[data-mode=map] .device-card[aria-current=true]{background:color-mix(in srgb,var(--accent-soft) 70%,var(--panel))}
+.device-link{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.device-link[data-measured=true]{color:var(--info)}
+.fleet-legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.fleet-map[data-mode=map] .fleet-legend{position:absolute;left:14px;top:12px;right:14px;margin:0;pointer-events:none}
+.map-label .device-head{flex-wrap:wrap;row-gap:4px}
+.map-label .device-status{order:3;flex-basis:100%;padding-left:45px}
+.map-label .device-title small{display:none}
+.map-label .computer-error{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:11px}
+.legend-item{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--panel) 78%,transparent);border:1px solid var(--line)}
+.legend-item::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--kind);box-shadow:0 0 8px var(--kind)}
+.legend-note{font-size:11px;color:var(--faint);max-width:560px}
+@media(max-width:700px){.fleet-map[data-mode=map] .device-card{width:180px}}
 
 /* Add a device */
 dialog.wizard{width:min(640px,calc(100vw - 40px))}

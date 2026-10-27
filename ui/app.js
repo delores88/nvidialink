@@ -1,9 +1,9 @@
 import {qrArt,eyeRing,eyePupil,alignRing,alignDot,sparkPath,checkPoints} from './vendor/sparkLinkQr.mjs';
 import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vendor/sparkParticles.mjs';
 import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
-  isActiveJob,jobId,jobRunner,jobRunnerLabel,jobToolsLabel,namedComputers,deviceRows,fleetSummary,deviceSlug,deviceSetupCommand,probeSummary,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
+  isActiveJob,jobId,jobRunner,jobRunnerLabel,jobToolsLabel,namedComputers,deviceRows,fleetSummary,workSummary,JOB_KINDS,deviceSlug,deviceSetupCommand,probeSummary,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
   FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,plainError,serviceView,INTERNET_COPY,internetView,downloadsView,jobInternet,formatGiB,laptopLink} from './model.mjs';
-import {createConnectionVisual} from './connection-visual.mjs';
+import {createFleetMap} from './fleet-map.mjs';
 const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__.core.invoke(name,args);
 const motionQuery=window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -19,7 +19,7 @@ let refreshPromise=null,refreshAgain=false,lastGoodObservation=null,lastFailure=
 let internet=null,downloads=null,extrasEpoch=0,downloadsBusy=false,clearArmed=false,downloadsDirty=false,internetBusy=false,internetMessage='',downloadsMessage='';
 let computers=[],computersBusy=false,computersLoaded=false,computersMessage='',computerObservation=null,computerObservationStale=false,jobDevice='',selectedDevice='spark';
 const logCache=new Map(),jobCache=new Map();
-const visuals=[createConnectionVisual($('connection-visual'))];
+let fleetMap=null;
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!=null)node.textContent=text;return node;}
 function message(text){clearTimeout(messageTimer);$('message').textContent=text||'';$('message').hidden=!text;if(text)messageTimer=setTimeout(()=>{$('message').hidden=true;},7000);}
 function requireOk(value){if(value?.ok===false){const error=new Error(value.error?.message||value.message||'The operation did not complete.');error.code=value.error?.code??value.code;error.kind=value.error?.kind??value.kind;throw error;}return value;}
@@ -31,10 +31,10 @@ async function busy(button,action){if(button.disabled)return;button.disabled=tru
 // Theme follows CodaClauda: dark by default, remembered per viewer when storage is available.
 function applyTheme(theme){document.documentElement.dataset.theme=theme;const light=theme==='light';$('theme-toggle').setAttribute('aria-label',light?'Switch to dark theme':'Switch to light theme');$('theme-toggle').querySelector('use').setAttribute('href',light?'#i-moon':'#i-sun');}
 try{applyTheme(localStorage.getItem('dgxbridge-theme')==='light'?'light':'dark');}catch{applyTheme('dark');}
-$('theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';applyTheme(next);try{localStorage.setItem('dgxbridge-theme',next);}catch{}});
+$('theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';applyTheme(next);try{localStorage.setItem('dgxbridge-theme',next);}catch{}if(fleetMap)renderDevices();});
 
 const TITLES={overview:'Jobs',devices:'Devices',resources:'Job settings',agents:'Agent setup'};
-function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name==='devices'){renderDevices();if(selectedDevice==='spark')readPairState();if(!computersLoaded)readComputers();}}
+function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name!=='devices')expandMap(false);if(name==='devices'){renderDevices();if(selectedDevice==='spark')readPairState();if(!computersLoaded)readComputers();}fleetMap?.setActive(name==='devices');}
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.agentChoice){agent=button.dataset.agentChoice;renderAgents();}if(button.dataset.device)selectedDevice=button.dataset.device;view(button.dataset.view);}));
 
 // Connection
@@ -52,7 +52,7 @@ function renderConnection(){
   const note=!state.enabled?'New requests are paused. Running jobs and the saved pairing are unchanged.':state.connected?(state.schedulerHealthy?'Your Spark is connected and ready for jobs.':'Connected, but the Spark job service is not responding. New jobs may have to wait.'):(state.reason||'Set up your Spark, then connect.');
   const fullNote=health.failures&&lastGoodObservation?`${note} Last successful check: ${relativeTime(health.lastGoodAt)}.`:note;
   document.querySelectorAll('[data-connection-note]').forEach(el=>el.textContent=fullNote);
-  $('connection-toggle').textContent=state.enabled?'Disconnect':'Connect';$('connection-toggle').className=`button ${state.enabled?'secondary':'primary'}`;$('connection-toggle').disabled=connecting||!savedConfig;
+  $('connect-spark').hidden=!!savedConfig;$('connection-toggle').hidden=!savedConfig;$('connection-toggle').textContent=state.enabled?'Disconnect':'Connect';$('connection-toggle').className=`button ${state.enabled?'secondary':'primary'}`;$('connection-toggle').disabled=connecting||!savedConfig;
   const heartbeat=Number(spark?.scheduler?.last_heartbeat),hardware=spark?.hardware;
   const link=sparkLink(observation);
   const laptopNetwork=laptopLink(observation);
@@ -61,9 +61,9 @@ function renderConnection(){
   renderFacts($('route-details'),[['Address used',routeAddressLabel(used)],['Last heard from',Number.isFinite(heartbeat)&&heartbeat>0?relativeTime(heartbeat,observation?.observed_at):'Not reported'],...state.details]);
   $('spark-network-warn').hidden=!state.connected||!link?.warning;$('spark-network-text').textContent=link?.warning||'';$('check-cable').hidden=link?.action!=='find';
   $('network-note').hidden=state.connected||!state.action;$('network-note-text').textContent=state.action==='find'?"Can't reach your Spark here. Find it on this network?":state.reason;
-  $('connection-help').textContent={find:'Find my Spark',repair:'Open repair',setup:'Set up connection',pair:'Pair this laptop',connect:'Connect'}[state.action]||'Check connection';
+  $('connection-help').textContent={find:'Find my Spark',repair:'Open repair',setup:'Connect your Spark',pair:'Pair this laptop',connect:'Connect'}[state.action]||'Check connection';
   const iv=internetView(internet),dv=downloadsView(downloads);$('spark-extras').replaceChildren(element('span',null,`Job internet: ${iv.label}`),element('span',null,`Saved downloads: ${dv.label}`));
-  visuals.forEach(visual=>visual.render(state,reduced));renderAgents();renderFindControls();
+  renderAgents();renderFindControls();
 }
 function renderFacts(list,facts){list.replaceChildren(...facts.flatMap(([term,value,className])=>{const wrap=element('div',className||'');wrap.append(element('dt',null,term),element('dd',null,value));return [wrap];}));}
 function acceptExtras(result){const spark=result?.devices?.find(d=>d.id==='spark');if(spark){internet=spark.internet??null;downloads=spark.downloads??null;}else{if(Object.hasOwn(result||{},'internet'))internet=result.internet;if(Object.hasOwn(result||{},'downloads'))downloads=result.downloads;}renderExtras();}
@@ -84,7 +84,7 @@ async function refresh(){
   }while(refreshAgain);})().finally(()=>{refreshPromise=null;refreshing=false;$('refresh').disabled=false;$('refresh').classList.remove('spinning');});
   return refreshPromise;
 }
-$('connection-help').addEventListener('click',()=>{const action=connectionState().action;if(action==='find')$('find-spark').click();else if(action==='connect')$('connection-toggle').click();else if(action==='setup'){$('ssh-settings').open=true;$('ssh-settings').scrollIntoView({block:'start'});}else if(action==='repair')$('bootstrap').scrollIntoView({block:'center'});else if(action==='pair')$('start-pair').scrollIntoView({block:'center'});});
+$('connection-help').addEventListener('click',()=>{const action=connectionState().action;if(action==='find')$('find-spark').click();else if(action==='connect')$('connection-toggle').click();else if(action==='setup')openWizard('spark');else if(action==='repair')$('bootstrap').scrollIntoView({block:'center'});else if(action==='pair')$('start-pair').scrollIntoView({block:'center'});});
 $('check-cable').addEventListener('click',()=>busy($('check-cable'),async()=>{await refresh();await refresh();message(connectionState().connected?'Connection choices checked. The displayed route is the one that answered.':"The Spark didn't confirm a connection. Check the status above before trying again.");}));
 $('refresh').addEventListener('click',refresh);
 
@@ -92,26 +92,46 @@ $('refresh').addEventListener('click',refresh);
 const DEVICE_ICONS={laptop:'#i-laptop',spark:'#i-spark',computer:'#i-desktop'};
 function currentDevices(){return deviceRows({observation:computerObservation||observation,nodes:computers,jobs:boardJobs,connection:connectionState(),config:savedConfig,stale:computerObservationStale});}
 function deviceIcon(kind){const icon=element('span','device-icon');icon.innerHTML=`<svg class="icon"><use href="${DEVICE_ICONS[kind]}"/></svg>`;return icon;}
-function deviceCard(row,compact){
-  const card=element('button',`device-card${compact?' compact':''}`);card.type='button';card.setAttribute('role','listitem');card.dataset.device=row.id;card.dataset.state=row.status.kind;
+function deviceCard(row,mode){
+  const compact=mode!=='grid',card=element('button',`device-card${compact?' compact':''}${mode==='map'?' map-label':''}`);card.type='button';card.setAttribute('role','listitem');card.dataset.device=row.id;card.dataset.state=row.status.kind;
   if(row.kind==='computer')card.dataset.node=row.id;
-  if(compact&&['laptop','spark'].includes(row.id))card.id=`${row.id}-card`;
-  if(!compact&&row.id===selectedDevice)card.setAttribute('aria-current','true');
+  if(mode==='strip'&&['laptop','spark'].includes(row.id))card.id=`${row.id}-card`;
+  if(mode!=='strip'&&row.id===selectedDevice)card.setAttribute('aria-current','true');
   const head=element('span','device-head'),title=element('span','device-title'),status=element('span','device-status computer-status',row.status.label);
   title.append(element('strong',null,row.name),element('small',null,row.detail));status.dataset.state=row.status.kind;head.append(deviceIcon(row.kind),title,status);card.append(head);
   if(!compact)card.append(element('span','device-good',row.goodFor));
   const specs=element('span','device-specs');for(const spec of row.specs.slice(0,compact?2:4))specs.append(element('span','device-spec',spec));card.append(specs);
-  if(row.error&&!compact)card.append(element('span','fine-print computer-error',row.error));
+  if(row.link){const link=element('span','device-link',row.link.label);link.dataset.measured=String(row.link.measured);link.title=row.link.measured?`Measured on the last large transfer${row.link.measuredAt?` (${relativeTime(row.link.measuredAt)})`:''}`:'Reported link rate; real speed is measured on the first large transfer';card.append(link);}
+  if(row.kind==='laptop'&&mode!=='strip'){const who=Object.entries(row.agents||{}).map(([name,count])=>`${name} ${count}`).join(' · ');card.append(element('span','device-link',who?`Agents: ${who}`:'No agent jobs running'));}
+  if(row.error&&mode!=='strip'){const error=element('span','fine-print computer-error',row.error);error.title=row.error;card.append(error);}
   card.setAttribute('aria-label',`${row.name}: ${row.status.label}. ${row.goodFor}.`);
-  card.addEventListener('click',()=>{selectedDevice=row.id;if(compact)view('devices');else{renderDevices();if(row.id==='spark')readPairState();}});
+  card.addEventListener('click',()=>{selectedDevice=row.id;if(mode==='strip')view('devices');else{renderDevices();if(row.id==='spark')readPairState();}});
   return card;
 }
 function renderFleet(rows=currentDevices()){const summary=fleetSummary(rows);$('fleet-label').textContent=summary.label;document.querySelectorAll('[data-fleet-dot]').forEach(el=>el.dataset.state=summary.kind==='ready'?'connected':summary.kind==='setup'?'unavailable':'error');}
-function renderDeviceStrip(){$('device-strip').replaceChildren(...currentDevices().map(row=>deviceCard(row,true)));}
+function renderDeviceStrip(){$('device-strip').replaceChildren(...currentDevices().map(row=>deviceCard(row,'strip')));}
+function mapData(rows){
+  const hub=rows.find(row=>row.kind==='laptop');
+  return {hub:{id:'laptop',work:hub?.work||{}},kinds:JOB_KINDS,devices:rows.filter(row=>row.kind!=='laptop').map(row=>({id:row.id,status:row.status.kind,gpu:row.gpu,memory:row.memory,mbps:row.link?.mbps??null,work:row.work}))};
+}
+function renderLegend(rows){
+  const legend=$('fleet-legend'),work=workSummary(rows);
+  legend.replaceChildren(...(work.length?work.map(item=>{const chip=element('span','legend-item',`${item.label} ${item.count}`);chip.style.setProperty('--kind',item.color);return chip;}):[element('span','legend-note','No jobs running. Each link streams at its measured speed, or its link rate until a large transfer is measured.')]));
+}
+// The map can fill the window; Esc or the same button puts it back.
+function expandMap(on){const map=$('fleet-map');map.classList.toggle('expanded',on);$('map-expand').setAttribute('aria-pressed',String(on));$('map-expand').querySelector('span').textContent=on?'Close':'Expand';document.body.classList.toggle('map-open',on);}
+$('map-expand').addEventListener('click',()=>expandMap(!$('fleet-map').classList.contains('expanded')));
+$('map-reset').addEventListener('click',()=>fleetMap?.resetView());
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('fleet-map').classList.contains('expanded')){expandMap(false);event.stopPropagation();}});
 function renderDevices(){
   const rows=currentDevices();renderFleet(rows);
   if(!rows.some(row=>row.id===selectedDevice))selectedDevice='spark';
-  $('device-grid').replaceChildren(...rows.map(row=>deviceCard(row,false)));
+  if(!fleetMap)fleetMap=createFleetMap($('fleet-map'),{labelFor:id=>$('device-grid').querySelector(`[data-device="${id}"]`),onSelect:id=>{selectedDevice=id;renderDevices();if(id==='spark')readPairState();}});
+  $('fleet-map').querySelector('.map-tools').hidden=!fleetMap.available||rows.length-1>6;
+  const mode=fleetMap.available&&rows.length-1<=6?'map':'grid';
+  $('device-grid').replaceChildren(...rows.map(row=>deviceCard(row,mode)));renderLegend(rows);
+  if(fleetMap.available)fleetMap.render(mapData(rows),{reduced,theme:document.documentElement.dataset.theme});
+  fleetMap.setActive(currentView==='devices');
   const stale=computerObservationStale?'Device availability could not be refreshed. Showing what was last seen; jobs are kept.':'';
   $('computers-status').textContent=computersBusy?(computersMessage||'Checking devices…'):[computersMessage,stale].filter(Boolean).join(' ');
   $('refresh-computers').disabled=computersBusy;$('add-device').disabled=computersBusy;
@@ -128,7 +148,7 @@ function renderNodeDetail(row){
   button(row.enabled?'Pause new jobs':'Resume new jobs','nodeToggle',()=>changeComputer(['node','enable',row.id,row.enabled?'off':'on'],row.enabled?`${row.name} is paused. Jobs already running there finish normally.`:`${row.name} takes new jobs again.`),false);
   button('Set up GPU tools','nodeGpu',()=>installComputer(row.id,row.name,true),!row.enabled);
   button('Reinstall bridge','nodeInstall',()=>installComputer(row.id,row.name,false),!row.enabled);
-  card.append(actions,element('p','fine-print','Pausing stops new jobs here. Reinstalling repairs DGXBridge on the device and keeps its jobs and settings.'));
+  card.append(actions,element('p','fine-print','Pausing stops new jobs here. Reinstalling repairs RTXBridge on the device and keeps its jobs and settings.'));
   $('node-detail').replaceChildren(card);
 }
 function renderLaptopDetail(row){
@@ -151,7 +171,7 @@ async function changeComputer(args,success){
   finally{computersBusy=false;renderDevices();renderComputerFilter();}
 }
 async function installComputer(id,label,cuda){
-  if(computersBusy)return false;computersBusy=true;computersMessage=`${cuda?'Setting up GPU tools':'Installing DGXBridge'} on ${label}…`;renderDevices();
+  if(computersBusy)return false;computersBusy=true;computersMessage=`${cuda?'Setting up GPU tools':'Installing RTXBridge'} on ${label}…`;renderDevices();
   try{const result=requireOk(await invoke('bootstrap_node',{id,cuda}));const preparing=[result.runtime_state,result.cuda_state].some(state=>['scheduled','building'].includes(state));computersMessage=`Bridge installed on ${label}. ${preparing?'Its tools are still being prepared; jobs will wait until they are ready.':'It is ready for jobs.'}`;await refresh();return true;}
   catch(error){computersMessage=`Setup on ${label} did not complete: ${failure(error)}`;return false;}
   finally{computersBusy=false;renderDevices();}
@@ -165,21 +185,26 @@ function renderComputerFilter(){
   if(!options.some(([id])=>id===jobDevice))jobDevice='';select.value=jobDevice;
 }
 
-// Adding a device: choose it, allow this laptop on it once, confirm its identity.
-const wizard={step:1,id:'',name:'',host:'',os:'windows',user:'',probe:null,busy:false,done:false,autoName:false};
+// Adding a device, or connecting the Spark: choose it, sign in once, confirm its identity.
+const wizard={mode:'device',step:1,id:'',name:'',host:'',user:'',publicKey:'',probe:null,busy:false,done:false,autoName:false};
 function wizardOs(){return document.querySelector('input[name="wizard-os"]:checked')?.value||'windows';}
+function renderWizardCommand(){
+  if(!wizard.publicKey)return;const os=wizardOs();$('wizard-command').textContent=deviceSetupCommand(os,wizard.publicKey);
+  $('wizard-allow-intro').textContent=os==='windows'?`On ${wizard.name}, open PowerShell as administrator (Start, type PowerShell, right-click it, Run as administrator), paste this and press Enter. The first part can take a minute.`:`On ${wizard.name}, open a terminal, paste this and press Enter. It may ask for your password once.`;
+}
 function showWizardStep(step){
   wizard.step=step;document.querySelectorAll('[data-wizard]').forEach(el=>el.hidden=Number(el.dataset.wizard)!==step);
   document.querySelectorAll('.wizard-steps li').forEach(li=>{const n=Number(li.dataset.step);li.dataset.state=n<step?'done':n===step?'current':'';});
   $('wizard-step-label').textContent=`STEP ${step} OF 3`;$('wizard-back').hidden=step===1||wizard.done;
   const summary=wizard.probe&&probeSummary(wizard.probe);
-  $('wizard-next').textContent=step===1?'Next':step===2?`Check ${wizard.name}`:wizard.done?'Done':summary?.needsWsl?'Check again':`Add ${wizard.name}`;
+  const manual=!$('wizard-password').value&&$('wizard-manual').open;
+  $('wizard-next').textContent=step===1?'Next':step===2?(manual?`Check ${wizard.name}`:'Sign in'):wizard.done?'Done':summary?.needsWsl?'Check again':wizard.mode==='spark'?'Use as my Spark':`Add ${wizard.name}`;
 }
 function wizardSay(text,warn=false){$('wizard-message').textContent=text||'';$('wizard-message').dataset.warn=String(warn);}
 async function scanForDevices(){
   const note=$('wizard-scan-note');note.textContent='Looking for computers on your network…';$('wizard-found').replaceChildren();
   try{
-    const result=await command(['node','scan']),rows=currentDevices(),names=new Set(rows.map(row=>row.name.toLowerCase())),sparkHosts=new Set(savedConfig?.hosts||[]);
+    const result=await command(['node','scan']),rows=currentDevices().filter(row=>row.kind==='computer'),names=new Set(rows.map(row=>row.name.toLowerCase())),sparkHosts=new Set(wizard.mode==='spark'?[]:savedConfig?.hosts||[]);
     const found=(Array.isArray(result.candidates)?result.candidates:[]).filter(item=>!sparkHosts.has(item.address));
     $('wizard-found').replaceChildren(...found.map(item=>{
       const added=!!item.name&&names.has(String(item.name).toLowerCase()),button=element('button','found-device');button.type='button';button.setAttribute('role','listitem');button.disabled=added;
@@ -187,46 +212,67 @@ async function scanForDevices(){
       button.addEventListener('click',()=>{$('wizard-host').value=item.address;if(!$('wizard-name').value||wizard.autoName){$('wizard-name').value=item.name||'';wizard.autoName=true;}document.querySelectorAll('.found-device').forEach(el=>el.setAttribute('aria-pressed',String(el===button)));});
       return button;
     }));
-    note.textContent=found.length?"These computers already have remote access turned on. Don't see yours? Type its name below; you'll turn remote access on in the next step.":"No other computer here has remote access turned on yet. Type the computer's name below; you'll turn it on in the next step.";
+    note.textContent=wizard.mode==='spark'?(found.length?"Your Spark is one of these. Don't see it? Type its name or address below.":"Nothing here answered yet. Type your Spark's name or address below."):found.length?"These computers already have remote access turned on. Don't see yours? Type its name below; you'll turn remote access on in the next step.":"No other computer here has remote access turned on yet. Type the computer's name below; you'll turn it on in the next step.";
   }catch(error){note.textContent=`Couldn't look around this network (${failure(error)}). Type the computer's name below.`;}
 }
-function openWizard(){
-  Object.assign(wizard,{step:1,id:'',name:'',host:'',user:'',probe:null,busy:false,done:false,autoName:false});
-  for(const id of ['wizard-host','wizard-name','wizard-user'])$(id).value='';
+function openWizard(mode='device'){
+  Object.assign(wizard,{mode,step:1,id:'',name:'',host:'',user:'',publicKey:'',probe:null,busy:false,done:false,autoName:false});
+  for(const id of ['wizard-host','wizard-name','wizard-user','wizard-password'])$(id).value='';
+  const spark=mode==='spark';$('wizard-title').textContent=spark?'Connect your Spark':'Add a device';$('wizard-name-field').hidden=spark;$('wizard-manual').open=false;
+  $('wizard-choose-intro').textContent=spark?'Pick your Spark from the computers RTXBridge found on your network, or type its name or address.':'Pick a computer RTXBridge found on your network, or type its name.';
+  if(spark){$('wizard-name').value='Spark';$('wizard-user').value=savedConfig?.user||'';}
   $('wizard-progress').hidden=true;$('wizard-progress').replaceChildren();$('wizard-wsl').hidden=true;wizardSay('');showWizardStep(1);$('add-device-dialog').showModal();scanForDevices();
 }
 function renderWizardFound(){
-  const summary=probeSummary(wizard.probe);$('wizard-found-intro').textContent=`DGXBridge reached ${summary.name} and signed in as ${wizard.user}. Is this the computer you meant?`;
+  const summary=probeSummary(wizard.probe);$('wizard-found-intro').textContent=`RTXBridge reached ${summary.name} and signed in as ${wizard.user}. Is this the computer you meant?`;
   $('wizard-facts').replaceChildren(...summary.facts.map(fact=>element('li',null,fact)));$('wizard-fingerprint').textContent=wizard.probe.fingerprint;$('wizard-wsl').hidden=!summary.needsWsl;
 }
 function progressItem(text,state){const item=element('li',null,text);item.dataset.state=state;$('wizard-progress').append(item);return item;}
 async function wizardNext(){
   if(wizard.busy)return;
-  if(wizard.done){$('add-device-dialog').close();selectedDevice=wizard.id;view('devices');return;}
+  if(wizard.done){$('add-device-dialog').close();selectedDevice=wizard.id;view('devices');if(wizard.id==='spark')readPairState();return;}
   wizard.busy=true;$('wizard-next').disabled=true;wizardSay('');
   try{
     if(wizard.step===1){
       const host=$('wizard-host').value.trim(),name=($('wizard-name').value.trim()||host);
       if(!host)throw new Error("Enter the computer's name or address, or pick one above.");
-      wizard.host=host;wizard.name=name;wizard.os=wizardOs();wizard.id=deviceSlug(name,currentDevices().map(row=>row.id));
-      const key=await command(['node','key',wizard.id]);
-      $('wizard-command').textContent=deviceSetupCommand(wizard.os,key.public_key);
-      $('wizard-allow-intro').textContent=wizard.os==='windows'?`On ${name}, open PowerShell as administrator (Start, type PowerShell, right-click it, Run as administrator), paste this and press Enter. The first part can take a minute.`:`On ${name}, open a terminal, paste this and press Enter. It may ask for your password once.`;
-      showWizardStep(2);
+      wizard.host=host;wizard.name=wizard.mode==='spark'?'your Spark':name;wizard.id=wizard.mode==='spark'?'spark':deviceSlug(name,currentDevices().map(row=>row.id));
+      wizard.publicKey=(await command(['node','key',wizard.id])).public_key;renderWizardCommand();
+      $('wizard-signin-intro').textContent=`Sign in to ${wizard.name} once with its account and password.`;
+      showWizardStep(2);$('wizard-user').focus();
     }else if(wizard.step===2||(wizard.step===3&&probeSummary(wizard.probe)?.needsWsl)){
-      const user=$('wizard-user').value.trim();if(!user)throw new Error('Enter the account name the command printed.');
-      wizard.user=user;wizardSay(`Checking ${wizard.name}…`);
+      const user=$('wizard-user').value.trim(),password=$('wizard-password').value;
+      if(!user)throw new Error(`Enter the account you sign in to ${wizard.name} with.`);
+      if(wizard.step===2&&!password&&!$('wizard-manual').open)throw new Error(`Enter ${wizard.name}'s password, or use the setup command under "Can't use a password?".`);
+      wizard.user=user;
+      if(wizard.step===2&&password){
+        wizardSay(`Signing in to ${wizard.name}…`);
+        try{requireOk(await invoke('sign_in',{id:wizard.id,host:wizard.host,user,port:22,password}));}finally{$('wizard-password').value='';}
+      }
+      wizardSay(`Checking ${wizard.name}…`);
       const probe=await command(['node','probe',wizard.id,'--host',wizard.host,'--user',user]);
       if(probe.login!=='ok'){wizardSay(probe.message||`${wizard.name} didn't let this laptop in yet.`,true);return;}
+      if(wizard.mode==='spark'&&probe.os!=='linux'){wizardSay(`That computer runs ${probe.os==='windows'?'Windows':'something other than Linux'}, so it isn't a Spark. Add it as a device instead.`,true);return;}
       wizard.probe=probe;renderWizardFound();showWizardStep(3);wizardSay('');
+    }else if(wizard.mode==='spark'){
+      $('wizard-back').hidden=true;$('wizard-progress').hidden=false;$('wizard-progress').replaceChildren();
+      const saving=progressItem('Saving your Spark','working');
+      await command(['node','trust','spark','--label','Spark','--host',wizard.probe.address,'--user',wizard.user,'--fingerprint',wizard.probe.fingerprint]);
+      saving.dataset.state='done';wizard.done=true;observation=null;await loadPreferences();await refresh();
+      if(connectionState().action==='repair'||!observation?.devices?.find(device=>device.id==='spark')?.scheduler){
+        const installing=progressItem('Installing RTXBridge on your Spark','working');
+        try{requireOk(await invoke('bootstrap',{remoteAccess:false}));installing.dataset.state='done';await refresh();}
+        catch(error){installing.dataset.state='failed';wizardSay(`Your Spark is saved, but installing RTXBridge on it didn't finish: ${failure(error)}. You can retry with Install or repair on its page.`,true);return;}
+      }
+      wizardSay('Your Spark is connected. Agents can now send it jobs.');
     }else{
       const summary=probeSummary(wizard.probe),wsl=summary.wsl;
       $('wizard-back').hidden=true;$('wizard-progress').hidden=false;$('wizard-progress').replaceChildren();
       const saving=progressItem(`Trusting ${wizard.name} and saving it`,'working');
       await command(['node','trust',wizard.id,'--label',wizard.name,'--host',wizard.probe.address,'--user',wizard.user,'--fingerprint',wizard.probe.fingerprint,...(wsl?['--wsl-distro',wsl.distribution,'--wsl-user',wsl.user]:[])]);
       saving.dataset.state='done';wizard.done=true;await readComputers();
-      const installing=progressItem(`Installing DGXBridge on ${wizard.name}`,'working');
-      if(!await installComputer(wizard.id,wizard.name,false)){installing.dataset.state='failed';wizardSay(`${wizard.name} is added, but installing DGXBridge didn't finish: ${computersMessage}. You can retry from its page.`,true);return;}
+      const installing=progressItem(`Installing RTXBridge on ${wizard.name}`,'working');
+      if(!await installComputer(wizard.id,wizard.name,false)){installing.dataset.state='failed';wizardSay(`${wizard.name} is added, but installing RTXBridge didn't finish: ${computersMessage}. You can retry from its page.`,true);return;}
       installing.dataset.state='done';
       if(summary.hasGpu){const gpu=progressItem('Setting up GPU tools','working');gpu.dataset.state=await installComputer(wizard.id,wizard.name,true)?'done':'failed';if(gpu.dataset.state==='failed')wizardSay(`GPU tools didn't finish setting up: ${computersMessage}. You can retry from ${wizard.name}'s page.`,true);}
       if($('wizard-message').dataset.warn!=='true')wizardSay(`${wizard.name} is ready. Agents can now send it jobs.`);
@@ -234,7 +280,12 @@ async function wizardNext(){
   }catch(error){$('wizard-progress').querySelectorAll('[data-state=working]').forEach(item=>item.dataset.state='failed');if(!wizard.done)$('wizard-back').hidden=false;wizardSay(failure(error),true);}
   finally{wizard.busy=false;$('wizard-next').disabled=false;showWizardStep(wizard.step);}
 }
-$('add-device').addEventListener('click',openWizard);
+$('add-device').addEventListener('click',()=>openWizard('device'));
+for(const id of ['connect-spark','ssh-use-password'])$(id).addEventListener('click',()=>openWizard('spark'));
+document.querySelectorAll('input[name="wizard-os"]').forEach(input=>input.addEventListener('change',renderWizardCommand));
+$('wizard-password').addEventListener('input',()=>showWizardStep(wizard.step));$('wizard-manual').addEventListener('toggle',()=>showWizardStep(wizard.step));
+$('wizard-password').addEventListener('keydown',event=>{if(event.key==='Enter')wizardNext();});
+$('add-device-dialog').addEventListener('close',()=>{$('wizard-password').value='';});
 $('wizard-next').addEventListener('click',wizardNext);
 $('wizard-back').addEventListener('click',()=>{if(!wizard.busy&&wizard.step>1){wizardSay('');showWizardStep(wizard.step-1);}});
 $('close-wizard').addEventListener('click',()=>$('add-device-dialog').close());
@@ -462,7 +513,7 @@ document.querySelectorAll('[data-update-action]').forEach(button=>button.addEven
 $('copy-update-link').addEventListener('click',async()=>{const uri=update.verification_uri;if(!/^https:\/\/deloresai\.com\/native-updates\/[A-Za-z0-9_-]{24}$/.test(uri||''))return;try{await navigator.clipboard.writeText(uri);$('copy-update-link').textContent='Link copied';}catch{$('update-message').textContent='Approval page: '+uri;}});
 $('open-updates').addEventListener('click',()=>{$('updates-dialog').showModal();performUpdate('status');});$('close-updates').addEventListener('click',()=>$('updates-dialog').close());
 
-motionQuery.addEventListener('change',event=>{reduced=event.matches;renderConnection();if(reduced)cancelAnimationFrame(pairFrame);});
+motionQuery.addEventListener('change',event=>{reduced=event.matches;renderConnection();renderDevices();if(reduced)cancelAnimationFrame(pairFrame);});
 async function init(){try{await loadPreferences();}catch(error){message(failure(error));}await refresh();performUpdate('status',true);}
 init();const refreshTimer=setInterval(()=>{if(!document.hidden&&['overview','devices'].includes(currentView))refresh();},15000);
-window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearInterval(pairTimer);stopLogFollow();clearTimeout(updateTimer);cancelAnimationFrame(pairFrame);visuals.forEach(visual=>visual.dispose());});
+window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearInterval(pairTimer);stopLogFollow();clearTimeout(updateTimer);cancelAnimationFrame(pairFrame);fleetMap?.dispose();});

@@ -269,7 +269,7 @@ def disk_space(path):
 
 
 def disk_refusal(free, needed):
-    reject("insufficient_disk", f"Spark has {gib(free)} GiB free; this needs {gib(needed)} GiB and DGXBridge keeps "
+    reject("insufficient_disk", f"Spark has {gib(free)} GiB free; this needs {gib(needed)} GiB and RTXBridge keeps "
                                 f"{DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space, then retry")
 
 
@@ -349,6 +349,24 @@ MATERIALIZER_SUPERVISOR = (
     "except BaseException as e:\n"
     " k=type(e).__name__\n"
     "w({**s,'finished':time.time(),'exit_code':c,'error':k});sys.exit(c)\n")
+
+
+PROGRAM = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,31}")
+
+
+def program_name(request_text):
+    """The workload's program name alone (blender, python3, cargo), never its arguments or path.
+
+    It lets the owner and agents see what kind of work runs where.
+    """
+    try:
+        argv = json.loads(request_text).get("argv")
+        name = str(argv[0]).replace("\\", "/").rsplit("/", 1)[-1] if isinstance(argv, list) and argv else ""
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if name.lower().endswith(".exe"):
+        name = name[:-4]
+    return name if PROGRAM.fullmatch(name) else None
 
 
 def isolated_argv(script, *args):
@@ -1345,7 +1363,7 @@ class Controller:
 
     @contextlib.contextmanager
     def runtime_gate(self):
-        """Only DGXBridge's runtime installer owns the exclusive side of this gate."""
+        """Only RTXBridge's runtime installer owns the exclusive side of this gate."""
         if os.name != "posix":
             yield
             return
@@ -1358,7 +1376,7 @@ class Controller:
             try:
                 fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
-                reject("runtime_refresh_in_progress", "DGXBridge is updating its Spark runtime; retry this request afterward")
+                reject("runtime_refresh_in_progress", "RTXBridge is updating its Spark runtime; retry this request afterward")
             yield
         finally:
             os.close(fd)
@@ -1950,7 +1968,7 @@ class Controller:
             if isinstance(error, Rejected):
                 code, message = error.code, error.message
             elif isinstance(error, OSError) and error.errno == errno.ENOSPC:
-                code, message = "insufficient_disk", f"Spark ran out of disk space while assembling the snapshot; DGXBridge keeps {DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space, then retry"
+                code, message = "insufficient_disk", f"Spark ran out of disk space while assembling the snapshot; RTXBridge keeps {DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space, then retry"
             else:
                 code, message = "materialize_failed", "Spark could not assemble the snapshot; run the same command again"
             remove_tree(tree)
@@ -2066,6 +2084,7 @@ class Controller:
     def job_status(self, row):
         return {"job": row["id"], "project": row["project"], "manifest_id": row["manifest"],
                 "runtime": row["runtime"], "runtime_digest": row["image"], "client": row["client"],
+                "program": program_name(row["request"]) if "request" in row.keys() else None,
                 "where": "spark", "state": row["state"], "exit_code": row["exit_code"],
                 "created_at": row["created"], "started_at": row["started"], "finished_at": row["finished"],
                 "cancel_requested": bool(row["cancel"]), "cache_hit": row["cached_from"] is not None,
@@ -2344,7 +2363,7 @@ class Controller:
                 small = self.work_bytes(job["manifest_id"])
                 if small is not None and storage["free_bytes"] - small - storage["queued_bytes"] < DISK_RESERVE:
                     job["admission_blocked"] = (f"Spark has {gib(storage['free_bytes'])} GiB free; this job's work copy needs {gib(small)} GiB, "
-                                                f"snapshots being assembled {gib(storage['queued_bytes'])} GiB, and DGXBridge keeps "
+                                                f"snapshots being assembled {gib(storage['queued_bytes'])} GiB, and RTXBridge keeps "
                                                 f"{DISK_RESERVE // GIB} GiB in reserve. Free Spark disk space; the job stays queued")
         for row in self.db.execute("SELECT * FROM leases WHERE state='running' OR id IN (SELECT id FROM leases WHERE state<>'running' ORDER BY created DESC LIMIT 200) ORDER BY created DESC"):
             jobs.append({"job": row["job"] or row["id"], "project": row["project"], "client": row["client"], "where": "laptop",

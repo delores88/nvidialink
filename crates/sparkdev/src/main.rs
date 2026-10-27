@@ -1,5 +1,15 @@
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `node authorize` runs ssh with this program as its password helper.
+    if let Some(secret) = std::env::var_os(sparkdev::ASKPASS_SECRET) {
+        match sparkdev::askpass_reply(&args, &secret.to_string_lossy()) {
+            Some(reply) => {
+                println!("{reply}");
+                std::process::exit(0);
+            }
+            None => std::process::exit(1),
+        }
+    }
     if args.first().is_some_and(|a| a == "__return_worker") {
         std::process::exit(if sparkdev::returns::worker().is_ok() { 0 } else { 1 });
     }

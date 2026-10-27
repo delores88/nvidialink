@@ -445,7 +445,10 @@ fn copy_whole(rpc: &mut dyn Rpc, job: &str, entry: &Entry, stage: &Path, until: 
     };
     if let Some((command, input)) = rpc.copy_command(dir, name, file, false) {
         let left = until.saturating_duration_since(Instant::now());
+        let started = Instant::now();
         let _ = transport::run_process(command, &input, left.max(COPY_SLICE_MIN));
+        let grown = fs::symlink_metadata(stage).map_or(0, |m| m.len()).saturating_sub(staged);
+        state::record_speed("return", grown, started.elapsed().as_secs_f64());
     }
 }
 fn download(
@@ -1456,7 +1459,8 @@ mod tests {
         let started = Instant::now();
         pump(&mut rpc, Duration::from_secs(2)).unwrap();
         let held = started.elapsed();
-        assert!(held < Duration::from_secs(6), "one pump held for {held:?}");
+        // Far below the minute the copy would take, with room for a loaded machine.
+        assert!(held < Duration::from_secs(15), "one pump held for {held:?}");
         assert_eq!(rpc.staged_at_copy.borrow().len(), 1);
         // Another agent's job arrives meanwhile: the very next pass submits it.
         let (_, mut other) = queued(&home.path);

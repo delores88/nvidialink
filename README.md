@@ -1,4 +1,6 @@
-# DGXBridge
+# RTXBridge
+
+Formerly DGXBridge. The installer file, install folder and Marketplace listing still use the old name until the rename release.
 
 A Windows desktop app and agent CLI for running Linux builds, tests and compute on your own Spark and registered Linux or Windows-with-WSL computers, while native Windows work stays on your laptop. Claude Code, Codex and humans share job status, worktree claims and retained logs. First-party source is MIT licensed; this is an independent DeloresAI utility.
 

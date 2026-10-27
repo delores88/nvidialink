@@ -6,7 +6,7 @@
   "build": {"frontendDist": "../ui"},
   "app": {
     "withGlobalTauri": true,
-    "windows": [{"title":"DGXBridge","width":1140,"height":790,"minWidth":850,"minHeight":650,"backgroundColor":"#111915"}],
+    "windows": [{"title":"RTXBridge","width":1140,"height":790,"minWidth":850,"minHeight":650,"backgroundColor":"#111915"}],
     "security": {"csp":"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'"}
   },
   "bundle": {
@@ -14,9 +14,9 @@
     "targets": ["nsis"],
     "publisher": "DeloresAI",
     "category": "DeveloperTool",
-    "shortDescription": "Build on your laptop and NVIDIA DGX Spark from one job board.",
+    "shortDescription": "Run agent jobs on your laptop, DGX Spark and every computer you add, from one job board.",
     "icon": ["icons/32x32.png","icons/128x128.png","icons/icon.ico"],
-    "resources": {"../dist/bin/":"bin/","../dist/sparkdev-bundle.json":"sparkdev-bundle.json","../dist/sparkdev-remote/":"sparkdev-remote/","../LICENSE":"LICENSE","../dist/notices/":"notices/","../ui/vendor/QRCODE-LICENSE.txt":"notices/QRCODE-LICENSE.txt","../ui/vendor/PHASEFORGE-AUTHOR-NOTICE.txt":"notices/PHASEFORGE-AUTHOR-NOTICE.txt"},
+    "resources": {"../dist/bin/":"bin/","../dist/sparkdev-bundle.json":"sparkdev-bundle.json","../dist/sparkdev-remote/":"sparkdev-remote/","../LICENSE":"LICENSE","../dist/notices/":"notices/","../ui/vendor/QRCODE-LICENSE.txt":"notices/QRCODE-LICENSE.txt","../ui/vendor/PHASEFORGE-AUTHOR-NOTICE.txt":"notices/PHASEFORGE-AUTHOR-NOTICE.txt","../ui/vendor/three/LICENSE.txt":"notices/THREE-LICENSE.txt"},
     "windows": {
       "webviewInstallMode": {"type":"skip"},
       "nsis": {"installMode":"currentUser","displayLanguageSelector":false,"installerIcon":"icons/icon.ico","startMenuFolder":"DeloresAI","installerHooks":"installer-hooks.nsh"}

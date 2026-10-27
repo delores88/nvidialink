@@ -1,14 +1,14 @@
 # Multiple compute computers
 
-DGXBridge 0.6 adds named Linux and Windows-with-WSL computers alongside the existing laptop and Spark. The existing Spark connection and its pairing, policy, jobs, and returned files keep their original state. Additional computers use independent profiles, controller state, runtimes, and return workers.
+RTXBridge 0.6 adds named Linux and Windows-with-WSL computers alongside the existing laptop and Spark. The existing Spark connection and its pairing, policy, jobs, and returned files keep their original state. Additional computers use independent profiles, controller state, runtimes, and return workers.
 
 ## Add a device (guided)
 
 In the desktop app, **Devices → Add a device** does the whole setup without SSH knowledge:
 
-1. **Choose.** The app lists computers on this laptop's private networks that answer on the SSH port (`node scan`, read-only), or the owner types a name or address. Bare Windows computer names are resolved to IPv4 by DGXBridge, because Windows OpenSSH can fail to resolve them.
-2. **Allow.** DGXBridge makes one ed25519 key for this device under the state root (`node key ID`) and shows one command to run on the device: as administrator in PowerShell on Windows, or in a terminal on Linux. It turns on that computer's own SSH server, authorizes only this key, and prints the account name and the device's host-key fingerprint.
-3. **Confirm.** `node probe ID --host H --user U` reads the device's host key, signs in with that key alone, and reports what it runs (Windows or Linux, GPUs, WSL distributions and their Linux users). The owner compares the fingerprint with the one the device printed. `node trust ID --label NAME --host H --user U --fingerprint SHA256:... [--wsl-distro D --wsl-user U]` reads the host key again and saves nothing unless it still matches. It then writes a DGXBridge-owned pin and SSH profile under `STATE/devices/ID/` and registers the device. The owner's own `~/.ssh` is never read or changed. The app then installs the bridge, and the GPU tools when a GPU was found.
+1. **Choose.** The app lists computers on this laptop's private networks that answer on the SSH port (`node scan`, read-only), or the owner types a name or address. Bare Windows computer names are resolved to IPv4 by RTXBridge, because Windows OpenSSH can fail to resolve them.
+2. **Allow.** RTXBridge makes one ed25519 key for this device under the state root (`node key ID`) and shows one command to run on the device: as administrator in PowerShell on Windows, or in a terminal on Linux. It turns on that computer's own SSH server, authorizes only this key, and prints the account name and the device's host-key fingerprint.
+3. **Confirm.** `node probe ID --host H --user U` reads the device's host key, signs in with that key alone, and reports what it runs (Windows or Linux, GPUs, WSL distributions and their Linux users). The owner compares the fingerprint with the one the device printed. `node trust ID --label NAME --host H --user U --fingerprint SHA256:... [--wsl-distro D --wsl-user U]` reads the host key again and saves nothing unless it still matches. It then writes an RTXBridge-owned pin and SSH profile under `STATE/devices/ID/` and registers the device. The owner's own `~/.ssh` is never read or changed. The app then installs the bridge, and the GPU tools when a GPU was found.
 
 The device's key never leaves this laptop. Revoke access by removing its line from the device's authorized keys.
 

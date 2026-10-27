@@ -2,8 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {connectionView,configMode,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,plainReason,internetView,downloadsView,serviceView,jobFlags,jobInternet,laptopLink,sparkLink,
   FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome,jobRunner,jobRunnerLabel,jobToolsLabel,filterJobs,boardSummary,namedComputers,deviceRows,fleetSummary,deviceSlug,deviceSetupCommand,probeSummary} from '../ui/model.mjs';
-import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
-import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
 
 const lan={ok:true,devices:[{id:'spark',reachable:true,transport:{route:'lan_ssh',authenticated:true},scheduler:{healthy:true}}]};
@@ -115,12 +113,6 @@ test('copied MCP commands and prompts preserve native UNC and verbatim path synt
     assert.doesNotMatch(prompt,/\/\/\?\//);
   }
 });
-test('real motion defaults contain no measured traffic, job progress or GPU utilization',()=>{
-  const motion=linkMotion({health:'online',path:'lan'});assert.equal(motion.filament.measured,false);assert.equal(motion.packet,null);assert.equal(motion.spark.breathe,null);assert.equal(motion.message,null);assert.equal(motion.animate,true);
-  const reduced=linkMotion({health:'online',path:'lan',reduced:true});assert.equal(reduced.animate,false);
-  assert.equal(linkMotion({health:'paused'}).animate,false);
-  const dots=filamentFrame(filamentParticles(40),motion,{width:500,height:100,dt:.016});assert.equal(dots.length,40);assert.ok(dots.every(dot=>Number.isFinite(dot.x)&&Number.isFinite(dot.y)));
-});
 test('visibility lifecycle cancels hidden/offscreen animation and disposes observers',()=>{
   let callback,observer,frameId=0,cancelled=0,drawn=0,disconnected=0;const host={};
   const document={hidden:false,addEventListener(_,cb){callback=cb;},removeEventListener(){callback=null;}};
@@ -231,7 +223,7 @@ test('a conflicting saved address names a removal the page can actually do',()=>
   assert.match(removeBoth.notes.join(' '),/Remove them under Saved SSH connection/);
 });
 test('a saved address names what was removed and the Other LAN addresses field keeps every address',()=>{
-  assert.equal(discoverySaved({host:'192.0.2.40',removed:[]},'192.0.2.40'),'Saved 192.0.2.40 as the first LAN address DGXBridge tries.');
+  assert.equal(discoverySaved({host:'192.0.2.40',removed:[]},'192.0.2.40'),'Saved 192.0.2.40 as the first LAN address RTXBridge tries.');
   const text=discoverySaved({host:'192.0.2.40',removed:['192.0.2.20','192.0.2.21\nx'],warning:'You now have 5 saved LAN addresses, tried in order.'},'192.0.2.40');
   assert.match(text,/Removed 192\.0\.2\.20, which now answers as a different SSH device\./);assert.match(text,/5 saved LAN addresses/);assert.doesNotMatch(text,/\n/);
   assert.deepEqual(otherLanAddresses('192.0.2.21, 192.0.2.22 192.0.2.21;spark-b.local,,192.0.2.20','192.0.2.20'),['192.0.2.21','192.0.2.22','spark-b.local']);
@@ -390,7 +382,7 @@ test('a device check is summarized only after this laptop could sign in',()=>{
 test('additional-computer agent instructions are additive and retain qualified job IDs',()=>{
   const baseline=agentPrompt({agent:'codex',config:{}});assert.doesNotMatch(baseline,/COMPUTERS:/);
   const text=agentPrompt({agent:'codex',config:{},computers:[{id:'office',label:'Office workstation',enabled:true},{id:'render',label:'Render workstation',enabled:false}]});
-  assert.match(text,/COMPUTERS: office, render \(disabled\)/);assert.match(text,/--device ID/);assert.match(text,/--device auto/);assert.match(text,/Retain node:JOB IDs exactly/);assert.match(text,/an eligible saved computer/);assert.ok(text.length<5000);
+  assert.match(text,/COMPUTERS: office, render \(disabled\)/);assert.match(text,/--device ID/);assert.match(text,/--device auto/);assert.match(text,/Retain node:JOB IDs exactly/);assert.match(text,/an eligible saved computer/);assert.match(text,/link_speed/);assert.match(text,/--min-vram-gb N/);assert.ok(text.length<5000);
 });
 
 test('named computer readiness requires installed runtime observations',()=>{

@@ -39,6 +39,10 @@ pub struct Config {
     pub laptop_jobs: usize,
     #[serde(default)]
     pub local_build_gate: Option<PathBuf>,
+    /// RTXBridge's own pin for a Spark connected with a password. Without it,
+    /// OpenSSH checks the owner's own known_hosts as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_hosts: Option<PathBuf>,
 }
 fn default_enabled() -> bool {
     true
@@ -279,6 +283,11 @@ pub fn validate_config(config: &Config) -> Result<()> {
             return Err(AppError::new(2, "Build gate path must be absolute"));
         }
     }
+    if let Some(path) = &config.known_hosts {
+        if !path.is_absolute() || path.to_string_lossy().contains('"') {
+            return Err(AppError::new(2, "The saved host-key pin path must be absolute"));
+        }
+    }
     Ok(())
 }
 /// The single plain-identifier rule for SSH aliases, hosts, users and pins.
@@ -504,6 +513,42 @@ pub fn atomic_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     drop(out);
     fs::rename(&temporary, path)?;
     Ok(())
+}
+const LINK_SPEED: &str = "link-speed.json";
+/// Transfers smaller than this say more about startup than about the link.
+pub const SPEED_MIN_BYTES: u64 = 16 * 1024 * 1024;
+/// Remember the throughput of one measured transfer to this state root's device:
+/// `upload` for files sent to it, `return` for results copied back. Best effort.
+pub fn record_speed(direction: &str, bytes: u64, seconds: f64) {
+    if bytes < SPEED_MIN_BYTES || !(seconds > 0.05) || !matches!(direction, "upload" | "return") {
+        return;
+    }
+    let Ok(path) = root().map(|root| root.join(LINK_SPEED)) else {
+        return;
+    };
+    let mut value = read_json(&path)
+        .ok()
+        .filter(|value| value["v"] == 1)
+        .unwrap_or_else(|| serde_json::json!({"v":1}));
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    value[direction] = serde_json::json!({
+        "mbps": (bytes as f64 * 8.0 / seconds / 1e6).round(),
+        "bytes": bytes,
+        "seconds": (seconds * 100.0).round() / 100.0,
+        "measured_at": at,
+    });
+    let _ = atomic_json(&path, &value);
+}
+/// The last measured upload and return speeds to this state root's device, or null.
+pub fn link_speed() -> Value {
+    root()
+        .ok()
+        .and_then(|root| read_json(&root.join(LINK_SPEED)).ok())
+        .filter(|value| value["v"] == 1)
+        .unwrap_or(Value::Null)
 }
 pub fn read_json(path: &Path) -> Result<Value> {
     Ok(serde_json::from_slice(&fs::read(path)?)?)

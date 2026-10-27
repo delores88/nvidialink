@@ -85,7 +85,7 @@ pub(crate) fn normalize_call_args(mut args: Vec<String>) -> Vec<String> {
 
 fn upgrade_error(e: AppError) -> AppError {
     if e.message.starts_with("unknown_operation:") {
-        AppError::new(6, "Update DGXBridge on your Spark to use model servers.")
+        AppError::new(6, "Update RTXBridge on your Spark to use model servers.")
     } else {
         e
     }
