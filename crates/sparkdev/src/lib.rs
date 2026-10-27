@@ -1,4 +1,5 @@
 pub mod discover;
+mod enroll;
 pub mod inventory;
 pub mod lan_learn;
 pub mod laptop_network;
@@ -303,6 +304,38 @@ enum Commands {
 #[derive(Subcommand)]
 enum NodeCommands {
     List,
+    /// Computers on this network that answer on the SSH port. Read-only.
+    Scan,
+    /// Make a new device's key and print its public half for its setup command.
+    Key { id: String },
+    /// Check a device before trusting it: its identity, login and what it runs.
+    Probe {
+        id: String,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+    },
+    /// Trust a checked device by its confirmed fingerprint and add it.
+    Trust {
+        id: String,
+        #[arg(long)]
+        label: String,
+        #[arg(long)]
+        host: String,
+        #[arg(long)]
+        user: String,
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+        #[arg(long)]
+        fingerprint: String,
+        #[arg(long)]
+        wsl_distro: Option<String>,
+        #[arg(long)]
+        wsl_user: Option<String>,
+    },
     Add {
         id: String,
         #[arg(long)]

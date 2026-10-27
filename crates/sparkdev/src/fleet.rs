@@ -641,9 +641,76 @@ fn annotate(value: &mut Value, target: &Target) {
     }
 }
 
+/// Everything a new computer's profile is made from.
+pub(crate) struct Registration {
+    pub id: String,
+    pub label: String,
+    pub ssh_alias: String,
+    pub hosts: Vec<String>,
+    pub host_key_alias: String,
+    pub identity_file: Option<std::path::PathBuf>,
+    pub user: Option<String>,
+    pub port: u16,
+    pub ssh_config: Option<std::path::PathBuf>,
+    pub endpoint: nodes::Endpoint,
+    pub priority: i32,
+}
+
+/// Register a computer alongside the Spark, never replacing it.
+pub(crate) fn register_node(registration: Registration) -> Result<Value> {
+    let config = state::Config {
+        ssh_alias: registration.ssh_alias,
+        hosts: registration.hosts,
+        host_key_alias: registration.host_key_alias,
+        identity_file: registration.identity_file,
+        user: registration.user,
+        port: registration.port,
+        allow_remote: false,
+        connection_mode: Some(state::ConnectionMode::LanOnly),
+        connection_enabled: true,
+        auto_addresses: false,
+        laptop_jobs: 2,
+        local_build_gate: state::config()
+            .ok()
+            .and_then(|config| config.local_build_gate),
+    };
+    let node = nodes::Node {
+        id: registration.id,
+        label: registration.label,
+        enabled: true,
+        priority: registration.priority,
+        endpoint: registration.endpoint,
+        ssh_config: registration.ssh_config,
+    };
+    let node = nodes::add(node, config)?;
+    Ok(
+        json!({"ok":true,"node":node,"configured":true,"runtime_verified":false,"note":"Profile registered without replacing the existing Spark. Run device inspection to verify its controller and runtimes."}),
+    )
+}
+
 fn node_crud(command: &NodeCommands) -> Result<Value> {
     match command {
         NodeCommands::List => Ok(json!({"ok":true,"nodes":nodes::list()?})),
+        NodeCommands::Scan => crate::enroll::scan(),
+        NodeCommands::Key { id } => crate::enroll::key(id),
+        NodeCommands::Probe { id, host, user, port } => crate::enroll::probe(id, host, user, *port),
+        NodeCommands::Trust {
+            id,
+            label,
+            host,
+            user,
+            port,
+            fingerprint,
+            wsl_distro,
+            wsl_user,
+        } => {
+            let wsl = match (wsl_distro, wsl_user) {
+                (Some(distribution), Some(user)) => Some((distribution.as_str(), user.as_str())),
+                (None, None) => None,
+                _ => return Err(error("A Windows device needs both its WSL distribution and Linux account")),
+            };
+            crate::enroll::trust(id, label, host, user, *port, fingerprint, wsl)
+        }
         NodeCommands::Enable { id, enabled } => Ok(
             json!({"ok":true,"node":nodes::set_enabled(id,&matches!(enabled,Switch::On))?,"running_jobs_unchanged":true}),
         ),
@@ -677,34 +744,19 @@ fn node_crud(command: &NodeCommands) -> Result<Value> {
                     ));
                 }
             };
-            let config = state::Config {
+            register_node(Registration {
+                id: id.clone(),
+                label: label.clone().unwrap_or_else(|| id.clone()),
                 ssh_alias: ssh_alias.clone(),
                 hosts: hosts.clone(),
                 host_key_alias: host_key_alias.clone(),
                 identity_file: identity_file.clone(),
                 user: user.clone(),
                 port: *port,
-                allow_remote: false,
-                connection_mode: Some(state::ConnectionMode::LanOnly),
-                connection_enabled: true,
-                auto_addresses: false,
-                laptop_jobs: 2,
-                local_build_gate: state::config()
-                    .ok()
-                    .and_then(|config| config.local_build_gate),
-            };
-            let node = nodes::Node {
-                id: id.clone(),
-                label: label.clone().unwrap_or_else(|| id.clone()),
-                enabled: true,
-                priority: *priority,
-                endpoint,
                 ssh_config: ssh_config.clone(),
-            };
-            let node = nodes::add(node, config)?;
-            Ok(
-                json!({"ok":true,"node":node,"configured":true,"runtime_verified":false,"note":"Profile registered without replacing the existing Spark. Run device inspection to verify its controller and runtimes."}),
-            )
+                endpoint,
+                priority: *priority,
+            })
         }
     }
 }

@@ -153,7 +153,7 @@ async fn launch(
 fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
     let operation = args.first().map(String::as_str);
     let changes_connection = operation == Some("setup")
-        || (operation == Some("node") && matches!(args.get(1).map(String::as_str), Some("add" | "enable")))
+        || (operation == Some("node") && matches!(args.get(1).map(String::as_str), Some("add" | "enable" | "trust")))
         || (operation == Some("discover")
             && args.iter().any(|a| a == "--save" || a.starts_with("--save=")));
     if pairing && changes_connection {
@@ -166,7 +166,7 @@ fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
         || args.len() > if node_operation { 48 } else { 24 }
-        || (node_operation && !matches!(args.get(1).map(String::as_str), Some("list" | "add" | "enable")))
+        || (node_operation && !matches!(args.get(1).map(String::as_str), Some("list" | "add" | "enable" | "scan" | "key" | "probe" | "trust")))
         || args.iter().any(|s| s.contains('\0'))
     {
         return Err("Unsupported desktop operation".into());
@@ -221,6 +221,14 @@ mod desktop_args_tests {
             assert_eq!(desktop_args_allowed(&args(values), false), Ok(()));
             assert_eq!(desktop_args_allowed(&args(values), true).unwrap_err(), PAIRING);
         }
+        // Adding a device: scanning, making its key and checking it only read or
+        // prepare; trusting it changes connections, so it waits for pairing.
+        for values in [&["node", "scan"][..], &["node", "key", "office"], &["node", "probe", "office", "--host", "192.0.2.9", "--user", "ben"]] {
+            assert_eq!(desktop_args_allowed(&args(values), true), Ok(()), "{values:?}");
+        }
+        let trust = args(&["node", "trust", "office", "--label", "Office", "--host", "192.0.2.9", "--user", "ben", "--fingerprint", "SHA256:x"]);
+        assert_eq!(desktop_args_allowed(&trust, false), Ok(()));
+        assert_eq!(desktop_args_allowed(&trust, true).unwrap_err(), PAIRING);
         for values in [&["node"][..], &["node", "remove", "workstation"], &["node", "add", "bad\0"]] {
             assert!(desktop_args_allowed(&args(values), false).is_err());
         }

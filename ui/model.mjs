@@ -202,7 +202,7 @@ export function namedComputers(observation,nodes=[],{stale=false}={}) {
     const runtimeObserved=Array.isArray(device.runtimes),hasRuntime=runtimeObserved&&device.runtimes.some(runtime=>typeof runtime==='string'&&runtime.length>0);
     const status=!enabled?'Disabled':stale?'Last seen':detailsLimited?'Details unavailable':connected?(device.scheduler?.healthy===true?(hasRuntime?'Ready for jobs':runtimeObserved?'Tools preparing':'Setup needed'):'Connected'):device.availability==='unconfigured'?'Setup needed':device.error||device.availability==='unreachable'?'Offline':'Not checked';
     const hardware=device.hardware||{},capabilities=device.capabilities||{},endpoint=settings.endpoint||device.endpoint||{};
-    const facts=[['Connection',connected?'Verified SSH connection':status],['System',device.architecture||capabilities.architecture||hardware.architecture||'Not observed']];
+    const facts=[['Connection',connected?'Connected':status],['System',device.architecture||capabilities.architecture||hardware.architecture||'Not observed']];
     if(Number.isFinite(hardware.cpu_count))facts.push(['CPU',`${hardware.cpu_count} logical CPUs`]);
     if(Number.isFinite(hardware.memory_gb))facts.push(['System memory',`${hardware.memory_gb} GiB`]);
     const gpu=capabilities.gpu,firstGpu=gpu?.observed===true&&Array.isArray(gpu.devices)?gpu.devices[0]:null;
@@ -211,29 +211,82 @@ export function namedComputers(observation,nodes=[],{stale=false}={}) {
     return {id,label,enabled,connected,status,facts,endpoint,error:detailsLimited?'Local job history is too large to display. This limit does not indicate a network connection failure.':cleanReference(device.error?.message),priority:settings.priority??device.priority??0};
   });
 }
-export function nodeAddArgs(form) {
-  const get=name=>String(form.get(name)||'').trim();
-  const id=get('id'),label=get('label')||id;
-  if(!/^[a-z][a-z0-9-]{0,31}$/.test(id)||id.endsWith('-')||id.includes('--')||['spark','laptop','auto'].includes(id))throw new Error('Choose a short lowercase computer ID, starting with a letter. Spark, laptop and auto are reserved.');
-  if(label.length>96||/[\u0000-\u001f\u007f]/.test(label))throw new Error('Computer name must be at most 96 characters without control characters.');
-  const args=['node','add',id,'--label',label];
-  for(const [name,flag,required] of [['ssh_alias','--ssh-alias',true],['host_key_alias','--host-key-alias',true],['host','--host',false],['user','--user',false],['identity_file','--identity-file',false],['ssh_config','--ssh-config',false]]){
-    const value=get(name);if(required&&!value)throw new Error(name==='ssh_alias'?'Enter the saved SSH alias.':'Enter the pinned known-host alias.');
-    if(/[\u0000\r\n]/.test(value))throw new Error('Connection references must each fit on one line.');
-    if(value)args.push(flag,value);
+// Every device the bridge can run jobs on, in one shape: this laptop, the Spark and
+// each added computer. Rows only describe what the UI shows; nothing here schedules.
+const STATUS_LABELS = Object.freeze({ready:'Ready',busy:'Busy',attention:'Needs attention',paused:'Paused',checking:'Checking…',offline:'Offline',setup:'Finish setup',stale:'Last seen'});
+function gib(bytes) {return Number.isFinite(bytes)&&bytes>0?Math.round(bytes/1073741824):null;}
+function gpuOf(device) {
+  const gpu=device?.capabilities?.gpu,first=gpu?.observed===true&&Array.isArray(gpu.devices)?gpu.devices[0]:null;
+  if(!first)return null;
+  const name=cleanReference(first.name).replace(/^NVIDIA (GeForce )?/,'').trim()||'GPU',memory=gib(first.total_memory_bytes);
+  return {name,memory,unified:gpu.memory_model==='unified',count:gpu.devices.length};
+}
+function memoryOf(device) {
+  const total=gib(device?.capabilities?.system_memory?.total_bytes);
+  return total??(Number.isFinite(device?.hardware?.memory_gb)?Math.round(device.hardware.memory_gb):null);
+}
+function activeCounts(jobs,id) {
+  const mine=(Array.isArray(jobs)?jobs:[]).filter(job=>jobRunner(job)===id&&isActiveJob(job));
+  return {running:mine.filter(job=>job.state!=='queued').length,queued:mine.filter(job=>job.state==='queued').length};
+}
+export function deviceRows({observation,nodes=[],jobs=[],connection=null,config=null,stale=false}={}) {
+  const devices=Array.isArray(observation?.devices)?observation.devices:[];
+  const laptop=devices.find(device=>device.id==='laptop')||{},spark=devices.find(device=>device.id==='spark')||{};
+  const rows=[];
+  const threads=Number.isSafeInteger(laptop.logical_parallelism)?laptop.logical_parallelism:null,link=laptopLink(observation);
+  rows.push({id:'laptop',kind:'laptop',name:'This laptop',detail:'Windows',status:{kind:'ready',label:STATUS_LABELS.ready},
+    goodFor:'Windows builds, installers and tests',specs:[threads&&`${threads} CPU threads`,link.label!=='Not reported'&&link.label!=='Route not identified'&&link.label].filter(Boolean),jobs:activeCounts(jobs,'laptop')});
+  const state=connection||{};
+  const sparkStatus=!config?'setup':state.enabled===false?'paused':state.connected?(spark.scheduler&&spark.scheduler.healthy!==true?'attention':'ready'):['connecting','reconnecting'].includes(state.state)?'checking':'offline';
+  const sparkGpu=gpuOf(spark),sparkMemory=memoryOf(spark),sparkCpus=Number.isFinite(spark.hardware?.cpu_count)?spark.hardware.cpu_count:null;
+  rows.push({id:'spark',kind:'spark',name:'Spark',detail:cleanReference(config?.ssh_alias)||'DGX Spark',status:{kind:sparkStatus,label:sparkStatus==='offline'&&state.reason?STATUS_LABELS.offline:STATUS_LABELS[sparkStatus]},
+    goodFor:'Big models, Linux builds, GPU video and Blender',
+    specs:[sparkGpu&&`${sparkGpu.name} GPU`,sparkMemory&&`${sparkMemory} GB${sparkGpu?.unified?' shared with the GPU':' memory'}`,sparkCpus&&`${sparkCpus} CPU cores`,state.connected&&state.route].filter(Boolean),jobs:activeCounts(jobs,'spark')});
+  for(const named of namedComputers(observation,nodes,{stale})){
+    const device=devices.find(item=>item.id===named.id)||{},gpu=gpuOf(device),memory=memoryOf(device),cpus=Number.isFinite(device.hardware?.cpu_count)?device.hardware.cpu_count:null;
+    const status=!named.enabled?'paused':named.status==='Last seen'?'stale':named.status==='Details unavailable'?'attention':named.status==='Ready for jobs'||named.status==='Connected'?'ready':named.status==='Tools preparing'?'checking':named.status==='Setup needed'?'setup':named.status==='Offline'?'offline':'checking';
+    const windows=named.endpoint?.kind==='windows-wsl';
+    rows.push({id:named.id,kind:'computer',name:named.label,detail:windows?'Windows PC':'Linux computer',status:{kind:status,label:status==='checking'&&named.status==='Tools preparing'?'Setting up tools':STATUS_LABELS[status]},
+      goodFor:gpu?`GPU jobs that fit in ${gpu.memory??'its'} GB${gpu.memory?'':' memory'}`:'Linux builds and compute',
+      specs:[gpu&&`${gpu.name}${gpu.memory?` · ${gpu.memory} GB`:''}`,memory&&`${memory} GB memory`,cpus&&`${cpus} CPU threads`,windows?`Linux via WSL${named.endpoint?.distribution?` (${named.endpoint.distribution})`:''}`:null].filter(Boolean),
+      jobs:activeCounts(jobs,named.id),facts:named.facts,error:named.error||'',enabled:named.enabled,priority:named.priority,endpoint:named.endpoint});
   }
-  const port=Number(get('port')||22),priority=Number(get('priority')||0);
-  if(!Number.isInteger(port)||port<1||port>65535)throw new Error('SSH port must be between 1 and 65535.');
-  if(!Number.isInteger(priority)||priority < -1000||priority>1000)throw new Error('Priority must be between -1000 and 1000.');
-  args.push('--port',String(port),'--priority',String(priority));
-  if(get('endpoint')==='windows-wsl'){
-    const distribution=get('distribution'),user=get('wsl_user'),path=get('controller_path');
-    if(!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(distribution))throw new Error('Enter the existing WSL distribution name.');
-    if(!/^[a-z_][a-z0-9_-]{0,31}$/.test(user))throw new Error('Enter the Linux account name inside WSL.');
-    if(!path.startsWith('/')||path.length>512||!path.endsWith('/sparkdev/controller.py')||path.slice(1).split('/').some(part=>!part||part==='.'||part==='..'||!/^[a-zA-Z0-9._-]+$/.test(part)))throw new Error('Enter the absolute Linux path ending in /sparkdev/controller.py.');
-    args.push('--wsl-distro',distribution,'--wsl-user',user,'--controller-path',path);
-  }
-  return args;
+  for(const row of rows){const {running,queued}=row.jobs,waiting=queued?`${queued} queued`:'';if(row.status.kind==='ready'&&running)row.status={kind:'busy',label:[`${running} running`,waiting].filter(Boolean).join(' · ')};else if(row.status.kind==='ready'&&queued)row.status={kind:'ready',label:waiting};}
+  return rows;
+}
+// One-line summary for the top bar: all good, or the first thing that needs a look.
+export function fleetSummary(rows) {
+  const remote=rows.filter(row=>row.kind!=='laptop'),problem=remote.find(row=>['offline','attention','setup','stale'].includes(row.status.kind));
+  if(problem)return {kind:problem.status.kind==='setup'?'setup':'attention',label:`${problem.name}: ${problem.status.label.toLowerCase()}`};
+  const ready=rows.filter(row=>['ready','busy'].includes(row.status.kind)).length;
+  return {kind:'ready',label:`${ready} ${ready===1?'device':'devices'} ready`};
+}
+// A short ID agents type (--device antonpc) from the name the owner gives a device.
+export function deviceSlug(name,taken=[]) {
+  const base=String(name||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').replace(/^(?=[0-9])/,'pc-').slice(0,28).replace(/-+$/,'')||'device';
+  const used=new Set(['spark','laptop','auto',...taken]);
+  if(!used.has(base))return base;
+  for(let n=2;n<100;n++){if(!used.has(`${base}-${n}`))return `${base}-${n}`;}
+  throw new Error('Choose a different name for this device.');
+}
+// The one command the owner runs on the new device. It turns on that device's own
+// SSH server, authorizes only this device's key, and prints the account name and the
+// identity the wizard asks the owner to compare. The key is checked before use.
+export function deviceSetupCommand(os,publicKey) {
+  const key=String(publicKey||'').trim();
+  if(!/^ssh-ed25519 [A-Za-z0-9+/=]{40,120} dgxbridge-[a-z0-9-]{1,32}$/.test(key))throw new Error('The device key is not ready yet. Go back and try again.');
+  if(os==='windows')return `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null; Set-Service sshd -StartupType Automatic; Start-Service sshd; $k='${key}'; $f="$env:ProgramData\\ssh\\administrators_authorized_keys"; Add-Content $f $k; icacls $f /inheritance:r /grant '*S-1-5-32-544:F' /grant 'SYSTEM:F' | Out-Null; New-Item -ItemType Directory -Force "$env:USERPROFILE\\.ssh" | Out-Null; Add-Content "$env:USERPROFILE\\.ssh\\authorized_keys" $k; "Account: $env:USERNAME"; ssh-keygen -lf "$env:ProgramData\\ssh\\ssh_host_ed25519_key.pub"`;
+  if(os==='linux')return `(command -v sshd >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server)) && (sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd) && mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '${key}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && echo "Account: $(whoami)" && ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`;
+  throw new Error('Choose whether the device runs Windows or Linux.');
+}
+// What a device check found, in plain words for the confirmation step.
+export function probeSummary(probe) {
+  if(!probe||probe.login!=='ok')return null;
+  const parts=[probe.os==='windows'?'Windows':probe.os==='linux'?`Linux${probe.architecture?` (${probe.architecture})`:''}`:'Unknown system'];
+  for(const gpu of Array.isArray(probe.gpus)?probe.gpus:[])parts.push(`${cleanReference(gpu.name)}${Number.isFinite(gpu.memory_gib)?` · ${Math.round(gpu.memory_gib)} GB`:''}`);
+  const wsl=Array.isArray(probe.wsl)?probe.wsl:[];
+  if(probe.os==='windows')parts.push(wsl.length?`Linux via WSL: ${cleanReference(wsl[0].distribution)}`:'No WSL yet');
+  return {name:cleanReference(probe.hostname)||cleanReference(probe.name)||probe.address,facts:parts,needsWsl:probe.os==='windows'&&!wsl.length,wsl:wsl[0]||null,hasGpu:(probe.gpus||[]).length>0};
 }
 export function jobOutcome(job) {
   if (job?.cache_hit) return {kind:'cached',label:'Reused result'};

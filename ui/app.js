@@ -1,7 +1,7 @@
 import {qrArt,eyeRing,eyePupil,alignRing,alignDot,sparkPath,checkPoints} from './vendor/sparkLinkQr.mjs';
 import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vendor/sparkParticles.mjs';
 import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
-  isActiveJob,jobId,jobRunner,jobRunnerLabel,jobToolsLabel,namedComputers,nodeAddArgs,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
+  isActiveJob,jobId,jobRunner,jobRunnerLabel,jobToolsLabel,namedComputers,deviceRows,fleetSummary,deviceSlug,deviceSetupCommand,probeSummary,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
   FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,plainError,serviceView,INTERNET_COPY,internetView,downloadsView,jobInternet,formatGiB,laptopLink} from './model.mjs';
 import {createConnectionVisual} from './connection-visual.mjs';
 const $=id=>document.getElementById(id);
@@ -17,7 +17,7 @@ let updateTimer=null,updateBusy=false,update={status:'idle'},messageTimer=null;
 let findBusy=false,findMessage=null;
 let refreshPromise=null,refreshAgain=false,lastGoodObservation=null,lastFailure=null,health={failures:0,lastGoodAt:0};
 let internet=null,downloads=null,extrasEpoch=0,downloadsBusy=false,clearArmed=false,downloadsDirty=false,internetBusy=false,internetMessage='',downloadsMessage='';
-let computers=[],computersBusy=false,computersLoaded=false,computersMessage='',computerObservation=null,computerObservationStale=false,jobDevice='';
+let computers=[],computersBusy=false,computersLoaded=false,computersMessage='',computerObservation=null,computerObservationStale=false,jobDevice='',selectedDevice='spark';
 const logCache=new Map(),jobCache=new Map();
 const visuals=[createConnectionVisual($('connection-visual'))];
 function element(tag,className,text){const node=document.createElement(tag);if(className)node.className=className;if(text!=null)node.textContent=text;return node;}
@@ -33,9 +33,9 @@ function applyTheme(theme){document.documentElement.dataset.theme=theme;const li
 try{applyTheme(localStorage.getItem('dgxbridge-theme')==='light'?'light':'dark');}catch{applyTheme('dark');}
 $('theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';applyTheme(next);try{localStorage.setItem('dgxbridge-theme',next);}catch{}});
 
-const TITLES={overview:'Jobs',connection:'Spark connection',computers:'Computers',resources:'Job settings',agents:'Agent setup'};
-function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name==='connection')readPairState();if(name==='computers'){renderComputers();if(!computersLoaded)readComputers();}}
-document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.agentChoice){agent=button.dataset.agentChoice;renderAgents();}view(button.dataset.view);}));
+const TITLES={overview:'Jobs',devices:'Devices',resources:'Job settings',agents:'Agent setup'};
+function view(name){currentView=name;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==name);document.querySelectorAll('.nav[data-view]').forEach(el=>{const active=el.dataset.view===name;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('page-title').textContent=TITLES[name];document.querySelector('.views').scrollTop=0;if(name==='resources'&&!limits&&!resourceReady)readResources();if(name==='devices'){renderDevices();if(selectedDevice==='spark')readPairState();if(!computersLoaded)readComputers();}}
+document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.agentChoice){agent=button.dataset.agentChoice;renderAgents();}if(button.dataset.device)selectedDevice=button.dataset.device;view(button.dataset.view);}));
 
 // Connection
 const STATE_LABELS={connected:'Spark connected',disconnected:'Disconnected',connecting:'Connecting…',reconnecting:'Reconnecting…',error:'Needs attention',unavailable:'Spark unavailable'};
@@ -80,7 +80,7 @@ async function refresh(){
       if(epoch===extrasEpoch&&!resourceBusy&&!downloadsBusy&&good)acceptExtras(result);
       $('connection-detail').textContent=JSON.stringify(result,null,2);
     }catch(error){if(generation!==resourceGeneration){refreshAgain=true;continue;}computerObservationStale=true;health.failures++;lastFailure={ok:false,error:{message:error.message||String(error),code:error.code,kind:error.kind}};observation=lastGoodObservation||lastFailure;$('connection-detail').textContent=error.message||String(error);}
-    finally{renderConnection();renderBoard();renderExtras();renderComputers();}
+    finally{renderConnection();renderBoard();renderExtras();renderDevices();}
   }while(refreshAgain);})().finally(()=>{refreshPromise=null;refreshing=false;$('refresh').disabled=false;$('refresh').classList.remove('spinning');});
   return refreshPromise;
 }
@@ -88,51 +88,158 @@ $('connection-help').addEventListener('click',()=>{const action=connectionState(
 $('check-cable').addEventListener('click',()=>busy($('check-cable'),async()=>{await refresh();await refresh();message(connectionState().connected?'Connection choices checked. The displayed route is the one that answered.':"The Spark didn't confirm a connection. Check the status above before trying again.");}));
 $('refresh').addEventListener('click',refresh);
 
-// Additional computers keep their own connections and do not edit Spark setup.
-function renderComputers(){
-  const rows=namedComputers(computerObservation||observation,computers,{stale:computerObservationStale}),cards=$('computer-cards');cards.replaceChildren();
-  $('computers-empty').hidden=rows.length>0;
-  const availability=computerObservationStale?'Availability could not be refreshed. Showing last seen computer details; jobs are retained.':computersLoaded?`${rows.length} additional ${rows.length===1?'computer':'computers'} saved. Availability is checked independently.`:'Open Computers to read saved connections.';
-  $('computers-status').textContent=computersBusy?'Checking saved computers…':computerObservationStale?[computersMessage,availability].filter(Boolean).join(' '):computersMessage||availability;
-  $('refresh-computers').disabled=computersBusy;$('save-computer').disabled=computersBusy;
-  for(const row of rows){
-    const card=element('article','machine computer-card');card.dataset.node=row.id;card.dataset.state=!row.enabled?'disabled':row.connected?'connected':'offline';
-    const head=element('div','machine-head'),name=element('div','machine-name');name.append(element('h3',null,row.label),element('p','computer-id',row.id));head.append(name,element('span','computer-status',row.status));
-    const facts=element('dl','facts');renderFacts(facts,row.facts);const actions=element('div','computer-actions');
-    const install=element('button','button secondary small','Install bridge');install.type='button';install.dataset.nodeInstall=row.id;install.disabled=computersBusy||!row.enabled;install.setAttribute('aria-label',`Install bridge on ${row.label}`);install.addEventListener('click',()=>installComputer(row.id,row.label,false));
-    const gpu=element('button','button secondary small','Prepare GPU');gpu.type='button';gpu.dataset.nodeGpu=row.id;gpu.disabled=computersBusy||!row.enabled;gpu.setAttribute('aria-label',`Prepare GPU on ${row.label}`);gpu.addEventListener('click',()=>installComputer(row.id,row.label,true));
-    const toggle=element('button','button secondary small',row.enabled?'Disable new jobs':'Enable new jobs');toggle.type='button';toggle.dataset.nodeToggle=row.id;toggle.disabled=computersBusy;toggle.setAttribute('aria-label',`${row.enabled?'Disable':'Enable'} new jobs on ${row.label}`);toggle.addEventListener('click',()=>changeComputer(['node','enable',row.id,row.enabled?'off':'on'],`${row.label}: ${row.enabled?'new jobs disabled':'new jobs enabled'}. Existing jobs keep their original connection.`));
-    const buttons=element('div','computer-action-buttons');buttons.append(install,gpu,toggle);actions.append(element('p','fine-print',`Scheduling priority: ${row.priority}`),buttons);card.append(head,facts);if(row.error)card.append(element('p','fine-print computer-error',row.error));card.append(actions);cards.append(card);
-  }
+// Devices: this laptop, the Spark and every added computer, shown the same way.
+const DEVICE_ICONS={laptop:'#i-laptop',spark:'#i-spark',computer:'#i-desktop'};
+function currentDevices(){return deviceRows({observation:computerObservation||observation,nodes:computers,jobs:boardJobs,connection:connectionState(),config:savedConfig,stale:computerObservationStale});}
+function deviceIcon(kind){const icon=element('span','device-icon');icon.innerHTML=`<svg class="icon"><use href="${DEVICE_ICONS[kind]}"/></svg>`;return icon;}
+function deviceCard(row,compact){
+  const card=element('button',`device-card${compact?' compact':''}`);card.type='button';card.setAttribute('role','listitem');card.dataset.device=row.id;card.dataset.state=row.status.kind;
+  if(row.kind==='computer')card.dataset.node=row.id;
+  if(compact&&['laptop','spark'].includes(row.id))card.id=`${row.id}-card`;
+  if(!compact&&row.id===selectedDevice)card.setAttribute('aria-current','true');
+  const head=element('span','device-head'),title=element('span','device-title'),status=element('span','device-status computer-status',row.status.label);
+  title.append(element('strong',null,row.name),element('small',null,row.detail));status.dataset.state=row.status.kind;head.append(deviceIcon(row.kind),title,status);card.append(head);
+  if(!compact)card.append(element('span','device-good',row.goodFor));
+  const specs=element('span','device-specs');for(const spec of row.specs.slice(0,compact?2:4))specs.append(element('span','device-spec',spec));card.append(specs);
+  if(row.error&&!compact)card.append(element('span','fine-print computer-error',row.error));
+  card.setAttribute('aria-label',`${row.name}: ${row.status.label}. ${row.goodFor}.`);
+  card.addEventListener('click',()=>{selectedDevice=row.id;if(compact)view('devices');else{renderDevices();if(row.id==='spark')readPairState();}});
+  return card;
+}
+function renderFleet(rows=currentDevices()){const summary=fleetSummary(rows);$('fleet-label').textContent=summary.label;document.querySelectorAll('[data-fleet-dot]').forEach(el=>el.dataset.state=summary.kind==='ready'?'connected':summary.kind==='setup'?'unavailable':'error');}
+function renderDeviceStrip(){$('device-strip').replaceChildren(...currentDevices().map(row=>deviceCard(row,true)));}
+function renderDevices(){
+  const rows=currentDevices();renderFleet(rows);
+  if(!rows.some(row=>row.id===selectedDevice))selectedDevice='spark';
+  $('device-grid').replaceChildren(...rows.map(row=>deviceCard(row,false)));
+  const stale=computerObservationStale?'Device availability could not be refreshed. Showing what was last seen; jobs are kept.':'';
+  $('computers-status').textContent=computersBusy?(computersMessage||'Checking devices…'):[computersMessage,stale].filter(Boolean).join(' ');
+  $('refresh-computers').disabled=computersBusy;$('add-device').disabled=computersBusy;
+  const row=rows.find(item=>item.id===selectedDevice);
+  $('spark-detail').hidden=selectedDevice!=='spark';$('laptop-detail').hidden=selectedDevice!=='laptop';$('node-detail').hidden=row?.kind!=='computer';
+  if(row?.kind==='computer')renderNodeDetail(row);else if(row?.kind==='laptop')renderLaptopDetail(row);
+}
+function panelHead(row){const head=element('div','card-top'),title=element('div','title-row');const text=element('div');text.append(element('h2',null,row.name),element('p','card-sub',`${row.detail} · ${row.status.label}`));title.append(deviceIcon(row.kind),text);head.append(title);return head;}
+function renderNodeDetail(row){
+  const card=element('article','card device-detail-card');card.append(panelHead(row),element('p','device-good',row.goodFor));
+  const facts=element('dl','facts');renderFacts(facts,[...(row.facts||[]),['Agents choose it with',`--device ${row.id}`]]);card.append(facts);
+  if(row.error)card.append(element('p','fine-print computer-error',row.error));
+  const actions=element('div','device-actions'),button=(label,key,handler,disabled)=>{const b=element('button','button secondary small',label);b.type='button';b.dataset[key]=row.id;b.disabled=computersBusy||disabled;b.addEventListener('click',handler);actions.append(b);return b;};
+  button(row.enabled?'Pause new jobs':'Resume new jobs','nodeToggle',()=>changeComputer(['node','enable',row.id,row.enabled?'off':'on'],row.enabled?`${row.name} is paused. Jobs already running there finish normally.`:`${row.name} takes new jobs again.`),false);
+  button('Set up GPU tools','nodeGpu',()=>installComputer(row.id,row.name,true),!row.enabled);
+  button('Reinstall bridge','nodeInstall',()=>installComputer(row.id,row.name,false),!row.enabled);
+  card.append(actions,element('p','fine-print','Pausing stops new jobs here. Reinstalling repairs DGXBridge on the device and keeps its jobs and settings.'));
+  $('node-detail').replaceChildren(card);
+}
+function renderLaptopDetail(row){
+  const card=element('article','card device-detail-card'),link=laptopLink(computerObservation||observation);card.append(panelHead(row),element('p','device-good',row.goodFor));
+  const facts=element('dl','facts');renderFacts(facts,[['Job slots',Number.isSafeInteger(laptop?.concurrency_limit)?`${laptop.concurrency_limit} at a time`:'Not reported'],['CPU',row.specs.find(spec=>spec.includes('CPU'))||'Not reported'],['Network',link.label],['Limits','Jobs run as you, without CPU or memory caps']]);card.append(facts);
+  if(link.note)card.append(element('p',`fine-print${link.slow?' link-warning':''}`,link.note));
+  const actions=element('div','device-actions'),slots=element('button','button secondary small','Change job slots');slots.type='button';slots.addEventListener('click',()=>view('resources'));actions.append(slots);card.append(actions);
+  $('laptop-detail').replaceChildren(card);
 }
 async function readComputers(){
-  if(computersBusy)return;computersBusy=true;renderComputers();
+  if(computersBusy)return;computersBusy=true;renderDevices();
   try{const result=await command(['node','list']);computers=Array.isArray(result.nodes)?result.nodes:[];computersLoaded=true;computersMessage='';}
-  catch(error){computersMessage=`Saved computers could not be read: ${failure(error)}`;}
-  finally{computersBusy=false;renderComputers();renderComputerFilter();}
+  catch(error){computersMessage=`Saved devices could not be read: ${failure(error)}`;}
+  finally{computersBusy=false;renderDevices();renderComputerFilter();}
 }
 async function changeComputer(args,success){
-  if(computersBusy)return false;computersBusy=true;renderComputers();
-  try{await command(args);const result=await command(['node','list']);computers=Array.isArray(result.nodes)?result.nodes:[];computersLoaded=true;computersMessage=success;$('computer-form-status').textContent=success;await refresh();return true;}
-  catch(error){computersMessage=failure(error);$('computer-form-status').textContent=computersMessage;return false;}
-  finally{computersBusy=false;renderComputers();renderComputerFilter();}
+  if(computersBusy)return false;computersBusy=true;renderDevices();
+  try{await command(args);const result=await command(['node','list']);computers=Array.isArray(result.nodes)?result.nodes:[];computersLoaded=true;computersMessage=success;await refresh();return true;}
+  catch(error){computersMessage=failure(error);return false;}
+  finally{computersBusy=false;renderDevices();renderComputerFilter();}
 }
 async function installComputer(id,label,cuda){
-  if(computersBusy)return;computersBusy=true;computersMessage=`${cuda?'Preparing GPU tools':'Installing DGXBridge'} on ${label}…`;renderComputers();
-  try{const result=requireOk(await invoke('bootstrap_node',{id,cuda}));const preparing=[result.runtime_state,result.cuda_state].some(state=>['scheduled','building'].includes(state));computersMessage=`Bridge installed on ${label}. ${preparing?'Tools are queued or preparing; check availability before running jobs.':'Check its connection and tools before running jobs.'}`;await refresh();}
-  catch(error){computersMessage=`Setup on ${label} did not complete: ${failure(error)}`;}
-  finally{computersBusy=false;renderComputers();}
+  if(computersBusy)return false;computersBusy=true;computersMessage=`${cuda?'Setting up GPU tools':'Installing DGXBridge'} on ${label}…`;renderDevices();
+  try{const result=requireOk(await invoke('bootstrap_node',{id,cuda}));const preparing=[result.runtime_state,result.cuda_state].some(state=>['scheduled','building'].includes(state));computersMessage=`Bridge installed on ${label}. ${preparing?'Its tools are still being prepared; jobs will wait until they are ready.':'It is ready for jobs.'}`;await refresh();return true;}
+  catch(error){computersMessage=`Setup on ${label} did not complete: ${failure(error)}`;return false;}
+  finally{computersBusy=false;renderDevices();}
 }
 $('refresh-computers').addEventListener('click',async()=>{await readComputers();await refresh();});
-$('computer-endpoint').addEventListener('change',()=>{$('computer-wsl').hidden=$('computer-endpoint').value!=='windows-wsl';});
-$('computer-form').addEventListener('submit',async event=>{event.preventDefault();if(computersBusy)return;try{const args=nodeAddArgs(new FormData(event.currentTarget));if(await changeComputer(args,'Computer saved. Its jobs and returned files use a separate connection.')){event.target.reset();$('computer-wsl').hidden=true;}}catch(error){$('computer-form-status').textContent=failure(error);}});
 function renderComputerFilter(){
-  const named=namedComputers(computerObservation||observation,computers),labels=new Map(named.map(row=>[row.id,row.label]));
-  for(const job of boardJobs){const id=jobRunner(job);if(!['spark','laptop'].includes(id)&&!labels.has(id))labels.set(id,jobRunnerLabel(job));}
-  const select=$('job-device-filter');$('job-device-label').hidden=labels.size===0;
-  const options=[['','All computers'],['spark','Spark'],['laptop','Laptop'],...labels];select.replaceChildren(...options.map(([value,label])=>{const option=element('option',null,label);option.value=value;return option;}));
+  const labels=new Map(currentDevices().map(row=>[row.id,row.name]));
+  for(const job of boardJobs){const id=jobRunner(job);if(!labels.has(id))labels.set(id,jobRunnerLabel(job));}
+  const select=$('job-device-filter'),options=[['','All devices'],...labels];
+  select.replaceChildren(...options.map(([value,label])=>{const option=element('option',null,label);option.value=value;return option;}));
   if(!options.some(([id])=>id===jobDevice))jobDevice='';select.value=jobDevice;
 }
+
+// Adding a device: choose it, allow this laptop on it once, confirm its identity.
+const wizard={step:1,id:'',name:'',host:'',os:'windows',user:'',probe:null,busy:false,done:false,autoName:false};
+function wizardOs(){return document.querySelector('input[name="wizard-os"]:checked')?.value||'windows';}
+function showWizardStep(step){
+  wizard.step=step;document.querySelectorAll('[data-wizard]').forEach(el=>el.hidden=Number(el.dataset.wizard)!==step);
+  document.querySelectorAll('.wizard-steps li').forEach(li=>{const n=Number(li.dataset.step);li.dataset.state=n<step?'done':n===step?'current':'';});
+  $('wizard-step-label').textContent=`STEP ${step} OF 3`;$('wizard-back').hidden=step===1||wizard.done;
+  const summary=wizard.probe&&probeSummary(wizard.probe);
+  $('wizard-next').textContent=step===1?'Next':step===2?`Check ${wizard.name}`:wizard.done?'Done':summary?.needsWsl?'Check again':`Add ${wizard.name}`;
+}
+function wizardSay(text,warn=false){$('wizard-message').textContent=text||'';$('wizard-message').dataset.warn=String(warn);}
+async function scanForDevices(){
+  const note=$('wizard-scan-note');note.textContent='Looking for computers on your network…';$('wizard-found').replaceChildren();
+  try{
+    const result=await command(['node','scan']),rows=currentDevices(),names=new Set(rows.map(row=>row.name.toLowerCase())),sparkHosts=new Set(savedConfig?.hosts||[]);
+    const found=(Array.isArray(result.candidates)?result.candidates:[]).filter(item=>!sparkHosts.has(item.address));
+    $('wizard-found').replaceChildren(...found.map(item=>{
+      const added=!!item.name&&names.has(String(item.name).toLowerCase()),button=element('button','found-device');button.type='button';button.setAttribute('role','listitem');button.disabled=added;
+      button.append(deviceIcon('computer'),element('strong',null,item.name||item.address),element('small',null,added?'Already added':item.name?item.address:'No name reported'));
+      button.addEventListener('click',()=>{$('wizard-host').value=item.address;if(!$('wizard-name').value||wizard.autoName){$('wizard-name').value=item.name||'';wizard.autoName=true;}document.querySelectorAll('.found-device').forEach(el=>el.setAttribute('aria-pressed',String(el===button)));});
+      return button;
+    }));
+    note.textContent=found.length?"These computers already have remote access turned on. Don't see yours? Type its name below; you'll turn remote access on in the next step.":"No other computer here has remote access turned on yet. Type the computer's name below; you'll turn it on in the next step.";
+  }catch(error){note.textContent=`Couldn't look around this network (${failure(error)}). Type the computer's name below.`;}
+}
+function openWizard(){
+  Object.assign(wizard,{step:1,id:'',name:'',host:'',user:'',probe:null,busy:false,done:false,autoName:false});
+  for(const id of ['wizard-host','wizard-name','wizard-user'])$(id).value='';
+  $('wizard-progress').hidden=true;$('wizard-progress').replaceChildren();$('wizard-wsl').hidden=true;wizardSay('');showWizardStep(1);$('add-device-dialog').showModal();scanForDevices();
+}
+function renderWizardFound(){
+  const summary=probeSummary(wizard.probe);$('wizard-found-intro').textContent=`DGXBridge reached ${summary.name} and signed in as ${wizard.user}. Is this the computer you meant?`;
+  $('wizard-facts').replaceChildren(...summary.facts.map(fact=>element('li',null,fact)));$('wizard-fingerprint').textContent=wizard.probe.fingerprint;$('wizard-wsl').hidden=!summary.needsWsl;
+}
+function progressItem(text,state){const item=element('li',null,text);item.dataset.state=state;$('wizard-progress').append(item);return item;}
+async function wizardNext(){
+  if(wizard.busy)return;
+  if(wizard.done){$('add-device-dialog').close();selectedDevice=wizard.id;view('devices');return;}
+  wizard.busy=true;$('wizard-next').disabled=true;wizardSay('');
+  try{
+    if(wizard.step===1){
+      const host=$('wizard-host').value.trim(),name=($('wizard-name').value.trim()||host);
+      if(!host)throw new Error("Enter the computer's name or address, or pick one above.");
+      wizard.host=host;wizard.name=name;wizard.os=wizardOs();wizard.id=deviceSlug(name,currentDevices().map(row=>row.id));
+      const key=await command(['node','key',wizard.id]);
+      $('wizard-command').textContent=deviceSetupCommand(wizard.os,key.public_key);
+      $('wizard-allow-intro').textContent=wizard.os==='windows'?`On ${name}, open PowerShell as administrator (Start, type PowerShell, right-click it, Run as administrator), paste this and press Enter. The first part can take a minute.`:`On ${name}, open a terminal, paste this and press Enter. It may ask for your password once.`;
+      showWizardStep(2);
+    }else if(wizard.step===2||(wizard.step===3&&probeSummary(wizard.probe)?.needsWsl)){
+      const user=$('wizard-user').value.trim();if(!user)throw new Error('Enter the account name the command printed.');
+      wizard.user=user;wizardSay(`Checking ${wizard.name}…`);
+      const probe=await command(['node','probe',wizard.id,'--host',wizard.host,'--user',user]);
+      if(probe.login!=='ok'){wizardSay(probe.message||`${wizard.name} didn't let this laptop in yet.`,true);return;}
+      wizard.probe=probe;renderWizardFound();showWizardStep(3);wizardSay('');
+    }else{
+      const summary=probeSummary(wizard.probe),wsl=summary.wsl;
+      $('wizard-back').hidden=true;$('wizard-progress').hidden=false;$('wizard-progress').replaceChildren();
+      const saving=progressItem(`Trusting ${wizard.name} and saving it`,'working');
+      await command(['node','trust',wizard.id,'--label',wizard.name,'--host',wizard.probe.address,'--user',wizard.user,'--fingerprint',wizard.probe.fingerprint,...(wsl?['--wsl-distro',wsl.distribution,'--wsl-user',wsl.user]:[])]);
+      saving.dataset.state='done';wizard.done=true;await readComputers();
+      const installing=progressItem(`Installing DGXBridge on ${wizard.name}`,'working');
+      if(!await installComputer(wizard.id,wizard.name,false)){installing.dataset.state='failed';wizardSay(`${wizard.name} is added, but installing DGXBridge didn't finish: ${computersMessage}. You can retry from its page.`,true);return;}
+      installing.dataset.state='done';
+      if(summary.hasGpu){const gpu=progressItem('Setting up GPU tools','working');gpu.dataset.state=await installComputer(wizard.id,wizard.name,true)?'done':'failed';if(gpu.dataset.state==='failed')wizardSay(`GPU tools didn't finish setting up: ${computersMessage}. You can retry from ${wizard.name}'s page.`,true);}
+      if($('wizard-message').dataset.warn!=='true')wizardSay(`${wizard.name} is ready. Agents can now send it jobs.`);
+    }
+  }catch(error){$('wizard-progress').querySelectorAll('[data-state=working]').forEach(item=>item.dataset.state='failed');if(!wizard.done)$('wizard-back').hidden=false;wizardSay(failure(error),true);}
+  finally{wizard.busy=false;$('wizard-next').disabled=false;showWizardStep(wizard.step);}
+}
+$('add-device').addEventListener('click',openWizard);
+$('wizard-next').addEventListener('click',wizardNext);
+$('wizard-back').addEventListener('click',()=>{if(!wizard.busy&&wizard.step>1){wizardSay('');showWizardStep(wizard.step-1);}});
+$('close-wizard').addEventListener('click',()=>$('add-device-dialog').close());
+$('wizard-name').addEventListener('input',()=>{wizard.autoName=false;});
+$('copy-wizard-command').addEventListener('click',()=>copyText($('wizard-command').textContent,'Setup command'));
 $('job-device-filter').addEventListener('change',event=>{jobDevice=event.target.value;pageIndex=0;renderJobs();});
 
 // Jobs
@@ -140,15 +247,7 @@ function renderBoard(){
   const summary=boardSummary(observation,boardJobs),state=connectionState(),active=summary.sparkRunning+summary.sparkQueued+summary.laptopActive+summary.remoteActive;
   $('activity-label').textContent=(health.failures?'Last seen: ':'')+(active?`${active} active ${active===1?'job':'jobs'}`:health.failures?'no active jobs':observation?.ok===false?'Jobs unavailable':'No active jobs');$('activity-dot').dataset.active=String(active>0);
   $('nav-active').hidden=!active;$('nav-active').textContent=active>9?'9+':String(active);
-  $('laptop-network').textContent=laptopLink(observation).label;
-  $('laptop-jobs').textContent=`${summary.laptopActive} active`;
-  const slots=summary.laptopLimit;$('laptop-meter-fill').style.width=`${slots?Math.min(100,summary.laptopActive/slots*100):0}%`;$('laptop-meter').setAttribute('aria-label',slots?`${summary.laptopActive} of ${slots} laptop job slots in use`:'Laptop job slots not reported');
-  $('laptop-foot').textContent=slots?`${summary.laptopActive} of ${slots} job slots in use${summary.laptopThreads?` · ${summary.laptopThreads} logical CPUs`:''} · no enforced caps`:'Native jobs run as you, without enforced CPU or memory caps.';
-  $('spark-jobs').textContent=summary.sparkQueued?`${summary.sparkRunning} running · ${summary.sparkQueued} queued`:`${summary.sparkRunning} active`;
-  const budget=summary.cpuBudget;$('spark-meter-fill').style.width=`${budget?Math.min(100,summary.reservedCpu/budget*100):0}%`;$('spark-meter').setAttribute('aria-label',budget?`${summary.reservedCpu} of ${budget} budgeted CPU cores reserved by running jobs`:'Spark CPU budget not observed');
-  const slowLink=sparkLink(observation);
-  if(state.connected&&slowLink?.warning){$('spark-foot').textContent=slowLink.warning;$('spark-foot').dataset.warn='true';}else{delete $('spark-foot').dataset.warn;
-  $('spark-foot').textContent=!state.connected?'Linux builds, tests and compute. Connect to see the scheduler.':budget?`Running jobs have ${summary.reservedCpu} of ${budget} cores and ${summary.reservedMemory} of ${summary.memoryBudget??'—'} GiB set aside${summary.heartbeatAge!=null?` · scheduler seen ${relativeTime(Number(observation.observed_at)-summary.heartbeatAge,observation.observed_at)}`:''}`:'Scheduler responding. Budgets not reported.';}
+  renderDeviceStrip();
   renderComputerFilter();renderJobs();
 }
 function stateLabel(state){return state?state[0].toUpperCase()+state.slice(1):'Unknown';}
@@ -365,5 +464,5 @@ $('open-updates').addEventListener('click',()=>{$('updates-dialog').showModal();
 
 motionQuery.addEventListener('change',event=>{reduced=event.matches;renderConnection();if(reduced)cancelAnimationFrame(pairFrame);});
 async function init(){try{await loadPreferences();}catch(error){message(failure(error));}await refresh();performUpdate('status',true);}
-init();const refreshTimer=setInterval(()=>{if(!document.hidden&&['overview','connection','computers'].includes(currentView))refresh();},15000);
+init();const refreshTimer=setInterval(()=>{if(!document.hidden&&['overview','devices'].includes(currentView))refresh();},15000);
 window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearInterval(pairTimer);stopLogFollow();clearTimeout(updateTimer);cancelAnimationFrame(pairFrame);visuals.forEach(visual=>visual.dispose());});

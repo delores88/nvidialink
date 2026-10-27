@@ -2,6 +2,16 @@
 
 DGXBridge 0.6 adds named Linux and Windows-with-WSL computers alongside the existing laptop and Spark. The existing Spark connection and its pairing, policy, jobs, and returned files keep their original state. Additional computers use independent profiles, controller state, runtimes, and return workers.
 
+## Add a device (guided)
+
+In the desktop app, **Devices → Add a device** does the whole setup without SSH knowledge:
+
+1. **Choose.** The app lists computers on this laptop's private networks that answer on the SSH port (`node scan`, read-only), or the owner types a name or address. Bare Windows computer names are resolved to IPv4 by DGXBridge, because Windows OpenSSH can fail to resolve them.
+2. **Allow.** DGXBridge makes one ed25519 key for this device under the state root (`node key ID`) and shows one command to run on the device: as administrator in PowerShell on Windows, or in a terminal on Linux. It turns on that computer's own SSH server, authorizes only this key, and prints the account name and the device's host-key fingerprint.
+3. **Confirm.** `node probe ID --host H --user U` reads the device's host key, signs in with that key alone, and reports what it runs (Windows or Linux, GPUs, WSL distributions and their Linux users). The owner compares the fingerprint with the one the device printed. `node trust ID --label NAME --host H --user U --fingerprint SHA256:... [--wsl-distro D --wsl-user U]` reads the host key again and saves nothing unless it still matches. It then writes a DGXBridge-owned pin and SSH profile under `STATE/devices/ID/` and registers the device. The owner's own `~/.ssh` is never read or changed. The app then installs the bridge, and the GPU tools when a GPU was found.
+
+The device's key never leaves this laptop. Revoke access by removing its line from the device's authorized keys.
+
 ## Register a trusted connection
 
 Prepare the computer's SSH server, verify its host public key through an independent owner-controlled channel, and provision Docker on its Linux environment. Keep private keys on the submitting computer. Registration stores SSH references and never copies private keys.
@@ -21,7 +31,7 @@ The WSL distribution and user must already exist. The endpoint runs a fixed vali
 
 For NVIDIA GPU jobs on WSL, verify a small capped container probe as well as `nvidia-smi` on the host. Older Docker Desktop releases can omit a driver library required by newer Windows NVIDIA drivers, causing CUDA initialization error 500 even when CUDA works directly in WSL. This was reproduced on the test workstation with Docker Desktop 4.29. The upstream diagnosis and fix are tracked in [NVIDIA container-toolkit issue 520](https://github.com/NVIDIA/nvidia-container-toolkit/issues/520). Update Docker Desktop through its normal installer; do not register a runtime whose container probe failed.
 
-In the desktop app, **Computers** provides the same registration, enable/disable, and installation controls. The existing Spark connection screen remains separate. Saving a computer or refreshing the board does not install software or prepare runtimes.
+In the desktop app, **Devices** shows this laptop, the Spark and every added computer as one set of cards. The Spark's card opens its existing connection, routes and pairing controls. An added computer's card opens its details, with **Pause new jobs**, **Set up GPU tools** and **Reinstall bridge**. Refreshing never installs software or prepares runtimes.
 
 ## Install this release's controller and runtimes
 

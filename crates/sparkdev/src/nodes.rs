@@ -364,6 +364,17 @@ fn profile_settings(profile: &Path) -> Result<(state::Config, EndpointSettings)>
     Ok((config, settings))
 }
 
+/// Each registered device's label and the addresses its profile is saved under.
+pub fn saved_hosts() -> Result<Vec<(String, Vec<String>)>> {
+    let mut saved = Vec::new();
+    for node in list()? {
+        if let Ok((config, _)) = profile_settings(&profile_root(&node.id)?) {
+            saved.push((node.label, config.hosts));
+        }
+    }
+    Ok(saved)
+}
+
 pub fn get(id: &str) -> Result<Node> {
     validate_id(id)?;
     let node = list()?
