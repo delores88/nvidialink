@@ -187,6 +187,9 @@ export function jobRunnerLabel(job, detail=false) {
   const runner=jobRunner(job);
   return runner==='laptop'?(detail?'This laptop':'Laptop'):runner==='spark'?'Spark':cleanReference(job?.device_label).trim()||runner;
 }
+export function jobToolsLabel(job) {
+  return job?.runtime==='cuda'&&!['spark','laptop'].includes(jobRunner(job))?'GPU tools':TOOL_LABELS[job?.runtime]||job?.runtime||'Not reported';
+}
 export function namedComputers(observation,nodes=[],{stale=false}={}) {
   const observed=Array.isArray(observation?.devices)?observation.devices:[];
   const saved=Array.isArray(nodes)?nodes:[];

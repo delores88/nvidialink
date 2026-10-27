@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {connectionView,configMode,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,RESOURCE_PRESETS,sameResourcePolicy,agentPaths,agentPrompt,agentConfiguration,routeAddress,routeAddressLabel,plainReason,internetView,downloadsView,serviceView,jobFlags,jobInternet,laptopLink,sparkLink,
-  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome,jobRunner,jobRunnerLabel,filterJobs,boardSummary,namedComputers,nodeAddArgs} from '../ui/model.mjs';
+  FIND_INTRO,LAN_UNREACHABLE,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,isActiveJob,jobOutcome,jobRunner,jobRunnerLabel,jobToolsLabel,filterJobs,boardSummary,namedComputers,nodeAddArgs} from '../ui/model.mjs';
 import {linkMotion} from '../ui/vendor/sparkLinkMotion.mjs';
 import {filamentParticles,filamentFrame} from '../ui/vendor/sparkLinkParticles.mjs';
 import {startVisibleRenderLoop} from '../ui/vendor/visible-render-loop.mjs';
@@ -304,6 +304,7 @@ test('named jobs keep their computer identity without changing Spark and laptop 
   const legacy=[{job:'same-id',where:'spark',state:'running',reserved_cpu:2},{job:'laptop-old',where:'laptop',state:'running'}];
   const named={job:'office:same-id',device:'office',device_label:'Office workstation',where:'spark',state:'returning',reserved_cpu:8};
   assert.equal(jobRunner(named),'office');assert.equal(jobRunnerLabel(named),'Office workstation');
+  assert.equal(jobToolsLabel({...named,runtime:'cuda'}),'GPU tools');assert.equal(jobToolsLabel({...legacy[0],runtime:'cuda'}),'Spark GPU');assert.equal(jobToolsLabel({...named,runtime:'python'}),'Python tools');
   assert.equal(jobRunnerLabel(legacy[0]),'Spark');assert.equal(jobRunnerLabel(legacy[1]),'Laptop');assert.equal(jobRunnerLabel(legacy[1],true),'This laptop');
   const jobs=jobsFrom({shared_board:[...legacy,named]});assert.equal(jobs.length,3);
   assert.deepEqual(filterJobs(jobs,{filter:'spark'}).map(job=>job.job),['same-id']);

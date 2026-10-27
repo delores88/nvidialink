@@ -1,8 +1,8 @@
 import {qrArt,eyeRing,eyePupil,alignRing,alignDot,sparkPath,checkPoints} from './vendor/sparkLinkQr.mjs';
 import {createSim,setTargets,step,draw,isActive,placeOnCells,burst} from './vendor/sparkParticles.mjs';
 import {MODE_LABELS,RESOURCE_FIELDS,RESOURCE_PRESETS,configMode,connectionView,jobsFrom,reconcileObservedJobs,jobPage,resourcePolicy,resourcePreset,sameResourcePolicy,agentPaths,agentConfiguration,agentPrompt,
-  isActiveJob,jobId,jobRunner,jobRunnerLabel,namedComputers,nodeAddArgs,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
-  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,plainError,TOOL_LABELS,serviceView,INTERNET_COPY,internetView,downloadsView,jobInternet,formatGiB,laptopLink} from './model.mjs';
+  isActiveJob,jobId,jobRunner,jobRunnerLabel,jobToolsLabel,namedComputers,nodeAddArgs,jobOutcome,jobFlags,filterJobs,clientLabel,duration,relativeTime,boardSummary,routeAddress,routeAddressLabel,
+  FIND_INTRO,findSparkControl,discoveryView,discoverySaved,otherLanAddresses,sparkLink,plainError,serviceView,INTERNET_COPY,internetView,downloadsView,jobInternet,formatGiB,laptopLink} from './model.mjs';
 import {createConnectionVisual} from './connection-visual.mjs';
 const $=id=>document.getElementById(id);
 const invoke=(name,args={})=>window.__TAURI__.core.invoke(name,args);
@@ -164,7 +164,7 @@ function renderJobs(){
     const item=element('li');const button=element('button','job-row');button.type='button';button.dataset.job=id;button.dataset.outcome=outcome.kind;if(id===selectedJob)button.setAttribute('aria-current','true');
     button.setAttribute('aria-label',`Job ${id}, ${clientLabel(job.client)}, ${jobRunnerLabel(job)}, ${job.state||'unknown'}, ${outcome.label}${job.ui_observation_stale?', last seen':''}`);
     const top=element('span','job-row-top');const state=element('span','job-state');state.dataset.state=job.state||'unknown';state.title=stateLabel(job.state);top.append(state,element('span','job-id',job.kind==='service'?serviceView(job).name:id.slice(0,12)||'—'),element('span','job-time',relativeTime(job.created_at,now)));
-    const bottom=element('span','job-row-meta');const who=element('span',`client-tag client-${job.client||'unknown'}`,clientLabel(job.client));bottom.append(who,element('span','runner-tag',jobRunnerLabel(job)));if(job.kind==='service')bottom.append(element('span','service-name',`Model server · ${serviceView(job).state}`));else if(job.runtime)bottom.append(element('span','meta-text',TOOL_LABELS[job.runtime]||job.runtime));
+    const bottom=element('span','job-row-meta');const who=element('span',`client-tag client-${job.client||'unknown'}`,clientLabel(job.client));bottom.append(who,element('span','runner-tag',jobRunnerLabel(job)));if(job.kind==='service')bottom.append(element('span','service-name',`Model server · ${serviceView(job).state}`));else if(job.runtime)bottom.append(element('span','meta-text',jobToolsLabel(job)));
     const result=element('span',`outcome outcome-${outcome.kind}`,outcome.label);bottom.append(result);if(job.ui_observation_stale)bottom.append(element('span','meta-text','Last seen'));
     if(flags.some(flag=>flag.kind==='warn')){const warn=element('span','row-warn','!');warn.title=flags.filter(flag=>flag.kind==='warn').map(flag=>flag.label).join(', ');bottom.append(warn);}
     button.append(top,bottom);button.addEventListener('click',()=>selectJob(id));item.append(button);list.append(item);
@@ -186,7 +186,7 @@ function renderJobDetail(){
   const flags=$('detail-flags');flags.replaceChildren(...jobFlags(job,now).map(flag=>{const node=element('div',`flag flag-${flag.kind}`);node.append(element('strong',null,flag.label),element('span',null,flag.detail));return node;}));
   const started=Number(job.started_at),finished=Number(job.finished_at),cpu=job.reserved_cpu??job.cpu,memory=job.reserved_memory_gb??job.memory_gb;
   const service=serviceView(job);
-  const facts=[['Result',service?service.state:outcome.label,`fact-outcome outcome-${outcome.kind}`],['Submitted by',`${clientLabel(job.client)} (self-declared)`],['Runs on',jobRunnerLabel(job,true)],['Tools',TOOL_LABELS[job.runtime]||job.runtime||'Not reported'],['Set aside',cpu!=null?`${cpu} cores · ${memory??'—'} GiB`:runner==='laptop'?'No enforced limits':'Not reported'],['Internet',jobInternet(job)],['Downloaded',formatGiB(job.internet_use?.bytes_down)],['Queued',relativeTime(job.created_at,now)],['Run time',Number.isFinite(started)&&started>0?duration((Number.isFinite(finished)&&finished>0?finished:now)-started)+(isActiveJob(job)?' so far':''):'Not started']];
+  const facts=[['Result',service?service.state:outcome.label,`fact-outcome outcome-${outcome.kind}`],['Submitted by',`${clientLabel(job.client)} (self-declared)`],['Runs on',jobRunnerLabel(job,true)],['Tools',jobToolsLabel(job)],['Set aside',cpu!=null?`${cpu} cores · ${memory??'—'} GiB`:runner==='laptop'?'No enforced limits':'Not reported'],['Internet',jobInternet(job)],['Downloaded',formatGiB(job.internet_use?.bytes_down)],['Queued',relativeTime(job.created_at,now)],['Run time',Number.isFinite(started)&&started>0?duration((Number.isFinite(finished)&&finished>0?finished:now)-started)+(isActiveJob(job)?' so far':''):'Not started']];
   if(job.ui_observation_stale)facts.push(['Observation','Last seen; this computer did not provide a fresh job list.']);
   if(job.return_status==='complete')facts.push(['Results',`Results returned to ${job.results_folder}`]);
   else if(job.return_status==='retrying')facts.push(['Results',job.return_error||'Return paused; the bridge will retry.']);
