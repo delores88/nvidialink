@@ -1,0 +1,129 @@
+{
+  "url": "https://deloresai.com/api/v1/catalog/dgxbridge",
+  "observedAt": "2026-10-27T13:56:26.112344+00:00",
+  "expected": {
+    "version": "0.6.1",
+    "releaseId": 425509290,
+    "assetId": 681707344,
+    "sha256": "e11f01c281c82b1f37bbd01baffaa72dd705bd43f8986e3eb33fa3144f943775",
+    "size": 13304465,
+    "sourceCommit": "4e65ffc6f345ae2c9b1009c9f35aecc3887c86a9",
+    "manifestSha256": "b92048707da642e2279dc492cef73cd82ec23fb0f6369d843e939bc00e3ff0ff"
+  },
+  "accepted": true,
+  "httpStatus": 200,
+  "responseSha256": "d8c15e18612afc7bd71000c873dce30530253849e06371564f3bef9d9c8ca5ab",
+  "visibleVersions": [
+    "0.1.0-beta.2",
+    "0.6.1"
+  ],
+  "release061": [
+    {
+      "id": "lRZ1GJDLJbI4r996gN2eGKHA",
+      "version": "0.6.1",
+      "status": "accepted",
+      "channel": "stable",
+      "sourceCommit": null,
+      "createdAt": "2026-10-27T13:50:50.739Z"
+    }
+  ],
+  "artifacts061": [
+    {
+      "id": "09cLYZ0xqwLBFEEu6XpkTjaf",
+      "appId": "dgxbridge",
+      "version": "0.6.1",
+      "channel": "stable",
+      "os": "windows",
+      "architectures": [
+        "x64"
+      ],
+      "format": "nsis",
+      "filename": "DGXBridge_0.6.1_x64-setup.exe",
+      "releaseId": 425509290,
+      "assetId": 681707344,
+      "sha256": "e11f01c281c82b1f37bbd01baffaa72dd705bd43f8986e3eb33fa3144f943775",
+      "size": 13304465,
+      "sourceCommit": "4e65ffc6f345ae2c9b1009c9f35aecc3887c86a9",
+      "status": "accepted",
+      "acceptedAt": "2026-10-27T13:56:22.953Z",
+      "expiresAt": "2026-11-03T13:56:22.953Z",
+      "policyVersion": "2026-09-10.release.1",
+      "verificationMethod": "automated-static",
+      "manifestSha256": "b92048707da642e2279dc492cef73cd82ec23fb0f6369d843e939bc00e3ff0ff"
+    }
+  ],
+  "verificationChecks": [
+    {
+      "id": "file.identity",
+      "label": "Installer file identity",
+      "status": "passed",
+      "summary": "The exact GitHub release asset bytes, SHA-256 digest and size were checked."
+    },
+    {
+      "id": "package.identity",
+      "label": "Package and architecture",
+      "status": "passed",
+      "summary": "The nsis package and its x64 application payload were inspected without running the application."
+    },
+    {
+      "id": "publisher.authorization",
+      "label": "Publisher authorization",
+      "status": "passed",
+      "summary": "Current repository access, publisher ownership and free distribution authorization were verified."
+    },
+    {
+      "id": "release.source-binding",
+      "label": "Source and release identity",
+      "status": "passed",
+      "summary": "The GitHub release, declared channel, asset IDs and immutable source commit match this review."
+    },
+    {
+      "id": "malware.scan",
+      "label": "Malware scan",
+      "status": "passed",
+      "summary": "installer: passed; payload-4: passed; payload-3: passed; payload-2: passed; payload-1: passed; source: passed All planned files required; expected scans exclude empty files. Plan sizes are not content hashes. Null=unknown; child CPU/RSS sampled, not aggregate. Raw streams digest-framed in plan order. {\"planSha256\":\"dd8c740aa0854bc2272339aad66e8fa7d362d7cc5c4bedb39ba6c3b404996334\",\"scopeFiles\":{\"installer\":1,\"source\":337,\"payload\":872},\"columns\":[\"id\",\"status\",\"error\",\"plannedFiles\",\"plannedBytes\",\"expectedScannedFiles\",\"scannedFiles\",\"infectedFiles\",\"startMs\",\"elapsedMs\",\"cpuMs\",\"peakRssBytes\",\"termination\",\"exitCode\"],\"groups\":[[\"installer\",\"passed\",null,1,13304465,1,1,0,76,53356,52460,1212465152,\"exited\",0],[\"payload-4\",\"passed\",null,307,9560594,307,307,0,78,28680,27510,1178861568,\"exited\",0],[\"payload-3\",\"passed\",null,228,14737187,228,228,0,80,28886,27510,1190752256,\"exited\",0],[\"payload-2\",\"passed\",null,225,14922957,225,225,0,82,31093,29440,1188306944,\"exited\",0],[\"payload-1\",\"passed\",null,112,22321911,112,112,0,28759,16656,16200,1032384512,\"exited\",0],[\"source\",\"passed\",null,337,6262930,337,337,0,28966,22461,22210,1024618496,\"exited\",0]]}"
+    },
+    {
+      "id": "artifact.sbom",
+      "label": "Dependency inventory",
+      "status": "passed",
+      "summary": "Inventoried 889 source dependencies and 841 packaged dependencies. Exact linked source snapshot and passively extracted installer; no application code executed."
+    },
+    {
+      "id": "source.dependencies",
+      "label": "Dependency vulnerability assessment",
+      "status": "passed",
+      "summary": "High and critical vulnerabilities block publication. Dependency findings: 0 critical, 0 high, 1 medium, 0 low, 0 unknown, 0 info. High and critical findings block publication; lower severities are advisories. Exact linked source snapshot and passively extracted installer; no application code executed. 1 lower-severity or unrated advisories remain; the publisher receives the detailed findings."
+    },
+    {
+      "id": "source.secrets",
+      "label": "Secret patterns in supported files",
+      "status": "passed",
+      "summary": "Gitleaks checks recognizable credential patterns in supported source/extracted text and passively extracted CPython 3.12 literal constants. Native PE, ELF and Mach-O binaries are skipped. Constants are scanned separately; variable assignments, dynamically assembled values and program behavior are not reconstructed. This is not comprehensive bytecode analysis. 1209 input files were supplied; the inspected-file count is not measured. 0 unreviewed potential embedded credentials remain from 0 original tool matches. Values are never included in reports."
+    },
+    {
+      "id": "artifact.os-signature",
+      "label": "Publisher signing",
+      "status": "not-required",
+      "summary": "Trusted operating-system publisher signing was not established. This release policy permits that disclosed limitation."
+    },
+    {
+      "id": "runtime.lifecycle",
+      "label": "Installation and application behavior",
+      "status": "not-run",
+      "summary": "Native installation, launch, update and uninstall testing has not run in this static review."
+    },
+    {
+      "id": "source.static-analysis",
+      "label": "Comprehensive source analysis",
+      "status": "not-run",
+      "summary": "Dependency and secret scans do not constitute comprehensive source-code or application behavior analysis."
+    },
+    {
+      "id": "artifact.provenance",
+      "label": "Reproducible build provenance",
+      "status": "not-run",
+      "summary": "Source commit identity is checked; reproducing the binary from source is outside this review."
+    }
+  ]
+}
