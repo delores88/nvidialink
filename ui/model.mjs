@@ -204,7 +204,9 @@ export function namedComputers(observation,nodes=[],{stale=false}={}) {
     const hardware=device.hardware||{},capabilities=device.capabilities||{},endpoint=settings.endpoint||device.endpoint||{};
     const facts=[['Connection',connected?'Connected':status],['System',device.architecture||capabilities.architecture||hardware.architecture||'Not observed']];
     if(Number.isFinite(hardware.cpu_count))facts.push(['CPU',`${hardware.cpu_count} logical CPUs`]);
-    if(Number.isFinite(hardware.memory_gb))facts.push(['System memory',`${hardware.memory_gb} GiB`]);
+    const hostMemory=hostMemoryOf(device),jobMemory=memoryOf(device);
+    if(hostMemory){facts.push(['Memory',`${hostMemory} GiB on this PC`]);if(jobMemory&&jobMemory<hostMemory*0.95)facts.push(['Available to jobs',`${jobMemory} GiB. Windows gives its Linux layer, where jobs run, only part of the PC's memory.`]);}
+    else if(Number.isFinite(hardware.memory_gb))facts.push(['System memory',`${hardware.memory_gb} GiB`]);
     const gpu=capabilities.gpu,firstGpu=gpu?.observed===true&&Array.isArray(gpu.devices)?gpu.devices[0]:null;
     if(firstGpu){facts.push(['GPU',cleanReference(firstGpu.name)||'Observed GPU']);facts.push(['GPU memory',gpu.memory_model==='unified'?'Shared system memory':Number.isFinite(firstGpu.total_memory_bytes)?`${formatGiB(firstGpu.total_memory_bytes)} dedicated`:'Not reported']);}
     if(endpoint.kind==='windows-wsl')facts.push(['Linux environment',endpoint.distribution||'WSL']);
@@ -266,6 +268,8 @@ function gpuOf(device) {
   const name=cleanReference(first.name).replace(/^NVIDIA (GeForce )?/,'').trim()||'GPU',memory=gib(first.total_memory_bytes);
   return {name,memory,unified:gpu.memory_model==='unified',count:gpu.devices.length};
 }
+// A Windows PC's own memory; its jobs see only what Windows gives WSL.
+function hostMemoryOf(device) {return gib(device?.capabilities?.host_memory_bytes);}
 function memoryOf(device) {
   const total=gib(device?.capabilities?.system_memory?.total_bytes);
   return total??(Number.isFinite(device?.hardware?.memory_gb)?Math.round(device.hardware.memory_gb):null);
@@ -291,7 +295,7 @@ export function deviceRows({observation,nodes=[],jobs=[],connection=null,config=
     specs:[sparkGpu&&`${sparkGpu.name} GPU`,sparkMemory&&`${sparkMemory} GB${sparkGpu?.unified?' shared with the GPU':' memory'}`,sparkCpus&&`${sparkCpus} CPU cores`,state.connected&&state.route].filter(Boolean),jobs:activeCounts(jobs,'spark'),
     work:workOf(jobs,'spark'),link:linkOf(spark,observation),gpu:!!sparkGpu,memory:sparkMemory});
   for(const named of namedComputers(observation,nodes,{stale})){
-    const device=devices.find(item=>item.id===named.id)||{},gpu=gpuOf(device),memory=memoryOf(device),cpus=Number.isFinite(device.hardware?.cpu_count)?device.hardware.cpu_count:null;
+    const device=devices.find(item=>item.id===named.id)||{},gpu=gpuOf(device),memory=hostMemoryOf(device)??memoryOf(device),cpus=Number.isFinite(device.hardware?.cpu_count)?device.hardware.cpu_count:null;
     const status=!named.enabled?'paused':named.status==='Last seen'?'stale':named.status==='Details unavailable'?'attention':named.status==='Ready for jobs'||named.status==='Connected'?'ready':named.status==='Tools preparing'?'checking':named.status==='Setup needed'?'setup':named.status==='Offline'?'offline':'checking';
     const windows=named.endpoint?.kind==='windows-wsl';
     rows.push({id:named.id,kind:'computer',name:named.label,detail:windows?'Windows PC':'Linux computer',status:{kind:status,label:status==='checking'&&named.status==='Tools preparing'?'Setting up tools':STATUS_LABELS[status]},

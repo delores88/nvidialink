@@ -346,6 +346,18 @@ test('every device has one shape: laptop, Spark and added computers, in that ord
   assert.ok(rows[2].facts.some(([label])=>label==='GPU'));
   assert.deepEqual(fleetSummary(rows),{kind:'ready',label:'3 devices ready'});
 });
+test('a Windows PC shows its own memory, and what its Linux jobs can use',()=>{
+  const gib=n=>n*1073741824,pc=structuredClone(fleet);
+  pc.devices[2].capabilities.system_memory={total_bytes:gib(125)};pc.devices[2].capabilities.host_memory_bytes=gib(256);
+  const row=deviceRows({observation:pc,nodes:officeNode,jobs:[],connection:{connected:true,enabled:true,state:'connected'},config:{}})[2];
+  assert.match(row.specs.join(' '),/256 GB memory/);assert.equal(row.memory,256);
+  const facts=Object.fromEntries(row.facts);
+  assert.equal(facts['Memory'],'256 GiB on this PC');assert.match(facts['Available to jobs'],/^125 GiB\. Windows gives its Linux layer/);
+  // Without the PC's own figure, the Linux-reported memory is shown as before.
+  delete pc.devices[2].capabilities.host_memory_bytes;
+  const before=deviceRows({observation:pc,nodes:officeNode,jobs:[],connection:{connected:true,enabled:true,state:'connected'},config:{}})[2];
+  assert.match(before.specs.join(' '),/125 GB memory/);assert.equal(Object.fromEntries(before.facts)['System memory'],'125 GiB');
+});
 test('device status reflects jobs, pauses, outages and a Spark that is not set up',()=>{
   const jobs=[{job:'office:a',device:'office',state:'running'},{job:'office:b',device:'office',state:'queued'},{job:'s1',where:'spark',state:'queued'}];
   let rows=deviceRows({observation:fleet,nodes:officeNode,jobs,connection:{connected:true,enabled:true,state:'connected'},config:{}});

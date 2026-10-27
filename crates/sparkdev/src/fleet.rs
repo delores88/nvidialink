@@ -765,6 +765,54 @@ fn node_crud(command: &NodeCommands) -> Result<Value> {
     }
 }
 
+/// A Windows computer's own memory. Its jobs run in WSL, which reports only
+/// what Windows gives it (half the PC's memory by default), so the PC's total
+/// is asked of Windows itself, over the device's own pinned SSH, once a day.
+fn host_memory(target: &Target) -> Option<u64> {
+    if !matches!(target.node.as_ref()?.endpoint, nodes::Endpoint::WindowsWsl { .. }) {
+        return None;
+    }
+    let cache = target.root.join("host-memory.json");
+    let now = state::now() as f64;
+    if let Ok(Some(raw)) = bounded_file(&cache, 4096) {
+        if let Ok(saved) = serde_json::from_slice::<Value>(&raw) {
+            let age = now - saved["checked_at"].as_f64().unwrap_or(0.0);
+            // A failed check is retried after an hour, a good one after a day.
+            let fresh = if saved["bytes"].is_u64() { 86_400.0 } else { 3_600.0 };
+            if (0.0..fresh).contains(&age) {
+                return saved["bytes"].as_u64();
+            }
+        }
+    }
+    let ask = || -> Result<Option<u64>> {
+        let config: state::Config = serde_json::from_slice(
+            &bounded_file(&target.root.join("config.json"), inventory::MIB)?.ok_or_else(|| AppError::new(3, "No SSH configuration"))?,
+        )?;
+        let endpoint = match bounded_file(&target.root.join("endpoint.json"), 16 * 1024)? {
+            Some(bytes) => serde_json::from_slice::<nodes::EndpointSettings>(&bytes)?,
+            None => nodes::EndpointSettings::default(),
+        };
+        let host = config.hosts.first().cloned();
+        let transport = transport::Transport::with_endpoint(config, endpoint)?;
+        let command = transport.command(host.as_deref(), WINDOWS_MEMORY);
+        Ok(match transport::run_process(command, &[], Duration::from_secs(15))? {
+            transport::Ran::Exited((Some(0), stdout, _)) => parse_host_memory(&stdout),
+            _ => None,
+        })
+    };
+    let bytes = ask().ok().flatten();
+    let _ = state::atomic_json(&cache, &json!({"bytes":bytes,"checked_at":now}));
+    bytes
+}
+
+const WINDOWS_MEMORY: &str = "powershell -NoProfile -NonInteractive -Command \"(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory\"";
+
+fn parse_host_memory(stdout: &[u8]) -> Option<u64> {
+    let bytes: u64 = String::from_utf8_lossy(stdout).trim().parse().ok()?;
+    // Between 1 GiB and 64 TiB, or it is not a memory size.
+    (1 << 30..=64 << 40).contains(&bytes).then_some(bytes)
+}
+
 fn observe(target: &Target, client: &str) -> Result<Value> {
     let value = child(
         target,
@@ -795,6 +843,9 @@ fn observe(target: &Target, client: &str) -> Result<Value> {
     }
     if let Err(error) = reconcile(target, &device) {
         device["fleet_claim_error"] = json!({"code":error.code,"message":error.message});
+    }
+    if let Some(bytes) = host_memory(target) {
+        device["capabilities"]["host_memory_bytes"] = json!(bytes);
     }
     device["id"] = json!(target.id);
     device["label"] = json!(target.label);
@@ -2261,6 +2312,14 @@ pub(crate) fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_reports_the_pcs_own_memory() {
+        assert_eq!(parse_host_memory(b"274877906944\r\n"), Some(274_877_906_944));
+        for bad in [&b""[..], b"Get-CimInstance : not found", b"1024", b"-5"] {
+            assert_eq!(parse_host_memory(bad), None, "{bad:?}");
+        }
+    }
     use clap::Parser;
 
     fn record(device: &str, project: &str) -> Submission {
