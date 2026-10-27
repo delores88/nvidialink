@@ -2067,10 +2067,8 @@ pub(crate) fn dispatch(
         ));
     }
     if let Commands::Agent { command } = &cli.command {
-        if matches!(command, crate::AgentCommands::Login { .. } | crate::AgentCommands::Signout { .. })
-            && !crate::explicitly_owner(raw, cli.client)
-        {
-            return Err(error("Signing agents in or out is an owner action; run it from RTXBridge or with --client human"));
+        if matches!(command, crate::AgentCommands::Signout { .. }) && !crate::explicitly_owner(raw, cli.client) {
+            return Err(error("Removing an agent sign-in from the Spark is an owner action; run it from RTXBridge or with --client human"));
         }
         return crate::agent_command(cli, command, events).map(Some);
     }

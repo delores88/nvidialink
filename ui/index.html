@@ -108,7 +108,7 @@
     <p class="fine-print">Disconnect pauses new requests from this laptop. Admitted jobs keep running and your pairing stays saved.</p>
   </article>
   <article class="card" id="agents-card">
-    <div class="card-top"><div><h2>Agents on your Spark</h2><p class="card-sub">Claude Code and Codex can work on the Spark, so their builds and tests stop slowing this laptop. Their commits come back to your repository. Each signs in once.</p></div><button id="refresh-agents" class="button secondary small" type="button">Check</button></div>
+    <div class="card-top"><div><h2>Agents on your Spark</h2><p class="card-sub">Claude Code and Codex can work on the Spark, so their builds and tests stop slowing this laptop. They use the sign-ins already on this laptop, and their commits come back to your repository. There's nothing to set up.</p></div><button id="refresh-agents" class="button secondary small" type="button">Check</button></div>
     <ul id="agent-tools" class="agent-tools" aria-label="Agent sign-ins"></ul>
     <p id="agent-message" class="fine-print" role="status"></p>
   </article>
@@ -174,14 +174,6 @@
 </div>
 <div id="message" class="toast" role="status" aria-live="polite" hidden></div>
 <dialog id="updates-dialog" aria-labelledby="updates-heading"><article class="update-card"><div class="dialog-head"><div><span class="eyebrow">DELORESAI MARKETPLACE</span><h2 id="updates-heading">App updates</h2></div><button id="close-updates" class="icon-button" aria-label="Close update details"><svg class="icon"><use href="#i-close"/></svg></button></div><p class="card-sub">Only releases accepted by the Marketplace are offered. Approve in your browser, then choose when to install.</p><div class="update-status"><div class="update-row"><span id="update-state" class="pill">Not checked</span><span class="version-pill">Installed <strong id="installed-version">0.4.1</strong></span></div><h3 id="update-title">Check for an update</h3><p id="update-message" role="status">Only verified Marketplace releases are eligible.</p><p id="available-version" class="fine-print" hidden></p><div id="update-approval" hidden><span class="fine-print">Match this code on the Marketplace approval page</span><strong id="update-code"></strong><button id="copy-update-link" class="button secondary small" hidden>Copy approval link</button><p class="fine-print" id="update-expiry"></p></div><progress id="update-progress" hidden></progress><p id="update-bytes" class="fine-print" hidden></p></div><p id="last-update" class="fine-print" hidden></p><div class="update-actions"><button class="button secondary" data-update-action="check">Check for updates</button><button class="button primary" data-update-action="authorize" hidden>Approve in Marketplace</button><button class="button primary" data-update-action="download" hidden>Download verified update</button><button class="button primary" data-update-action="install" hidden>Install update</button></div><p class="fine-print">The Windows installer runs interactively. Saved connections, pairing and job history stay in place. Active laptop jobs must finish first.</p></article></dialog>
-<dialog id="agent-token-dialog" aria-labelledby="agent-token-title"><form class="update-card" id="agent-token-form" method="dialog">
-  <div class="dialog-head"><h2 id="agent-token-title">Sign Claude Code in on your Spark</h2><button class="icon-button" id="close-agent-token" type="button" aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button></div>
-  <p class="card-sub">On this laptop, open a terminal and run <code>claude setup-token</code>. Approve it in your browser, then paste the token it prints.</p>
-  <label>Token<input id="agent-token" type="password" autocomplete="off" spellcheck="false"></label>
-  <p class="fine-print">It is sent to your Spark and stored there for Claude Code agent jobs only. Agents' own build commands can read it, as they could on this laptop.</p>
-  <p id="agent-token-message" class="fine-print" role="status"></p>
-  <div class="dialog-actions"><button class="button primary" id="save-agent-token" type="submit">Sign in</button></div>
-</form></dialog>
 <dialog id="add-device-dialog" class="wizard" aria-labelledby="wizard-title"><article class="wizard-card">
   <div class="dialog-head"><div><span class="eyebrow" id="wizard-step-label">STEP 1 OF 3</span><h2 id="wizard-title">Add a device</h2></div><button class="icon-button" id="close-wizard" type="button" aria-label="Close"><svg class="icon"><use href="#i-close"/></svg></button></div>
   <ol class="wizard-steps" aria-hidden="true"><li data-step="1">Choose</li><li data-step="2">Sign in</li><li data-step="3">Confirm</li></ol>

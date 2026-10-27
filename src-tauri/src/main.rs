@@ -162,10 +162,11 @@ fn desktop_args_allowed(args: &[String], pairing: bool) -> Result<(), String> {
         );
     }
     let allowed = ["setup", "status", "doctor", "devices", "logs", "cancel", "wait", "connect", "disconnect", "discover", "downloads", "node", "agent"];
-    // Claude's token never travels as an argument; it has its own command.
+    // Agents use this laptop's own sign-ins; the app only reads their state
+    // or removes the Spark's copy, and never passes a credential.
     let agent_allowed = operation != Some("agent")
         || matches!(args.get(1..).unwrap_or_default(), [status] if status == "status")
-        || matches!(args.get(1..).unwrap_or_default(), [verb, tool] if (verb == "signout" && (tool == "claude" || tool == "codex")) || (verb == "login" && tool == "codex"));
+        || matches!(args.get(1..).unwrap_or_default(), [verb, tool] if verb == "signout" && (tool == "claude" || tool == "codex"));
     let node_operation = operation == Some("node");
     if args.is_empty()
         || !allowed.contains(&args[0].as_str())
@@ -220,11 +221,11 @@ mod desktop_args_tests {
     }
 
     #[test]
-    fn agent_sign_ins_never_carry_a_token_as_an_argument() {
-        for allowed in [&["agent", "status"][..], &["agent", "login", "codex"], &["agent", "signout", "claude"], &["agent", "signout", "codex"]] {
+    fn agents_never_carry_a_credential_as_an_argument() {
+        for allowed in [&["agent", "status"][..], &["agent", "signout", "claude"], &["agent", "signout", "codex"]] {
             assert_eq!(desktop_args_allowed(&args(allowed), false), Ok(()), "{allowed:?}");
         }
-        for refused in [&["agent", "login", "claude"][..], &["agent", "login", "claude", "sk-ant-x"], &["agent", "run", "."], &["agent"], &["agent", "signout", "bash"]] {
+        for refused in [&["agent", "login", "codex"][..], &["agent", "login", "claude", "sk-ant-x"], &["agent", "run", "."], &["agent"], &["agent", "signout", "bash"]] {
             assert!(desktop_args_allowed(&args(refused), false).is_err(), "{refused:?}");
         }
     }
@@ -253,17 +254,6 @@ mod desktop_args_tests {
         long.push("one-too-many".into());
         assert!(desktop_args_allowed(&long, false).is_err());
     }
-}
-
-/// Claude Code's sign-in token for agent jobs goes to sparkdev on stdin only.
-#[tauri::command]
-async fn agent_sign_in(app: tauri::AppHandle, token: String) -> Result<Value, String> {
-    let token = token.trim().to_string();
-    if token.is_empty() || token.len() > 512 || token.chars().any(char::is_whitespace) {
-        return Err("Paste the token that `claude setup-token` printed.".into());
-    }
-    let args = ["--json", "--client", "human", "agent", "login", "claude"].map(String::from).to_vec();
-    launch(app, "sparkdev", args, Some(serde_json::json!({"token": token})), 60).await
 }
 
 #[tauri::command]
@@ -788,7 +778,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, sign_in, agent_sign_in, connection, resources, update_action])
+        .invoke_handler(tauri::generate_handler![cli, link, preferences, bootstrap, bootstrap_node, sign_in, connection, resources, update_action])
         .run(context)
         .expect("RTXBridge could not start");
 }

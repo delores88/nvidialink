@@ -101,8 +101,7 @@ AGENT_TOKEN = re.compile(r"^[A-Za-z0-9._~+/=-]{20,512}$")
 
 def agent_tool(argv):
     """The tool of a valid agent command line; anything else is refused."""
-    if (isinstance(argv, list) and len(argv) == 4 and argv[:2] == ["python3", AGENT_DRIVER]
-            and argv[2] in ("run", "login") and argv[3] in AGENT_TOOLS and (argv[2] == "run" or argv[3] == "codex")):
+    if isinstance(argv, list) and len(argv) == 4 and argv[:3] == ["python3", AGENT_DRIVER, "run"] and argv[3] in AGENT_TOOLS:
         return argv[3]
     reject("invalid_argv", "An agent job runs only the fixed agent driver for claude or codex")
 DENY_DIRS = {".git", "target", "node_modules", "dist", "build", "__pycache__",
@@ -2457,17 +2456,31 @@ class Controller:
         fields(request, ("v", "op"))
         return {"agents": {tool: {"signed_in": self.agent_signed_in(tool)} for tool in AGENT_TOOLS}}
 
-    def agent_token(self, request):
-        """Save Claude Code's sign-in token. It is never logged, audited or returned."""
-        fields(request, ("v", "op", "tool", "token"))
-        if request["tool"] != "claude":
-            reject("invalid_request", "Only Claude Code signs in with a pasted token; Codex signs in on the device")
-        token = request["token"]
-        if not isinstance(token, str) or not AGENT_TOKEN.match(token.strip()):
-            reject("invalid_token", "That doesn't look like a Claude Code token. Run `claude setup-token` and paste what it prints")
-        atomic_write(self.agent_home("claude") / "claude-oauth-token", token.strip().encode(), 0o600)
-        self.audit("agent_signed_in", tool="claude")
-        return {"agents": {"claude": {"signed_in": True}}}
+    def agent_credentials(self, request):
+        """Refresh a tool's sign-in from the laptop's own, sent with each agent
+        job. The contents are never logged, audited or returned."""
+        fields(request, ("v", "op", "tool"), ("token", "auth_json"))
+        tool = request["tool"]
+        home = self.agent_home(tool)
+        if tool == "claude":
+            token = request.get("token")
+            if "auth_json" in request or not isinstance(token, str) or not AGENT_TOKEN.match(token):
+                reject("invalid_credentials", "This laptop's Claude Code sign-in could not be used")
+            atomic_write(home / "claude-oauth-token", token.encode(), 0o600)
+        else:
+            raw = request.get("auth_json")
+            try:
+                if "token" in request or not isinstance(raw, str) or len(raw) > 65536 or not isinstance(json.loads(raw), dict):
+                    raise ValueError()
+            except ValueError:
+                reject("invalid_credentials", "This laptop's Codex sign-in could not be used")
+            codex = home / ".codex"
+            if codex.is_symlink():
+                reject("unsafe_state", "Agent sign-in folder is a symlink")
+            codex.mkdir(mode=0o700, exist_ok=True)
+            atomic_write(codex / "auth.json", raw.encode(), 0o600)
+        self.audit("agent_sign_in_refreshed", tool=tool)
+        return {"agents": {tool: {"signed_in": True}}}
 
     def agent_signout(self, request):
         fields(request, ("v", "op", "tool"))
@@ -2494,7 +2507,7 @@ class Controller:
             if op in {"outputs", "output_chunk", "output_locate", "outputs_ack"}:
                 return {"ok": True, **getattr(self.outputs_manager, op)(request)}
             if op not in {"put", "put_many", "put_pack", "missing", "sync", "run", "prepare", "logs", "wait", "cancel", "status", "doctor", "claim", "heartbeat", "release", "resources", "lan_routes",
-                          "agent_status", "agent_token", "agent_signout"}:
+                          "agent_status", "agent_credentials", "agent_signout"}:
                 reject("unknown_operation", "Unsupported operation")
             return {"ok": True, **getattr(self, op)(request)}
         except Rejected as error:

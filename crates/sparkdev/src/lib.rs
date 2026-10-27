@@ -338,12 +338,10 @@ enum AgentCommands {
         #[arg(long)]
         detach: bool,
     },
-    /// Sign a tool in on the Spark. Claude Code reads a token from stdin;
-    /// Codex starts its device sign-in as a job whose log shows the code.
-    Login { tool: String },
-    /// Which tools are signed in on the Spark.
+    /// Which tools agents can use: those signed in on this laptop. Each agent
+    /// job carries this laptop's current sign-in; there is no separate one.
     Status,
-    /// Remove a tool's sign-in from the Spark.
+    /// Remove the copy of a tool's sign-in kept on the Spark.
     Signout { tool: String },
 }
 
@@ -366,7 +364,13 @@ fn agent_command(cli: &Cli, command: &AgentCommands, events: &mut dyn FnMut(&Val
     match command {
         AgentCommands::Run { repo, tool, prompt_file, branch, request_id, detach } => {
             let request_id = request_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            // The agent uses this laptop's own sign-in, refreshed on the Spark for every job.
+            let mut sign_in = agents::laptop_sign_in(tool)?;
+            sign_in["v"] = json!(1);
+            sign_in["op"] = json!("agent_credentials");
+            sign_in["tool"] = json!(tool);
             let staged = agents::stage(repo, tool, prompt_file, branch.as_deref(), &request_id)?;
+            transport::Transport::new()?.rpc(sign_in)?;
             let mut value = submit(&staged.dir, staged.argv, &request_id, *detach, events)?;
             let id = agents::agent_id(&request_id);
             value["agent"] = agents::outcome(&request_id).unwrap_or_else(|| {
@@ -374,18 +378,7 @@ fn agent_command(cli: &Cli, command: &AgentCommands, events: &mut dyn FnMut(&Val
             });
             Ok(value)
         }
-        AgentCommands::Login { tool } if tool == "claude" => {
-            let token = agents::read_token()?;
-            transport::Transport::new()?.rpc(json!({"v":1,"op":"agent_token","tool":"claude","token":token}))
-        }
-        AgentCommands::Login { tool } if tool == "codex" => {
-            let request_id = format!("codex-login-{}", uuid::Uuid::new_v4().simple());
-            let mut value = submit(&agents::login_dir()?, agents::argv("login", "codex"), &request_id, true, events)?;
-            value["message"] = json!("Codex's sign-in link and code appear in this job's log; approve them in a browser");
-            Ok(value)
-        }
-        AgentCommands::Login { .. } => Err(AppError::new(2, "Choose the agent tool: claude or codex")),
-        AgentCommands::Status => transport::Transport::new()?.rpc(json!({"v":1,"op":"agent_status"})),
+        AgentCommands::Status => Ok(agents::status()),
         AgentCommands::Signout { tool } => {
             if !agents::TOOLS.contains(&tool.as_str()) {
                 return Err(AppError::new(2, "Choose the agent tool: claude or codex"));

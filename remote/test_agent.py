@@ -66,7 +66,7 @@ class AgentDriver(unittest.TestCase):
         self.assertEqual(log[:3], [f"Changes left by the claude agent (job {JOB})", "first agent change", "base"])
 
     def test_codex_reads_its_own_home_and_needs_a_sign_in(self):
-        with self.assertRaisesRegex(PermissionError, "Codex is not signed in"):
+        with self.assertRaisesRegex(PermissionError, "Codex's sign-in did not arrive"):
             agent.run("codex", self.work, self.output, self.home)
         (self.home / ".codex").mkdir()
         (self.home / ".codex" / "auth.json").write_text("{}")
@@ -77,7 +77,7 @@ class AgentDriver(unittest.TestCase):
         self.assertIn("--dangerously-bypass-approvals-and-sandbox", transcript)
 
     def test_claude_without_a_token_is_refused_before_it_starts(self):
-        with self.assertRaisesRegex(PermissionError, "Claude Code is not signed in"):
+        with self.assertRaisesRegex(PermissionError, "Claude Code's sign-in did not arrive"):
             agent.run("claude", self.work, self.output, self.home)
         self.assertFalse((self.output / "result.json").exists())
 
@@ -93,7 +93,7 @@ class AgentDriver(unittest.TestCase):
             agent.request(self.work)
 
     def test_the_command_line_takes_only_known_modes_and_tools(self):
-        for argv in (["agent.py"], ["agent.py", "run", "bash"], ["agent.py", "exec", "claude"], ["agent.py", "run", "claude", "x"]):
+        for argv in (["agent.py"], ["agent.py", "run", "bash"], ["agent.py", "login", "codex"], ["agent.py", "run", "claude", "x"]):
             self.assertEqual(agent.main(argv), 2, argv)
 
 

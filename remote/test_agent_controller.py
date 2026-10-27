@@ -61,7 +61,7 @@ class AgentControllerTests(unittest.TestCase):
     def test_agent_jobs_run_only_the_fixed_driver(self):
         manifest = self.snapshot()
         for index, argv in enumerate((["bash", "-c", "cat /sparkdev-agent-home/claude-oauth-token"], ["python3", "/sparkdev-agent.py", "run", "bash"],
-                     ["python3", "/sparkdev-agent.py", "login", "claude"], ["python3", "/sparkdev-agent.py", "run"])):
+                     ["python3", "/sparkdev-agent.py", "login", "codex"], ["python3", "/sparkdev-agent.py", "run"])):
             result = self.c.rpc({"v": 1, "op": "run", "project": fixtures.PROJECT, "manifest_id": manifest, "argv": argv,
                                  "runtime": "agent", "client": "claude", "request_id": f"bad-{index}"})
             self.assertEqual(result["error"]["code"], "invalid_argv", argv)
@@ -78,13 +78,19 @@ class AgentControllerTests(unittest.TestCase):
         again, _ = self.agent(tool="codex", request_id="again")
         self.assertFalse(again["cache_hit"])
 
-    def test_claude_token_is_saved_privately_and_never_echoed_or_audited(self):
+    def test_laptop_sign_ins_are_saved_privately_and_never_echoed_or_audited(self):
         self.assertEqual(self.rpc("agent_status")["agents"], {"claude": {"signed_in": False}, "codex": {"signed_in": False}})
         for bad in ("short", "has space " + "x" * 30, "x" * 600, 42):
-            response = self.c.rpc({"v": 1, "op": "agent_token", "tool": "claude", "token": bad})
-            self.assertEqual(response["error"]["code"], "invalid_token" if isinstance(bad, str) else "invalid_token")
-        self.assertEqual(self.c.rpc({"v": 1, "op": "agent_token", "tool": "codex", "token": TOKEN})["error"]["code"], "invalid_request")
-        saved = self.rpc("agent_token", tool="claude", token=TOKEN + "\n")
+            response = self.c.rpc({"v": 1, "op": "agent_credentials", "tool": "claude", "token": bad})
+            self.assertEqual(response["error"]["code"], "invalid_credentials")
+        for bad in ("not json", "[1]", "x" * 70000, None):
+            response = self.c.rpc({"v": 1, "op": "agent_credentials", "tool": "codex", **({} if bad is None else {"auth_json": bad})})
+            self.assertEqual(response["error"]["code"], "invalid_credentials", bad)
+        auth = json.dumps({"tokens": {"access_token": TOKEN}})
+        codex = self.rpc("agent_credentials", tool="codex", auth_json=auth)
+        self.assertNotIn(TOKEN, json.dumps(codex))
+        self.assertEqual((self.root / "agents" / "codex" / ".codex" / "auth.json").read_text(), auth)
+        saved = self.rpc("agent_credentials", tool="claude", token=TOKEN)
         self.assertNotIn(TOKEN, json.dumps(saved))
         path = self.root / "agents" / "claude" / "claude-oauth-token"
         self.assertEqual(path.read_text(), TOKEN)
@@ -96,9 +102,11 @@ class AgentControllerTests(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertFalse(self.rpc("agent_status")["agents"]["claude"]["signed_in"])
 
-    def test_codex_signs_in_with_a_login_job(self):
-        job, _ = self.agent(tool="codex", mode="login", request_id="codex-login")
-        self.assertEqual(job["state"], "queued")
+    def test_there_is_no_sign_in_job(self):
+        manifest = self.snapshot()
+        result = self.c.rpc({"v": 1, "op": "run", "project": fixtures.PROJECT, "manifest_id": manifest,
+                             "argv": ["python3", controller.AGENT_DRIVER, "login", "codex"], "runtime": "agent", "client": "codex", "request_id": "codex-login"})
+        self.assertEqual(result["error"]["code"], "invalid_argv")
 
 
 if __name__ == "__main__":

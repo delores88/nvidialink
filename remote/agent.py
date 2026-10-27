@@ -5,12 +5,9 @@
 branch agent/<job> with the prompt in /work/prompt.md, commit what it left, and
 write only the new commits to /sparkdev-output/result.bundle with result.json.
 
-`login codex`: start Codex's device sign-in, which prints its own link and code
-to the job log; the sign-in is saved in the tool's home for later jobs.
-
 The tool's sign-in lives in HOME (/sparkdev-agent-home), mounted only into that
-tool's jobs. Claude's token is read from there and given to the claude process
-alone, never to argv or the log.
+tool's jobs. The laptop refreshes it from its own sign-in with every agent job.
+Claude's token is given to the claude process alone, never to argv or the log.
 """
 import json
 import os
@@ -54,14 +51,14 @@ def tool_command(tool, prompt, home):
     if tool == "claude":
         token_path = home / TOKEN_FILE
         if not token_path.is_file():
-            raise PermissionError("Claude Code is not signed in on this device")
+            raise PermissionError("Claude Code's sign-in did not arrive from the laptop")
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token_path.read_text().strip()
         # The container is the sandbox, so the tool's own permission prompts are off.
         return ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"], env
     if tool == "codex":
         env["CODEX_HOME"] = str(home / ".codex")
         if not (home / ".codex" / "auth.json").is_file():
-            raise PermissionError("Codex is not signed in on this device")
+            raise PermissionError("Codex's sign-in did not arrive from the laptop")
         return ["codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox", prompt], env
     raise ValueError("unknown tool")
 
@@ -102,20 +99,12 @@ def run(tool, work=WORK, output=OUTPUT, home=HOME):
     return code
 
 
-def login(tool, home=HOME):
-    if tool != "codex":
-        raise ValueError("only Codex signs in on the device; Claude Code uses a pasted token")
-    env = dict(os.environ, CODEX_HOME=str(home / ".codex"))
-    (home / ".codex").mkdir(mode=0o700, parents=True, exist_ok=True)
-    return subprocess.run(["codex", "login", "--device-auth"], env=env).returncode
-
-
 def main(argv):
-    if len(argv) != 3 or argv[1] not in ("run", "login") or argv[2] not in TOOLS:
-        print("usage: agent.py run|login claude|codex", file=sys.stderr)
+    if len(argv) != 3 or argv[1] != "run" or argv[2] not in TOOLS:
+        print("usage: agent.py run claude|codex", file=sys.stderr)
         return 2
     try:
-        return run(argv[2]) if argv[1] == "run" else login(argv[2])
+        return run(argv[2])
     except (ValueError, PermissionError, subprocess.CalledProcessError, OSError) as error:
         print(f"sparkdev agent: {error}", file=sys.stderr)
         return 3

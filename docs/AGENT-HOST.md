@@ -6,10 +6,8 @@ Coding agents (Claude Code and Codex) do their tool work on the laptop: git, car
 
 ## What the owner sees
 
-- Each device that can host agents shows **Agents** with one row per tool: *Signed in*, or a **Sign in** button.
-- Sign-in happens once per tool, per device:
-  - **Claude Code:** the owner runs `claude setup-token` on the laptop and pastes the token into RTXBridge.
-  - **Codex:** RTXBridge starts Codex's device sign-in on the Spark and shows the code and link; the owner approves it in the browser.
+- There is nothing to set up. Agents on the Spark use the Claude Code and Codex sign-ins already on the laptop.
+- The Spark panel's **Agents** card shows each tool as *Ready*, or as *Not signed in here*, which means the tool is not signed in on this laptop.
 - Agent jobs appear on the job board and the map like any other job, as their own kind.
 - When one finishes, its commits are already in the laptop repo as `rtx/agent/<job>`. There is no fetch step.
 
@@ -17,9 +15,8 @@ Coding agents (Claude Code and Codex) do their tool work on the laptop: git, car
 
 ```text
 sparkdev agent run REPO --tool claude|codex --prompt-file FILE [--branch B] [--device spark|ID] --detach --request-id R
-sparkdev agent login claude --token-stdin        # owner only; token on stdin
-sparkdev agent login codex                       # owner only; prints the device code
-sparkdev agent status                            # sign-in state per tool and device
+sparkdev agent status                            # which tools are signed in on this laptop
+sparkdev agent signout claude|codex              # owner only; removes the Spark's copy
 ```
 
 `wait`, `logs`, `cancel` and `status` are the existing job verbs. MCP gets `agent_run` with the same fields.
@@ -42,10 +39,13 @@ sparkdev agent status                            # sign-in state per tool and de
 
 ## Sign-ins and their exposure
 
-- Each tool's sign-in lives on the device under `~/sparkdev/agents/<tool>/` (mode 0700). It is mounted read-write only into that tool's agent jobs; Codex refreshes its own token.
+- Every `agent run` first sends this laptop's current sign-in for that tool to the Spark, over the bridge's pinned connection.
+  - **Claude Code:** only the current access token from the tool's own sign-in file. The refresh token stays on the laptop, so the Spark can never rotate it and sign the laptop out. A token about to expire is not sent; using Claude Code once on the laptop renews it.
+  - **Codex:** its `auth.json`. OpenAI documents copying this file as the way to use Codex on a headless machine.
+- On the Spark, the sign-in lives under `~/sparkdev/agents/<tool>/` (mode 0700), mounted only into that tool's agent jobs.
 - Claude's token reaches the job as an environment variable. It is never written to argv or to logs, and transcripts are filtered for it.
 - **Exposure, stated plainly:** the agent's own build commands run in the same container as its sign-in. A malicious dependency could read it. That matches what a local agent run on the laptop exposes today. This design accepts that for v1, as recommended to the owner on 2026-10-27, rather than splitting the tool runner from the build sandbox. The owner can still say no.
-- Signing out deletes the folder.
+- `agent signout` deletes the Spark's copy; the next agent job sends it again.
 
 ## Network
 
@@ -58,7 +58,7 @@ An agent job reserves 4 CPUs and 8 GB by default, within the owner's budgets and
 ## Phases
 
 - **P1 (0.7.0):**
-  - Spark side: the image, the `agent` runtime, the driver, the sign-in store, and `agent login` and `agent status`.
+  - Spark side: the image, the `agent` runtime, the driver and the sign-in store.
   - Laptop side: `agent run` with bundle in and out, automatic ref import, MCP `agent_run`, and the Agents rows on the device panel.
   - Tests: unit tests with stand-in tool binaries, and an end-to-end check with stand-in tools on the Spark.
 - **P2:** the agent-only allowlist network; continuing a session with a follow-up prompt; live transcript in the job view.
@@ -66,6 +66,5 @@ An agent job reserves 4 CPUs and 8 GB by default, within the owner's budgets and
 ## To verify against the pinned CLI versions
 
 - The headless flags and the permission modes inside a container. The container is the sandbox, so the tools' own sandboxes are bypassed there.
-- The environment variable and folder each tool reads its sign-in from.
-- Codex device sign-in on a machine without a browser.
-- Owner acceptance needs the two real sign-ins, done by the owner.
+- The environment variable and folder each tool reads its sign-in from, including Claude Code accepting the laptop's access token as `CLAUDE_CODE_OAUTH_TOKEN`.
+- Acceptance: run one agent job per tool from the owner's signed-in laptop.

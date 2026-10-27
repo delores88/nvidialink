@@ -5,13 +5,16 @@
 //! automatic result return are the same as for any job. When that job's results
 //! are delivered, the agent's commits are imported into the same repository as
 //! `refs/remotes/rtx/agent/<id>`. Nothing else in the repository is touched.
+//!
+//! There is no separate sign-in. Each agent job carries this laptop's current
+//! Claude Code or Codex sign-in to the Spark, so the agent uses the same account.
 use crate::{AppError, Result, inventory, state, transport};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::Read,
     path::{Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub const TOOLS: [&str; 2] = ["claude", "codex"];
@@ -94,42 +97,67 @@ pub fn stage(repo: &Path, tool_name: &str, prompt_file: &Path, branch: Option<&s
         &folder("requests")?.join(format!("{request_id}.json")),
         &json!({"v":1,"repo":repo,"branch":branch,"tool":tool,"id":id}),
     )?;
-    Ok(Staged { dir, argv: argv("run", tool) })
+    Ok(Staged { dir, argv: argv(tool) })
 }
 
-pub fn argv(mode: &str, tool: &str) -> Vec<String> {
-    vec!["python3".into(), DRIVER.into(), mode.into(), tool.into()]
+pub fn argv(tool: &str) -> Vec<String> {
+    vec!["python3".into(), DRIVER.into(), "run".into(), tool.into()]
 }
 
-/// An empty project for Codex's sign-in job, which needs no files.
-pub fn login_dir() -> Result<PathBuf> {
-    let dir = folder("login")?;
-    state::atomic_bytes(&dir.join("README.txt"), b"Codex device sign-in for RTXBridge agents.\n")?;
-    Ok(dir)
+fn display(tool: &str) -> &'static str {
+    if tool == "claude" { "Claude Code" } else { "Codex" }
 }
 
-/// Claude Code's token from stdin: one line, or the desktop app's {"token": ...}.
-pub fn read_token() -> Result<String> {
-    let mut raw = Vec::new();
-    std::io::stdin().take(4097).read_to_end(&mut raw)?;
-    token_from(&String::from_utf8(raw).map_err(|_| invalid("The token must be text"))?)
+/// Where the tool itself keeps this laptop's sign-in.
+fn sign_in_dir(tool: &str) -> Option<PathBuf> {
+    let (variable, default) = if tool == "claude" { ("CLAUDE_CONFIG_DIR", ".claude") } else { ("CODEX_HOME", ".codex") };
+    std::env::var_os(variable).map(PathBuf::from).or_else(|| {
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|home| PathBuf::from(home).join(default))
+    })
 }
 
-fn token_from(text: &str) -> Result<String> {
-    // PowerShell can put a byte-order mark in front of what it pipes.
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let token = if text.trim_start().starts_with('{') {
-        serde_json::from_str::<Value>(text)
-            .ok()
-            .and_then(|value| value["token"].as_str().map(str::to_string))
-            .ok_or_else(|| invalid("Send the token as JSON with a token field"))?
-    } else {
-        text.trim().to_string()
+/// This laptop's current sign-in for a tool, in the form the Spark keeps it.
+pub fn laptop_sign_in(tool_name: &str) -> Result<Value> {
+    let tool = tool(tool_name)?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    sign_in_from(tool, sign_in_dir(tool).as_deref(), now)
+}
+
+fn sign_in_from(tool: &str, dir: Option<&Path>, now_ms: u64) -> Result<Value> {
+    let missing = || {
+        AppError::new(3, format!("{0} isn't signed in on this laptop. Open {0} here and sign in, then try again.", display(tool)))
     };
-    if token.is_empty() || token.len() > 512 || token.chars().any(char::is_whitespace) {
-        return Err(invalid("Paste the token that `claude setup-token` printed"));
+    let file = dir.ok_or_else(missing)?.join(if tool == "claude" { ".credentials.json" } else { "auth.json" });
+    if fs::metadata(&file).map_or(true, |meta| !meta.is_file() || meta.len() > 64 * 1024) {
+        return Err(missing());
     }
-    Ok(token)
+    let raw = fs::read_to_string(&file).map_err(|_| missing())?;
+    let value: Value = serde_json::from_str(&raw).map_err(|_| missing())?;
+    if tool == "codex" {
+        return if value.is_object() { Ok(json!({"auth_json": raw})) } else { Err(missing()) };
+    }
+    let oauth = &value["claudeAiOauth"];
+    let token = oauth["accessToken"]
+        .as_str()
+        .filter(|token| (20..=512).contains(&token.len()) && token.bytes().all(|c| c.is_ascii_alphanumeric() || b"._~+/=-".contains(&c)))
+        .ok_or_else(missing)?;
+    if oauth["expiresAt"].as_u64().is_some_and(|expires| expires < now_ms + 15 * 60 * 1000) {
+        return Err(AppError::new(
+            3,
+            "Claude Code's sign-in on this laptop is about to renew. Use Claude Code here once, then try again.",
+        ));
+    }
+    Ok(json!({"token": token}))
+}
+
+/// Which tools agents can use: those signed in on this laptop. Nothing secret.
+pub fn status() -> Value {
+    let mut agents = serde_json::Map::new();
+    for tool in TOOLS {
+        let ready = laptop_sign_in(tool);
+        agents.insert(tool.into(), json!({"signed_in": ready.is_ok(), "message": ready.err().map(|error| error.message)}));
+    }
+    json!({"ok":true,"agents":agents})
 }
 
 /// Bring a delivered agent result into its repository. Called once its job's
@@ -181,18 +209,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tokens_arrive_as_one_line_or_the_apps_json() {
-        assert_eq!(token_from("sk-ant-oat01-abc\r\n").unwrap(), "sk-ant-oat01-abc");
-        assert_eq!(token_from("{\"token\":\"sk-ant-oat01-abc\"}").unwrap(), "sk-ant-oat01-abc");
-        assert_eq!(token_from("\u{feff}sk-ant-oat01-abc\r\n").unwrap(), "sk-ant-oat01-abc");
-        for bad in ["", "two words", "{\"tok\":\"x\"}", &"x".repeat(513)] {
-            assert!(token_from(bad).is_err(), "{bad:?}");
-        }
+    fn agents_use_this_laptops_own_sign_ins() {
+        let dir = std::env::temp_dir().join(format!("rtx-sign-ins-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // Not signed in: a plain message naming the tool, nothing about files.
+        let missing = sign_in_from("claude", Some(&dir), 0).unwrap_err().message;
+        assert!(missing.starts_with("Claude Code isn't signed in on this laptop"), "{missing}");
+        assert!(sign_in_from("codex", None, 0).unwrap_err().message.starts_with("Codex isn't signed in"));
+        let token = "fixture-access-token-0123456789";
+        fs::write(dir.join(".credentials.json"), format!("{{\"claudeAiOauth\":{{\"accessToken\":\"{token}\",\"refreshToken\":\"r\",\"expiresAt\":5000000}}}}")).unwrap();
+        // Only the current access token travels; the refresh token stays here.
+        assert_eq!(sign_in_from("claude", Some(&dir), 1_000_000).unwrap(), json!({"token": token}));
+        assert!(sign_in_from("claude", Some(&dir), 4_500_000).unwrap_err().message.contains("about to renew"));
+        fs::write(dir.join("auth.json"), "{\"tokens\":{}}").unwrap();
+        assert_eq!(sign_in_from("codex", Some(&dir), 0).unwrap(), json!({"auth_json": "{\"tokens\":{}}"}));
+        fs::write(dir.join("auth.json"), "[1]").unwrap();
+        assert!(sign_in_from("codex", Some(&dir), 0).is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn agent_jobs_run_only_the_fixed_driver() {
-        assert_eq!(argv("run", "claude"), ["python3", "/sparkdev-agent.py", "run", "claude"]);
+        assert_eq!(argv("claude"), ["python3", "/sparkdev-agent.py", "run", "claude"]);
         assert!(tool("bash").is_err());
         assert_eq!(agent_id("req-1"), agent_id("req-1"));
         assert_ne!(agent_id("req-1"), agent_id("req-2"));
