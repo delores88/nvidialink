@@ -5,6 +5,7 @@ mod updates;
 mod update_verify;
 mod update_helper;
 mod setup_bundle;
+mod pairing_errors;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
@@ -412,7 +413,7 @@ async fn pair_session(
                 .lock()
                 .map_err(|_| "Pairing identity unavailable")? = None;
         } else if event["ok"] == false {
-            return Err("Pairing was not approved or the link connection ended. Create a new code to try again.".into());
+            return Err(pairing_errors::message(&event).into());
         }
         *state.last.lock().map_err(|_| "Pairing state unavailable")? = event;
     }

@@ -437,6 +437,7 @@ async fn pair_connection(st: Arc<State>, conn: iroh::endpoint::Connection) -> Re
             st.ep.set_alpns(vec![wire::RPC.to_vec()]);
             anyhow::bail!("pairing already in progress");
         }
+        audit(&st, "pair_request_verified", Some(&conn.remote_id().to_string()))?;
         let id = PairingId::from_bytes(spark_link_proto::random_bytes());
         let n_s = Nonce16::from_bytes(spark_link_proto::random_bytes());
         let code = sas_words(
@@ -460,6 +461,11 @@ async fn pair_connection(st: Arc<State>, conn: iroh::endpoint::Connection) -> Re
     let listener = match TcpListener::bind(SocketAddr::new(st.lan, wire::LAN_PORT)).await {
         Ok(l) => l,
         Err(e) => {
+            let _ = audit(&st, if e.kind() == std::io::ErrorKind::AddrInUse {
+                "approval_page_port_in_use"
+            } else {
+                "approval_page_unavailable"
+            }, Some(&conn.remote_id().to_string()));
             *st.ticket.lock().unwrap() = None;
             st.ep.set_alpns(vec![wire::RPC.to_vec()]);
             return Err(e.into());
@@ -503,13 +509,18 @@ async fn pair_connection(st: Arc<State>, conn: iroh::endpoint::Connection) -> Re
         wire::PAIR_LIMIT,
     )
     .await?;
-    let approved = tokio::select! {
-        result=tokio::time::timeout(Duration::from_secs(expires.saturating_sub(spark_link_proto::now_unix())),decision)=>result.is_ok_and(|r|r==Ok(true)),
-        _=conn.closed()=>false,
+    let outcome = tokio::select! {
+        result=tokio::time::timeout(Duration::from_secs(expires.saturating_sub(spark_link_proto::now_unix())),decision)=>match result {
+            Ok(Ok(true)) => "approved",
+            Ok(Ok(false)) => "pairing_denied",
+            Ok(Err(_)) if spark_link_proto::now_unix() < expires => "pairing_cancelled",
+            _ => "pairing_expired",
+        },
+        _=conn.closed()=>"pairing_connection_ended",
     };
     let answer = {
         let mut current = st.ticket.lock().unwrap();
-        let result = if approved {
+        let result = if outcome == "approved" {
             let t = current.as_ref().context("pairing ended")?;
             anyhow::ensure!(
                 t.id == ticket_id && t.expires > spark_link_proto::now_unix(),
@@ -535,7 +546,7 @@ async fn pair_connection(st: Arc<State>, conn: iroh::endpoint::Connection) -> Re
         } else {
             let _ = audit(
                 &st,
-                "pairing_denied_or_expired",
+                outcome,
                 Some(&conn.remote_id().to_string()),
             );
             PairMessage::Reject
@@ -840,18 +851,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approved_pairing_binds_both_identities_and_persists_allowlist() {
+    async fn approved_pairing_keeps_two_device_identities_with_the_same_friendly_name() {
         // Synthetic device and node identities only; never approves an installed user's ticket.
         let dir = tempfile::tempdir().unwrap();
         storage::private_dir(dir.path()).unwrap();
         let node = wire::endpoint(
-            iroh::SecretKey::from_bytes(&spark_link_proto::random_bytes()),
-            &Relay::Disabled,
-            false,
-        )
-        .await
-        .unwrap();
-        let client = wire::endpoint(
             iroh::SecretKey::from_bytes(&spark_link_proto::random_bytes()),
             &Relay::Disabled,
             false,
@@ -868,69 +872,81 @@ mod tests {
             slots: Arc::new(Semaphore::new(2)),
             audit_lock: Mutex::new(()),
         });
-        let ticket = mint(
-            &state,
-            json!({"device_id":client.id().to_string(),"device_name":"fixture"}),
-        )
-        .unwrap();
-        let server = state.clone();
-        let task = tokio::spawn(async move {
-            let incoming = server.ep.accept().await.unwrap();
-            handle(server, incoming).await
-        });
-        let conn = client.connect(state.ep.addr(), wire::PAIR).await.unwrap();
-        let (tr, exporter) = wire::transcript(
-            &conn,
-            state.ep.id(),
-            client.id(),
-            ticket.ticket_id,
-            ticket.expires_at,
-        )
-        .unwrap();
-        let keys = wire::keys(&ticket);
-        let (mut send, mut recv) = conn.open_bi().await.unwrap();
-        write_frame(
-            &mut send,
-            &PairMessage::Request {
-                ticket_id: ticket.ticket_id,
-                mac: keys.request_mac(&tr),
-            },
-            wire::PAIR_LIMIT,
-        )
-        .await
-        .unwrap();
-        let Some(PairMessage::Pending {
-            pairing_id, n_s, ..
-        }) = read_frame(&mut recv, wire::PAIR_LIMIT).await.unwrap()
-        else {
-            panic!("missing pending result");
-        };
-        let code = sas_words(
-            &wire::proto_id(state.ep.id()),
-            &wire::proto_id(client.id()),
-            &ticket.ticket_id,
-            &exporter,
-            &n_s,
-        )
-        .verification_code()
-        .unwrap();
-        decision(&state,pairing_id,&json!({"token":approve_token(&ticket.secret,&ticket.ticket_id).to_b64(),"choice":"approve","verification_code":code})).unwrap();
-        let Some(PairMessage::Accept { body_json, mac2 }) =
-            read_frame(&mut recv, wire::PAIR_LIMIT).await.unwrap()
-        else {
-            panic!("missing acceptance");
-        };
-        assert!(keys.verify_accept_mac(&tr, &body_json, &mac2));
-        let body: Accepted = serde_json::from_str(&body_json).unwrap();
-        assert_eq!(body.device_id, client.id().to_string());
-        assert_eq!(body.peer.node_id, state.ep.id().to_string());
-        let devices: BTreeSet<String> = storage::read(dir.path(), "devices.json").unwrap();
-        assert_eq!(devices.len(), 1);
-        assert!(devices.contains(&body.device_id));
-        assert!(state.ticket.lock().unwrap().is_none());
-        send.finish().unwrap();
-        let _ = task.await.unwrap();
-        client.close().await;
+        let mut approved = BTreeSet::new();
+        for _ in 0..2 {
+            let client = wire::endpoint(
+                iroh::SecretKey::from_bytes(&spark_link_proto::random_bytes()),
+                &Relay::Disabled,
+                false,
+            ).await.unwrap();
+            let before = spark_link_proto::now_unix();
+            let ticket = mint(
+                &state,
+                json!({"device_id":client.id().to_string(),"device_name":"Windows laptop"}),
+            )
+            .unwrap();
+            assert_eq!(ticket.device_name, "Windows laptop");
+            assert!(ticket.expires_at >= before + 300 && ticket.expires_at <= spark_link_proto::now_unix() + 300);
+            let server = state.clone();
+            let task = tokio::spawn(async move {
+                let incoming = server.ep.accept().await.unwrap();
+                handle(server, incoming).await
+            });
+            let conn = client.connect(state.ep.addr(), wire::PAIR).await.unwrap();
+            let (tr, exporter) = wire::transcript(
+                &conn,
+                state.ep.id(),
+                client.id(),
+                ticket.ticket_id,
+                ticket.expires_at,
+            )
+            .unwrap();
+            let keys = wire::keys(&ticket);
+            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            write_frame(
+                &mut send,
+                &PairMessage::Request {
+                    ticket_id: ticket.ticket_id,
+                    mac: keys.request_mac(&tr),
+                },
+                wire::PAIR_LIMIT,
+            )
+            .await
+            .unwrap();
+            let Some(PairMessage::Pending {
+                pairing_id, n_s, ..
+            }) = read_frame(&mut recv, wire::PAIR_LIMIT).await.unwrap()
+            else {
+                panic!("missing pending result");
+            };
+            let code = sas_words(
+                &wire::proto_id(state.ep.id()),
+                &wire::proto_id(client.id()),
+                &ticket.ticket_id,
+                &exporter,
+                &n_s,
+            )
+            .verification_code()
+            .unwrap();
+            decision(&state,pairing_id,&json!({"token":approve_token(&ticket.secret,&ticket.ticket_id).to_b64(),"choice":"approve","verification_code":code})).unwrap();
+            let Some(PairMessage::Accept { body_json, mac2 }) =
+                read_frame(&mut recv, wire::PAIR_LIMIT).await.unwrap()
+            else {
+                panic!("missing acceptance");
+            };
+            assert!(keys.verify_accept_mac(&tr, &body_json, &mac2));
+            let body: Accepted = serde_json::from_str(&body_json).unwrap();
+            assert_eq!(body.device_id, client.id().to_string());
+            assert_eq!(body.peer.node_id, state.ep.id().to_string());
+            assert!(approved.insert(body.device_id));
+            let devices: BTreeSet<String> = storage::read(dir.path(), "devices.json").unwrap();
+            assert_eq!(devices, approved);
+            assert!(state.ticket.lock().unwrap().is_none());
+            send.finish().unwrap();
+            let _ = task.await.unwrap();
+            client.close().await;
+        }
+        assert_eq!(approved.len(), 2);
         state.ep.close().await;
     }
 }

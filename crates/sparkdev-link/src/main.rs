@@ -1,5 +1,7 @@
 mod client;
 mod daemon;
+mod firewall;
+mod pairing_diagnostics;
 mod storage;
 mod wire;
 
@@ -28,6 +30,10 @@ pub fn output(value: Value) -> Result<()> {
 async fn main() {
     let result = run().await;
     if let Err(e) = result {
+        if let Some(error) = pairing_diagnostics::error_json(&e) {
+            let _ = output(json!({"ok":false,"error":error}));
+            std::process::exit(70);
+        }
         // The error chain contains only fixed diagnostics; never request/ticket/key bytes.
         let code = if e.downcast_ref::<storage::LinkBusy>().is_some() {
             "link_busy"

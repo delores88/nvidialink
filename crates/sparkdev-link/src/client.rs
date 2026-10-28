@@ -1,5 +1,6 @@
 use crate::{
-    output, storage,
+    firewall, output, storage,
+    pairing_diagnostics::{self, Failure, Kind},
     wire::{self, Accepted, PairMessage, Peer, Ticket},
 };
 use anyhow::{Context, Result};
@@ -96,46 +97,71 @@ mod poll_tests {
     }
 }
 
+fn validate_ticket_time(expires_at: u64, now: u64) -> Result<()> {
+    if expires_at <= now {
+        return Err(Failure::new(Kind::TicketExpired).into());
+    }
+    // The SSH issuer still expires the ticket after 300 seconds. A small clock
+    // offset must not reject its fresh ticket before any link traffic is sent.
+    // This changes only the client's future-timestamp sanity check.
+    if expires_at > now.saturating_add(305) {
+        return Err(Failure::new(Kind::TicketClockMismatch).into());
+    }
+    Ok(())
+}
+
+fn before_approval_failure(expires_at: u64, now: u64, failure: impl Into<Failure>) -> Failure {
+    if expires_at <= now {Failure::new(Kind::TicketExpired)} else {failure.into()}
+}
+
 pub async fn pair(input: Value) -> Result<()> {
     let ticket: Ticket = serde_json::from_value(
         input
             .get("ticket")
-            .context("missing SSH-issued ticket")?
+            .ok_or_else(|| Failure::new(Kind::TicketInvalid))?
             .clone(),
     )
-    .context("invalid SSH-issued ticket")?;
+    .map_err(|_| Failure::new(Kind::TicketInvalid))?;
     let now = spark_link_proto::now_unix();
-    anyhow::ensure!(
-        ticket.expires_at > now && ticket.expires_at <= now + 300,
-        "pairing ticket expired or invalid"
-    );
-    anyhow::ensure!(
-        spark_link_proto::owner_link::is_lan_page_addr(&ticket.lan_ip),
-        "approval page is not on a private LAN"
-    );
+    validate_ticket_time(ticket.expires_at, now)?;
+    if !spark_link_proto::owner_link::is_lan_page_addr(&ticket.lan_ip) {
+        return Err(Failure::new(Kind::TicketInvalid).into());
+    }
     let dir = storage::client_dir()?;
     let _lease = storage::endpoint_lease(&dir).await?;
     let key = storage::identity(&dir)?;
-    anyhow::ensure!(
-        key.public().to_string() == ticket.device_id,
-        "ticket belongs to another device"
-    );
-    let endpoint = wire::endpoint(key, &ticket.peer.relay, false).await?;
-    let conn = tokio::time::timeout(
+    if key.public().to_string() != ticket.device_id {
+        return Err(Failure::new(Kind::VerificationFailed).into());
+    }
+    let endpoint = wire::endpoint(key, &ticket.peer.relay, false).await
+        .map_err(|_| Failure::new(Kind::EndpointUnavailable))?;
+    let address = ticket.peer.addr().map_err(|_| Failure::new(Kind::TicketInvalid))?;
+    let connected = tokio::time::timeout(
         Duration::from_secs(15),
-        endpoint.connect(ticket.peer.addr()?, wire::PAIR),
+        endpoint.connect(address, wire::PAIR),
     )
-    .await
-    .context("pairing connection timed out")??;
+    .await;
+    let now=spark_link_proto::now_unix();
+    if ticket.expires_at <= now {
+        return Err(before_approval_failure(ticket.expires_at,now,Kind::ConnectionUnavailable).into());
+    }
+    let conn = match connected {
+        Ok(Ok(conn)) => conn,
+        _ => {
+            let observation=firewall::observe(ticket.lan_ip).await;
+            return Err(before_approval_failure(ticket.expires_at,spark_link_proto::now_unix(),Failure::network(observation)).into());
+        }
+    };
     let (transcript, exporter) = wire::transcript(
         &conn,
         conn.remote_id(),
         endpoint.id(),
         ticket.ticket_id,
         ticket.expires_at,
-    )?;
+    ).map_err(|_| Failure::new(Kind::VerificationFailed))?;
     let keys = wire::keys(&ticket);
-    let (mut send, mut recv) = conn.open_bi().await?;
+    let (mut send, mut recv) = conn.open_bi().await
+        .map_err(|_| before_approval_failure(ticket.expires_at,spark_link_proto::now_unix(),Kind::ResponseMissing))?;
     write_frame(
         &mut send,
         &PairMessage::Request {
@@ -144,21 +170,25 @@ pub async fn pair(input: Value) -> Result<()> {
         },
         wire::PAIR_LIMIT,
     )
-    .await?;
+    .await.map_err(|_| before_approval_failure(ticket.expires_at,spark_link_proto::now_unix(),Kind::ResponseMissing))?;
     let msg = tokio::time::timeout(
         Duration::from_secs(15),
         read_frame::<_, PairMessage>(&mut recv, wire::PAIR_LIMIT),
     )
-    .await??;
+    .await;
+    let msg = match msg {
+        Ok(Ok(value)) => value,
+        _ => return Err(before_approval_failure(ticket.expires_at,spark_link_proto::now_unix(),Kind::ResponseMissing).into()),
+    };
     let Some(PairMessage::Pending {
         pairing_id,
         n_s,
         expires_at,
     }) = msg
     else {
-        anyhow::bail!("pairing rejected");
+        return Err(before_approval_failure(ticket.expires_at,spark_link_proto::now_unix(),Kind::RequestRejected).into());
     };
-    anyhow::ensure!(expires_at == ticket.expires_at, "pairing expiry mismatch");
+    if expires_at != ticket.expires_at { return Err(Failure::new(Kind::VerificationFailed).into()); }
     let sas = sas_words(
         &wire::proto_id(conn.remote_id()),
         &wire::proto_id(endpoint.id()),
@@ -181,30 +211,69 @@ pub async fn pair(input: Value) -> Result<()> {
     output(
         json!({"ok":true,"state":"pending","qr_url":url,"qr_svg":svg,"verification_code":sas.verification_code(),"expires_at":expires_at,"node_id":ticket.peer.node_id}),
     )?;
-    let remaining = expires_at.saturating_sub(spark_link_proto::now_unix());
+    // Server expiry is authoritative; clock tolerance never gives the client
+    // more than the normal 300-second wait (plus the existing delivery grace).
+    let remaining = expires_at.saturating_sub(spark_link_proto::now_unix()).min(300);
     let msg = tokio::time::timeout(
         Duration::from_secs(remaining + 2),
         read_frame::<_, PairMessage>(&mut recv, wire::PAIR_LIMIT),
     )
-    .await
-    .context("phone approval expired")??;
-    let Some(PairMessage::Accept { body_json, mac2 }) = msg else {
-        anyhow::bail!("phone approval was denied or expired");
+    .await;
+    let (body_json,mac2) = match msg {
+        Err(_) => return Err(Failure::new(Kind::ApprovalExpired).into()),
+        Ok(Ok(Some(PairMessage::Accept {body_json,mac2}))) => (body_json,mac2),
+        Ok(Ok(Some(PairMessage::Reject))) => return Err(pairing_diagnostics::approval_ended(spark_link_proto::now_unix(),expires_at,true).into()),
+        Ok(Ok(None)) | Ok(Err(_)) => return Err(pairing_diagnostics::approval_ended(spark_link_proto::now_unix(),expires_at,false).into()),
+        _ => return Err(Failure::new(Kind::VerificationFailed).into()),
     };
-    anyhow::ensure!(
-        keys.verify_accept_mac(&transcript, &body_json, &mac2),
-        "pairing acceptance failed authentication"
-    );
-    let body: Accepted = serde_json::from_str(&body_json)?;
-    anyhow::ensure!(
-        body.peer.node_id == ticket.peer.node_id
-            && body.device_id == ticket.device_id
-            && body.pairing_id == pairing_id,
-        "pairing identity mismatch"
-    );
-    body.peer.addr()?;
-    storage::save(&dir, "peer.json", &body.peer)?;
-    send.finish()?;
+    if !keys.verify_accept_mac(&transcript, &body_json, &mac2) {
+        return Err(Failure::new(Kind::VerificationFailed).into());
+    }
+    let body: Accepted = serde_json::from_str(&body_json).map_err(|_| Failure::new(Kind::VerificationFailed))?;
+    if body.peer.node_id != ticket.peer.node_id || body.device_id != ticket.device_id || body.pairing_id != pairing_id {
+        return Err(Failure::new(Kind::VerificationFailed).into());
+    }
+    body.peer.addr().map_err(|_| Failure::new(Kind::VerificationFailed))?;
+    storage::save(&dir, "peer.json", &body.peer).map_err(|_| Failure::new(Kind::SaveFailed))?;
+    // A transport shutdown after a verified, durably saved acceptance cannot
+    // turn a completed pairing back into a failed one.
+    let _ = send.finish();
     endpoint.close().await;
     output(json!({"ok":true,"state":"paired","node_id":body.peer.node_id}))
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    use super::*;
+    #[test]
+    fn ticket_expiry_and_clock_mismatch_are_not_reported_as_firewall_failures() {
+        validate_ticket_time(400,100).unwrap();
+        for expires in [0,99,100] {
+            let expired=validate_ticket_time(expires,100).unwrap_err();
+            assert_eq!(pairing_diagnostics::error_json(&expired).unwrap()["code"],"pair_ticket_expired");
+        }
+        // Regression: the previous +300 upper bound rejected these fresh
+        // 300-second tickets when this PC's clock was 1–5 seconds behind.
+        for expires in 401..=405 { validate_ticket_time(expires,100).unwrap(); }
+        let clock=validate_ticket_time(406,100).unwrap_err();
+        assert_eq!(pairing_diagnostics::error_json(&clock).unwrap()["code"],"pair_ticket_clock_mismatch");
+        assert!(validate_ticket_time(u64::MAX,100).is_err());
+    }
+
+    #[test]
+    fn expiry_during_connection_or_firewall_observation_takes_precedence() {
+        use crate::firewall::{Observation,Profile};
+        let block=Observation {observed:true,enabled:true,profile:Profile::Private,inbound_blocks:1,outbound_blocks:0};
+        let connected_before_expiry=before_approval_failure(100,99,Failure::network(block.clone()));
+        assert_eq!(connected_before_expiry.code(),"windows_firewall_blocked");
+        // A connection attempt can consume the ticket's remaining lifetime;
+        // the subsequent diagnostic query must not relabel expiry as a network failure.
+        let expired_during_connect=before_approval_failure(100,100,Kind::ConnectionUnavailable);
+        assert_eq!(expired_during_connect.code(),"pair_ticket_expired");
+        // A known UDP block observed after another five seconds is still only
+        // secondary evidence once this ticket has already expired.
+        let expired_during_observation=before_approval_failure(100,105,Failure::network(block));
+        assert_eq!(expired_during_observation.code(),"pair_ticket_expired");
+        assert!(expired_during_observation.firewall.is_none());
+    }
 }
