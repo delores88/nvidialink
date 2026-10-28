@@ -6,6 +6,12 @@ Read-only design references: delores88/PhaseForge commit `ac30e04` (full commit 
 
 Every copied source/runtime file must be added here with source revision or SHA-256, destination and modifications before release.
 
+## 0.6.4 device observation and pairing maintenance
+
+The host-memory observation and its exact UI model text reuse first-party commit `52e05b8c5de7444be6383072cd67f5c815966533` from `claude/wsl-host-memory`, whose parent is `f186d3ec7568b476ad1efc63e1ccee975bb9ecf3`. The port is applied above the immutable 0.6.3 source `3735a7bc1c9fe120bcbd23e980bfea7e651c0a01`. The backend additionally bounds optional Windows memory refresh within the existing observation deadline; its successful 24-hour and failed one-hour cache policies remain intact. Scheduling continues to use WSL capacity.
+
+The local desktop name/icon selection and bounded Windows battery/chassis probe are first-party additions. Two existing icon bindings consume the model override while retaining the local-device identity and existing layout, styles and controls. No other UI wording is changed. Pairing keeps its existing transport, cryptographic checks, server-side 300-second ticket lifetime and phone approval; the client tolerates a five-second future-timestamp sanity margin and exposes fixed, phase-specific diagnostics. Windows Firewall observation is read-only and does not create or alter rules. The 0.6.3 keyscan correction and all existing third-party source pins are preserved.
+
 ## 0.6.3 identity probe
 
 This CLI maintenance change extends the first-party enrollment code from exact RTXBridge 0.6.2 source `70829ab713192a459d9fac3217878ab38f97dea9`. It replaces `ssh-keyscan` identity observation with authentication-disabled OpenSSH using a throwaway known-hosts file, as requested in the owner's board-1824 handoff. No third-party implementation is copied. The UI, vendored libraries, remote controller and their existing upstream pins remain unchanged.

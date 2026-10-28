@@ -10,7 +10,9 @@ pub const PAIR: &[u8] = b"delores/sparkdev/pair/1";
 pub const RPC: &[u8] = b"delores/sparkdev/rpc/1";
 pub const RPC_LIMIT: usize = 4 * 1024 * 1024;
 pub const PAIR_LIMIT: usize = 64 * 1024;
+/// Spark's direct iroh/QUIC listener. Clients initiate from ephemeral UDP ports.
 pub const UDP_PORT: u16 = 47831;
+/// Spark's temporary TCP phone-approval page, not a Windows UDP listener.
 pub const LAN_PORT: u16 = 7437;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
