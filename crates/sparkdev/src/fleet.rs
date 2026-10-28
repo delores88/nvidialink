@@ -14,7 +14,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::Command,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MAX_JOURNAL: u64 = 16 * inventory::MIB;
@@ -766,7 +766,141 @@ fn node_crud(command: &NodeCommands) -> Result<Value> {
     }
 }
 
+fn cached_host_memory(saved: &Value, now: f64) -> Option<Option<u64>> {
+    let age = now - saved["checked_at"].as_f64().unwrap_or(0.0);
+    let bytes = saved["bytes"].as_u64();
+    // A failed check is retried after an hour, a good one after a day.
+    let fresh = if bytes.is_some() { 86_400.0 } else { 3_600.0 };
+    (0.0..fresh).contains(&age).then_some(bytes)
+}
+
+fn host_memory_refresh_budget(elapsed: Duration) -> Duration {
+    OBSERVATION_TIMEOUT
+        .saturating_sub(elapsed)
+        .min(Duration::from_secs(15))
+}
+
+fn host_memory_cache(root: &Path, now: f64) -> Result<Option<Option<u64>>> {
+    let saved = bounded_file(&root.join("host-memory.json"), 4096)?
+        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok());
+    Ok(saved.and_then(|saved| cached_host_memory(&saved, now)))
+}
+
+fn host_memory_refresh_lock(root: &Path) -> Result<Option<fs::File>> {
+    let info = fs::symlink_metadata(root)?;
+    if !root.is_absolute() || !info.is_dir() || reparse(&info) {
+        return Err(error("Host memory profile directory is unsafe"));
+    }
+    let path = root.join("host-memory.lock");
+    if let Ok(info) = fs::symlink_metadata(&path) {
+        if !info.is_file() || reparse(&info) || info.len() > 4096 {
+            return Err(error("Host memory refresh lock is unsafe"));
+        }
+    }
+    let mut options = fs::OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000);
+    }
+    let lock = options.open(path)?;
+    let info = lock.metadata()?;
+    if !info.is_file() || reparse(&info) || info.len() > 4096 {
+        return Err(error("Host memory refresh lock is unsafe"));
+    }
+    Ok(fs2::FileExt::try_lock_exclusive(&lock).is_ok().then_some(lock))
+}
+
+enum HostMemoryAttempt {
+    NotStarted,
+    Finished(Option<u64>),
+}
+
+fn host_memory_with(
+    root: &Path,
+    now: f64,
+    observed_at: Instant,
+    ask: impl FnOnce() -> HostMemoryAttempt,
+) -> Option<u64> {
+    if let Some(bytes) = host_memory_cache(root, now).ok()? {
+        return bytes;
+    }
+    if host_memory_refresh_budget(observed_at.elapsed()).is_zero() {
+        return None;
+    }
+    let _refresh = match host_memory_refresh_lock(root).ok()? {
+        Some(lock) => lock,
+        // Other observers never wait for this optional refresh.
+        None => return host_memory_cache(root, now).ok().flatten().flatten(),
+    };
+    // Another observer may have finished between the first read and our lock.
+    if let Some(bytes) = host_memory_cache(root, now).ok()? {
+        return bytes;
+    }
+    if host_memory_refresh_budget(observed_at.elapsed()).is_zero() {
+        return None;
+    }
+    match ask() {
+        HostMemoryAttempt::NotStarted => None,
+        HostMemoryAttempt::Finished(bytes) => {
+            let _ = state::atomic_json(&root.join("host-memory.json"), &json!({"bytes":bytes,"checked_at":now}));
+            bytes
+        }
+    }
+}
+
+/// A Windows computer's own memory. Its jobs run in WSL, which reports only
+/// what Windows gives it (half the PC's memory by default), so the PC's total
+/// is asked of Windows itself, over the device's own pinned SSH, once a day.
+fn host_memory(target: &Target, observed_at: Instant) -> Option<u64> {
+    if !matches!(target.node.as_ref()?.endpoint, nodes::Endpoint::WindowsWsl { .. }) {
+        return None;
+    }
+    let now = state::now() as f64;
+    host_memory_with(&target.root, now, observed_at, || {
+        let prepare = || -> Result<Command> {
+            let config: state::Config = serde_json::from_slice(
+                &bounded_file(&target.root.join("config.json"), inventory::MIB)?.ok_or_else(|| AppError::new(3, "No SSH configuration"))?,
+            )?;
+            let endpoint = match bounded_file(&target.root.join("endpoint.json"), 16 * 1024)? {
+                Some(bytes) => serde_json::from_slice::<nodes::EndpointSettings>(&bytes)?,
+                None => nodes::EndpointSettings::default(),
+            };
+            let host = config.hosts.first().cloned();
+            let transport = transport::Transport::with_endpoint(config, endpoint)?;
+            Ok(transport.command(host.as_deref(), WINDOWS_MEMORY))
+        };
+        let command = prepare();
+        let timeout = host_memory_refresh_budget(observed_at.elapsed());
+        // Local command preparation may also have consumed the remaining time.
+        if timeout.is_zero() {
+            return HostMemoryAttempt::NotStarted;
+        }
+        HostMemoryAttempt::Finished(command.ok().and_then(|command| {
+            match transport::run_process(command, &[], timeout) {
+                Ok(transport::Ran::Exited((Some(0), stdout, _))) => parse_host_memory(&stdout),
+                _ => None,
+            }
+        }))
+    })
+}
+
+const WINDOWS_MEMORY: &str = "powershell -NoProfile -NonInteractive -Command \"(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory\"";
+
+fn parse_host_memory(stdout: &[u8]) -> Option<u64> {
+    let bytes: u64 = String::from_utf8_lossy(stdout).trim().parse().ok()?;
+    // Between 1 GiB and 64 TiB, or it is not a memory size.
+    (1 << 30..=64 << 40).contains(&bytes).then_some(bytes)
+}
+
 fn observe(target: &Target, client: &str) -> Result<Value> {
+    let observed_at = Instant::now();
     let value = child(
         target,
         client,
@@ -796,6 +930,9 @@ fn observe(target: &Target, client: &str) -> Result<Value> {
     }
     if let Err(error) = reconcile(target, &device) {
         device["fleet_claim_error"] = json!({"code":error.code,"message":error.message});
+    }
+    if let Some(bytes) = host_memory(target, observed_at) {
+        device["capabilities"]["host_memory_bytes"] = json!(bytes);
     }
     device["id"] = json!(target.id);
     device["label"] = json!(target.label);
@@ -2262,6 +2399,99 @@ pub(crate) fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_reports_the_pcs_own_memory() {
+        assert_eq!(parse_host_memory(b"274877906944\r\n"), Some(274_877_906_944));
+        for bad in [&b""[..], b"Get-CimInstance : not found", b"1024", b"-5"] {
+            assert_eq!(parse_host_memory(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn host_memory_cache_keeps_daily_success_and_hourly_failure_ttls() {
+        let checked = 1_000_000.0;
+        let bytes = 274_877_906_944_u64;
+        let success = json!({"checked_at":checked,"bytes":bytes});
+        assert_eq!(cached_host_memory(&success, checked), Some(Some(bytes)));
+        assert_eq!(cached_host_memory(&success, checked + 86_399.0), Some(Some(bytes)));
+        assert_eq!(cached_host_memory(&success, checked + 86_400.0), None);
+        assert_eq!(cached_host_memory(&success, checked - 1.0), None);
+        let failed = json!({"checked_at":checked,"bytes":null});
+        assert_eq!(cached_host_memory(&failed, checked + 3_599.0), Some(None));
+        assert_eq!(cached_host_memory(&failed, checked + 3_600.0), None);
+        assert_eq!(cached_host_memory(&json!({}), checked), None);
+    }
+
+    #[test]
+    fn optional_host_memory_refresh_fits_the_original_observation_budget() {
+        assert_eq!(host_memory_refresh_budget(Duration::ZERO), Duration::from_secs(15));
+        assert_eq!(host_memory_refresh_budget(Duration::from_secs(17)), Duration::from_secs(15));
+        assert_eq!(host_memory_refresh_budget(Duration::from_secs(18)), Duration::from_secs(14));
+        assert_eq!(host_memory_refresh_budget(Duration::from_secs(31)), Duration::from_secs(1));
+        assert_eq!(host_memory_refresh_budget(OBSERVATION_TIMEOUT), Duration::ZERO);
+        assert_eq!(host_memory_refresh_budget(Duration::from_secs(60)), Duration::ZERO);
+    }
+
+    #[test]
+    fn concurrent_host_memory_observers_attempt_only_one_nonblocking_refresh() {
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}, mpsc};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let asks = Arc::new(AtomicUsize::new(0));
+        let (started, start) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let first_root = root.clone();
+        let first_asks = Arc::clone(&asks);
+        let first = std::thread::spawn(move || {
+            host_memory_with(&first_root, 1_000_000.0, Instant::now(), || {
+                first_asks.fetch_add(1, Ordering::SeqCst);
+                started.send(()).unwrap();
+                released.recv_timeout(Duration::from_secs(5)).unwrap();
+                HostMemoryAttempt::Finished(Some(274_877_906_944))
+            })
+        });
+        start.recv_timeout(Duration::from_secs(5)).unwrap();
+        let second_root = root.clone();
+        let second_asks = Arc::clone(&asks);
+        let (returned, response) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            let value = host_memory_with(&second_root, 1_000_000.0, Instant::now(), || {
+                second_asks.fetch_add(1, Ordering::SeqCst);
+                HostMemoryAttempt::Finished(None)
+            });
+            returned.send(value).unwrap();
+        });
+        let busy_result = response.recv_timeout(Duration::from_secs(2));
+        release.send(()).unwrap();
+        assert_eq!(first.join().unwrap(), Some(274_877_906_944));
+        second.join().unwrap();
+        assert_eq!(busy_result.unwrap(), None, "An observer must not wait for another optional refresh");
+        assert_eq!(asks.load(Ordering::SeqCst), 1);
+        assert_eq!(host_memory_with(&root, 1_000_001.0, Instant::now(), || panic!("fresh cache must not ask")), Some(274_877_906_944));
+    }
+
+    #[test]
+    fn spent_host_memory_budget_keeps_cache_and_does_not_record_a_failed_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("host-memory.json");
+        state::atomic_json(&cache, &json!({"bytes":null,"checked_at":0})).unwrap();
+        let before = fs::read(&cache).unwrap();
+        let expired = Instant::now().checked_sub(Duration::from_secs(33)).unwrap();
+        assert_eq!(host_memory_with(dir.path(), 1_000_000.0, expired, || panic!("no budget to ask")), None);
+        assert_eq!(fs::read(&cache).unwrap(), before);
+        state::atomic_json(&cache, &json!({"bytes":274_877_906_944_u64,"checked_at":1_000_000.0})).unwrap();
+        assert_eq!(host_memory_with(dir.path(), 1_000_001.0, expired, || panic!("cached value needs no budget")), Some(274_877_906_944));
+    }
+
+    #[test]
+    fn unsafe_host_memory_refresh_lock_never_starts_an_optional_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host-memory.lock");
+        fs::write(&path, vec![b'x'; 4097]).unwrap();
+        assert_eq!(host_memory_with(dir.path(), 1_000_000.0, Instant::now(), || panic!("unsafe lock must not ask")), None);
+        assert_eq!(fs::metadata(path).unwrap().len(), 4097);
+    }
     use clap::Parser;
 
     fn record(device: &str, project: &str) -> Submission {

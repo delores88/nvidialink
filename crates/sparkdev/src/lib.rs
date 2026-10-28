@@ -1,4 +1,5 @@
 pub mod discover;
+pub mod form_factor;
 mod enroll;
 pub mod inventory;
 pub mod lan_learn;
@@ -943,6 +944,7 @@ fn connection_response(config: &state::Config) -> Value {
 }
 fn devices() -> Result<Value> {
     let mut laptop = json!({"id":"laptop","availability":"available","reachable":true,"os":std::env::consts::OS,"architecture":std::env::consts::ARCH,"logical_parallelism":std::thread::available_parallelism().ok().map(|n|n.get()),"managed_job_limit":2,"free_cpu":null,"free_memory_bytes":null,"capacity_note":"Logical parallelism is process-visible topology, not idle capacity. Native jobs are not container-sandboxed."});
+    laptop["form_factor"] = json!(form_factor::observe());
     if let Ok(config) = state::config() {
         laptop["managed_job_limit"] = json!(config.laptop_jobs);
         laptop["resource_controls"] = config.laptop_info();

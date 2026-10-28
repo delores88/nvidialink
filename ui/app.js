@@ -98,7 +98,7 @@ function deviceCard(row,mode){
   if(mode==='strip'&&['laptop','spark'].includes(row.id))card.id=`${row.id}-card`;
   if(mode!=='strip'&&row.id===selectedDevice)card.setAttribute('aria-current','true');
   const head=element('span','device-head'),title=element('span','device-title'),status=element('span','device-status computer-status',row.status.label);
-  title.append(element('strong',null,row.name),element('small',null,row.detail));status.dataset.state=row.status.kind;head.append(deviceIcon(row.kind),title,status);card.append(head);
+  title.append(element('strong',null,row.name),element('small',null,row.detail));status.dataset.state=row.status.kind;head.append(deviceIcon(row.icon||row.kind),title,status);card.append(head);
   if(!compact)card.append(element('span','device-good',row.goodFor));
   const specs=element('span','device-specs');for(const spec of row.specs.slice(0,compact?2:4))specs.append(element('span','device-spec',spec));card.append(specs);
   if(row.link&&!row.specs.slice(0,compact?2:4).includes(row.link.label)){const link=element('span','device-link',row.link.label);link.dataset.measured=String(row.link.measured);link.title=row.link.measured?`Measured on the last large transfer${row.link.measuredAt?` (${relativeTime(row.link.measuredAt)})`:''}`:'Reported link rate; real speed is measured on the first large transfer';card.append(link);}
@@ -139,7 +139,7 @@ function renderDevices(){
   $('spark-detail').hidden=selectedDevice!=='spark';$('laptop-detail').hidden=selectedDevice!=='laptop';$('node-detail').hidden=row?.kind!=='computer';
   if(row?.kind==='computer')renderNodeDetail(row);else if(row?.kind==='laptop')renderLaptopDetail(row);
 }
-function panelHead(row){const head=element('div','card-top'),title=element('div','title-row');const text=element('div');text.append(element('h2',null,row.name),element('p','card-sub',`${row.detail} · ${row.status.label}`));title.append(deviceIcon(row.kind),text);head.append(title);return head;}
+function panelHead(row){const head=element('div','card-top'),title=element('div','title-row');const text=element('div');text.append(element('h2',null,row.name),element('p','card-sub',`${row.detail} · ${row.status.label}`));title.append(deviceIcon(row.icon||row.kind),text);head.append(title);return head;}
 function renderNodeDetail(row){
   const card=element('article','card device-detail-card');card.append(panelHead(row),element('p','device-good',row.goodFor));
   const facts=element('dl','facts');renderFacts(facts,[...(row.facts||[]),['Agents choose it with',`--device ${row.id}`]]);card.append(facts);
