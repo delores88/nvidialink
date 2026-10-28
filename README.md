@@ -1,10 +1,12 @@
 # RTXBridge
 
-Formerly DGXBridge. Version 0.6.2 uses the RTXBridge display name. Legacy upgrades keep their existing DGXBridge folder and agent paths; fresh installations use RTXBridge. The application identifier, Marketplace slug and canonical DGXBridge installer asset filename stay compatible.
+Formerly DGXBridge. Version 0.6.3 keeps the RTXBridge display name. Legacy upgrades keep their existing DGXBridge folder and agent paths; fresh installations use RTXBridge. The application identifier, Marketplace slug and canonical DGXBridge installer asset filename stay compatible.
 
 A Windows desktop app and agent CLI for running Linux builds, tests and compute on your own Spark and registered Linux or Windows-with-WSL computers, while native Windows work stays on your laptop. Claude Code, Codex and humans share job status, worktree claims and retained logs. First-party source is MIT licensed; this is an independent DeloresAI utility.
 
-**0.6.2 release candidate:** unifies computers in Devices, adds the interactive local network map and owner password-to-key enrollment with independent identity confirmation before sign-in. See [release verification and limits](docs/RELEASE-0.6.2.md).
+**0.6.2:** unifies computers in Devices, adds the interactive local network map and owner password-to-key enrollment with independent identity confirmation before sign-in. Installed state preservation, native Jobs/Devices checks, fresh CPU/CUDA jobs and automatic returns passed. See [release verification and limits](docs/RELEASE-0.6.2.md).
+
+**0.6.3:** fixes the initial SSH identity check when Windows `ssh-keyscan` cannot negotiate with the device. The CLI uses authentication-disabled SSH and a temporary host-key file; independent fingerprint confirmation and later pinned connections are preserved. The UI is unchanged. See [release verification and limits](docs/RELEASE-0.6.3.md).
 
 **0.6.1:** adds independent compute profiles, capability-based placement, stable job routing and automatic file returns from additional computers. The Computers screen extends the existing Spark/laptop interface. CPU and RTX 4090 jobs passed through the installed Windows copy. See [release verification and limits](docs/RELEASE-0.6.1.md) and [multi-computer setup](docs/MULTI-DEVICE.md).
 
@@ -12,7 +14,7 @@ A Windows desktop app and agent CLI for running Linux builds, tests and compute 
 
 ## Connect your Spark
 
-Download the [Windows installer](https://github.com/delores88/nvidialink/releases/download/v0.6.1/DGXBridge_0.6.1_x64-setup.exe). The [GitHub release](https://github.com/delores88/nvidialink/releases/tag/v0.6.1) includes checksums, notices, dependency inventories and a Linux ARM64 CLI. Start the installer from ordinary Windows Explorer for a normal current-user installation. Launching setup from a packaged coding-agent process can redirect it into that packageâ€™s private cache. The installer is unsigned; review the release notes and verify its hash before running it.
+Download the [Windows installer](https://github.com/delores88/nvidialink/releases/download/v0.6.3/DGXBridge_0.6.3_x64-setup.exe). The [GitHub release](https://github.com/delores88/nvidialink/releases/tag/v0.6.3) includes checksums, notices, dependency inventories and a Linux ARM64 CLI. Start the installer from ordinary Windows Explorer for a normal current-user installation. Launching setup from a packaged coding-agent process can redirect it into that packageâ€™s private cache. The installer is unsigned; review the release notes and verify its hash before running it.
 
 1. Start with a working OpenSSH alias and a host key verified against the Spark. Install Docker for your existing user on the Spark; the bridge never uses sudo.
 2. Open **Connection**, save your SSH alias, LAN address, user and existing key-file reference. For a new Spark, explicitly choose **Install / repair Spark bridge**; this installs separate user services and provisions its CPU runtime under `~/sparkdev`. Saving or testing a connection does not reinstall services.

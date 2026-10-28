@@ -183,30 +183,98 @@ fn public_key(id: &str) -> Result<String> {
     Ok(public.to_string())
 }
 
-/// The device's current ed25519 host key, as presented to anyone who asks.
-fn keyscan(host: &str, port: u16) -> Result<String> {
-    let mut command = Command::new("ssh-keyscan");
-    command
-        .args(["-T", "5", "-t", "ed25519", "-p"])
-        .arg(port.to_string())
-        .arg(host);
-    let output = match transport::run_process(command, &[], STEP)? {
-        transport::Ran::Exited((_, stdout, _)) => stdout,
-        transport::Ran::TimedOut(_) => Vec::new(),
-    };
-    let text = String::from_utf8_lossy(&output);
-    for line in text.lines().filter(|line| !line.starts_with('#')) {
+/// A probe records an untrusted public key only for this attempt. It never
+/// reads or changes the owner's known_hosts, and cleanup runs on every outcome.
+struct IdentityProbeFile(PathBuf);
+
+impl IdentityProbeFile {
+    fn new(dir: &Path) -> Result<Self> {
+        let path = dir.join(format!("identity-{}-known_hosts", uuid::Uuid::new_v4().simple()));
+        fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for IdentityProbeFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn scanned_ed25519(text: &str) -> Option<String> {
+    for line in text.lines().filter(|line| !line.trim_start().starts_with('#')) {
         let mut parts = line.split_whitespace();
         if let (Some(_), Some("ssh-ed25519"), Some(blob)) = (parts.next(), parts.next(), parts.next()) {
             if STANDARD.decode(blob).is_ok_and(|bytes| !bytes.is_empty()) {
-                return Ok(blob.to_string());
+                return Some(blob.to_string());
             }
         }
     }
-    Err(AppError::new(
-        4,
-        format!("Couldn't reach {host} for remote setup. Check it is on, on this network, and that the setup command ran on it."),
-    ))
+    None
+}
+
+fn identity_command(host: &str, port: u16, known: &Path) -> Command {
+    let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let mut command = Command::new("ssh");
+    command
+        .args(["-F", null, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o"])
+        .arg(format!("UserKnownHostsFile=\"{}\"", ssh_path(known)))
+        .args(["-o", &format!("GlobalKnownHostsFile={null}"), "-o", "HostKeyAlgorithms=ssh-ed25519",
+            "-o", "PreferredAuthentications=none", "-o", "PubkeyAuthentication=no", "-o", "ConnectTimeout=5",
+            "-l", "rtxbridge-identity-check", "-p"])
+        .arg(port.to_string())
+        .arg(host)
+        .arg("exit");
+    command
+}
+
+fn identity_error(host: &str, outcome: &Result<transport::Ran>) -> AppError {
+    let cause = match outcome {
+        Err(_) => "SSH could not be started",
+        Ok(transport::Ran::TimedOut(_)) => "the connection timed out",
+        Ok(transport::Ran::Exited((_, _, stderr))) => {
+            let error = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+            if error.contains("timed out") || error.contains("timeout") {
+                "the connection timed out"
+            } else if error.contains("connection refused") {
+                "the connection was refused"
+            } else {
+                "no ed25519 key was returned"
+            }
+        }
+    };
+    AppError::new(4, format!("Couldn't read the device's identity at {host}: {cause}."))
+}
+
+fn keyscan_with(
+    dir: &Path,
+    host: &str,
+    port: u16,
+    run: impl FnOnce(Command) -> Result<transport::Ran>,
+) -> Result<String> {
+    let known = IdentityProbeFile::new(dir)?;
+    // Windows ssh-keyscan cannot negotiate every KEX that Windows ssh supports.
+    // No password or key is offered: authentication normally ends in refusal.
+    let outcome = run(identity_command(host, port, &known.0));
+    let text = fs::read_to_string(&known.0).unwrap_or_default();
+    scanned_ed25519(&text).ok_or_else(|| identity_error(host, &outcome))
+}
+
+/// The device's current ed25519 host key, before trusting it or signing in.
+fn keyscan_in(dir: &Path, host: &str, port: u16) -> Result<String> {
+    keyscan_with(dir, host, port, |command| transport::run_process(command, &[], STEP))
+}
+
+fn keyscan(host: &str, port: u16) -> Result<String> {
+    // Fingerprint preview precedes the device id and its key. Keep its temporary
+    // public-key file in the shared enrollment directory, without saving trust.
+    let dir = state::root()?.join("devices");
+    fs::create_dir_all(&dir)?;
+    let meta = fs::symlink_metadata(&dir)?;
+    if !meta.is_dir() || meta.file_type().is_symlink() {
+        return Err(AppError::new(3, "The device's setup folder is not a plain folder; nothing was changed"));
+    }
+    keyscan_in(&dir, host, port)
 }
 
 pub fn fingerprint(blob: &str) -> Result<String> {
@@ -344,7 +412,7 @@ pub fn probe(id: &str, name: &str, user: &str, port: u16) -> Result<Value> {
     }
     let address = ip.to_string();
     let host = address.as_str();
-    let blob = keyscan(host, port)?;
+    let blob = keyscan_in(&dir, host, port)?;
     let fingerprint = fingerprint(&blob)?;
     let profile = write_profile(&dir, "candidate-", id, host, user, port, &blob)?;
     let base = json!({"ok":true,"id":id,"name":name,"address":host,"port":port,"user":user,"fingerprint":fingerprint});
@@ -431,7 +499,7 @@ pub fn trust(
         return Err(invalid("Give the device a name of at most 96 characters"));
     }
     let dir = device_dir(id, false)?;
-    let blob = keyscan(host, port)?;
+    let blob = keyscan_in(&dir, host, port)?;
     if fingerprint(&blob)? != confirmed {
         return Err(AppError::new(
             7,
@@ -589,7 +657,8 @@ pub fn authorize(id: &str, name: &str, user: &str, port: u16, confirmed: &str, p
     let ip = resolve(name, port)?;
     refuse_duplicate(ip, port, id)?;
     let host = ip.to_string();
-    let blob = keyscan(&host, port)?;
+    let dir = device_dir(id, true)?;
+    let blob = keyscan_in(&dir, &host, port)?;
     with_confirmed_host(&blob, confirmed, |fingerprint| {
         authorize_confirmed(id, name, &host, user, port, &blob, fingerprint, password)
     })
@@ -768,6 +837,88 @@ mod tests {
         let blob = "AAAAC3NzaC1lZDI1NTE5AAAAIK1qY7sQ/4ABeSXU6Xmg1OkFsb1Y5x2Il2OeNwIuFn5r";
         assert_eq!(fingerprint(blob).unwrap(), "SHA256:Mp/+7chdCKA18z2Nkc1AbQBK9Y0YoxlDfw9ZkdI/cfo");
         assert!(fingerprint("not base64!").is_err());
+    }
+
+    #[test]
+    fn known_hosts_lines_return_only_a_nonempty_ed25519_blob() {
+        let blob = "AAAAC3NzaC1lZDI1NTE5AAAAIK1qY7sQ/4ABeSXU6Xmg1OkFsb1Y5x2Il2OeNwIuFn5r";
+        for host in ["192.168.1.170", "[192.168.1.170]:2222", "|1|hashed|hostname"] {
+            let text = format!("# comment\r\n\r\n{host} ssh-ed25519 {blob}\r\n");
+            assert_eq!(scanned_ed25519(&text).as_deref(), Some(blob));
+        }
+        for bad in ["", "# no key", "  # ssh-ed25519 AAAA", "host ssh-rsa AAAA", "host ssh-ed25519 not-base64!", "host ssh-ed25519", "@cert-authority host ssh-ed25519 AAAA"] {
+            assert!(scanned_ed25519(bad).is_none(), "{bad}");
+        }
+        assert_eq!(scanned_ed25519(&format!("bad ssh-ed25519 !\nhost ssh-rsa AAAA\nhost ssh-ed25519 {blob} comment")).as_deref(), Some(blob));
+    }
+
+    #[test]
+    fn identity_probe_is_config_free_noninteractive_and_quotes_the_temp_path() {
+        let command = identity_command("192.168.1.170", 2222, Path::new(r"C:\State with spaces\devices\identity-known_hosts"));
+        assert_eq!(command.get_program(), "ssh");
+        let args: Vec<_> = command.get_args().map(|x| x.to_string_lossy().into_owned()).collect();
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        assert_eq!(args[0..2], ["-F", null]);
+        for option in ["BatchMode=yes", "StrictHostKeyChecking=accept-new", "UserKnownHostsFile=\"C:/State with spaces/devices/identity-known_hosts\"", "HostKeyAlgorithms=ssh-ed25519", "PreferredAuthentications=none", "PubkeyAuthentication=no", "ConnectTimeout=5"] {
+            assert!(args.windows(2).any(|pair| pair[0] == "-o" && pair[1] == option), "{option}");
+        }
+        assert!(args.windows(2).any(|pair| pair[0] == "-o" && pair[1] == format!("GlobalKnownHostsFile={null}")));
+        assert_eq!(&args[args.len() - 6..], ["-l", "rtxbridge-identity-check", "-p", "2222", "192.168.1.170", "exit"]);
+    }
+
+    fn probe_path(command: &Command) -> PathBuf {
+        command.get_args().find_map(|arg| {
+            let arg = arg.to_str()?;
+            arg.strip_prefix("UserKnownHostsFile=\"")?.strip_suffix('"').map(PathBuf::from)
+        }).unwrap()
+    }
+
+    #[test]
+    fn refused_identity_probe_still_reads_the_key_and_always_removes_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let sentinel = dir.path().join("known_hosts");
+        fs::write(&sentinel, "existing pin must stay untouched").unwrap();
+        let blob = "AAAAC3NzaC1lZDI1NTE5AAAAIK1qY7sQ/4ABeSXU6Xmg1OkFsb1Y5x2Il2OeNwIuFn5r";
+        let mut paths = Vec::new();
+        for _ in 0..2 {
+            let found = keyscan_with(dir.path(), "192.168.1.170", 22, |command| {
+                let path = probe_path(&command);
+                assert!(path.exists());
+                assert_eq!(fs::read(&path).unwrap(), b"");
+                fs::write(&path, format!("192.168.1.170 ssh-ed25519 {blob}\n")).unwrap();
+                paths.push(path);
+                Ok(transport::Ran::Exited((Some(255), Vec::new(), b"Permission denied (publickey).".to_vec())))
+            }).unwrap();
+            assert_eq!(found, blob);
+            assert!(!paths.last().unwrap().exists());
+        }
+        assert_ne!(paths[0], paths[1]);
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "existing pin must stay untouched");
+    }
+
+    #[test]
+    fn failed_identity_probes_remove_their_files_and_report_bounded_causes() {
+        let dir = tempfile::tempdir().unwrap();
+        let outcomes = [
+            (Ok(transport::Ran::TimedOut(None)), "timed out"),
+            (Ok(transport::Ran::Exited((Some(255), Vec::new(), b"connect: Connection refused\nprivate detail".to_vec()))), "refused"),
+            (Ok(transport::Ran::Exited((Some(255), Vec::new(), b"connect: Connection timed out\nprivate detail".to_vec()))), "timed out"),
+            (Ok(transport::Ran::Exited((Some(255), Vec::new(), b"Permission denied\nprivate detail".to_vec()))), "no ed25519 key"),
+            (Err(AppError::new(4, "private detail")), "SSH could not be started"),
+        ];
+        for (outcome, cause) in outcomes {
+            let mut probe = None;
+            let error = keyscan_with(dir.path(), "192.168.1.170", 22, |command| {
+                probe = Some(probe_path(&command));
+                outcome
+            }).unwrap_err();
+            assert_eq!(error.code, 4);
+            assert!(error.message.contains("Couldn't read the device's identity"));
+            assert!(error.message.contains(cause), "{}", error.message);
+            assert!(!error.message.contains("private detail"));
+            assert!(!error.message.contains("setup command"));
+            assert!(!probe.unwrap().exists());
+        }
     }
 
     #[test]

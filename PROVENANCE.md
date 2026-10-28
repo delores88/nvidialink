@@ -6,6 +6,10 @@ Read-only design references: delores88/PhaseForge commit `ac30e04` (full commit 
 
 Every copied source/runtime file must be added here with source revision or SHA-256, destination and modifications before release.
 
+## 0.6.3 identity probe
+
+This CLI maintenance change extends the first-party enrollment code from exact RTXBridge 0.6.2 source `70829ab713192a459d9fac3217878ab38f97dea9`. It replaces `ssh-keyscan` identity observation with authentication-disabled OpenSSH using a throwaway known-hosts file, as requested in the owner's board-1824 handoff. No third-party implementation is copied. The UI, vendored libraries, remote controller and their existing upstream pins remain unchanged.
+
 ## 0.2.0 connection topology and updater
 
 The connection visuals use owner-authorized PhaseForge code at exact commit `7a665907901bd797df0eedee961e0d83a41eeabf` (read-only reference `D:/PhaseForge-claude/wt/release-0250`). The three pure JavaScript modules below are copied unchanged into `ui/vendor/`. Hardware SVG geometry and scoped styles are adapted from SparkLinkVisuals into `ui/connection-visual.mjs` and `ui/style.css`, replacing React dependencies with vanilla DOM and mapping only observed DGXBridge connection state. No throughput, GPU utilization or relay route is invented. Reduced motion and hidden/offscreen suspension are preserved.
